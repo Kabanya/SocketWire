@@ -1,0 +1,14 @@
+cmake_minimum_required(VERSION 3.28)
+
+add_executable(minimal_server MinimalServer.cpp)
+add_executable(minimal_client MinimalClient.cpp)
+add_executable(test_client_socket ClientTestSocket.cpp)
+add_executable(test_server_socket ServerTestSocket.cpp)
+
+target_link_libraries(minimal_server PRIVATE NetSocketLib)
+target_link_libraries(minimal_client PRIVATE NetSocketLib)
+target_link_libraries(test_client_socket PRIVATE NetSocketLib)
+target_link_libraries(test_server_socket PRIVATE NetSocketLib)
+
+target_link_libraries(test_client_socket PRIVATE NetSocketLib BitStreamLib)
+target_link_libraries(test_server_socket PRIVATE NetSocketLib BitStreamLib)
