@@ -35,7 +35,7 @@ static int get_dgram_socket(addrinfo *addr, bool should_bind, addrinfo *res_addr
     int trueVal = 1;
     setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &trueVal, sizeof(int));
 
-    if (res_addr)
+    if (res_addr != nullptr) // TODO: check performance
       *res_addr = *ptr;
     if (!should_bind)
       return sfd;
@@ -53,7 +53,7 @@ int create_dgram_socket(const char *address, const char *port, addrinfo *res_add
   addrinfo hints;
   memset(&hints, 0, sizeof(addrinfo));
 
-  bool isListener = !address;
+  bool isListener = address == nullptr; // TODO: check performance
 
   hints.ai_family = AF_INET;
   hints.ai_socktype = SOCK_DGRAM;
@@ -98,7 +98,7 @@ int Socket::bind(const char* address, const char* port)
   addrinfo hints{};
   hints.ai_family = AF_INET;
   hints.ai_socktype = SOCK_DGRAM;
-  hints.ai_flags = address ? 0 : AI_PASSIVE;
+  hints.ai_flags = (address != nullptr) ? 0 : AI_PASSIVE; // TODO: check performance
 
   addrinfo* result = nullptr;
   if (getaddrinfo(address, port, &hints, &result) != 0) {
@@ -115,7 +115,7 @@ int Socket::bind(const char* address, const char* port)
   int trueVal = 1;
   setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR, &trueVal, sizeof(int));
 
-  if (bind(socketFd, result->ai_addr, result->ai_addrlen) == -1) {
+  if (::bind(socketFd, result->ai_addr, result->ai_addrlen) == -1) {
     close(socketFd);
     socketFd = -1;
     freeaddrinfo(result);
@@ -145,7 +145,7 @@ void Socket::setEventHandler(EventHandler* handler)
 
 void Socket::pollReceive()
 {
-  if (!eventHandler || socketFd == -1) return;
+  if ((eventHandler == nullptr) || socketFd == -1) return; // TODO: check performance
 
   RecvData recvData{};
   socklen_t addrLen = sizeof(recvData.fromAddr);
@@ -189,7 +189,7 @@ std::vector<std::string> Socket::getLocalIPs()
   {
     for (ifaddrs* ifa = ifap; ifa != nullptr; ifa = ifa->ifa_next)
     {
-      if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET)
+      if ((ifa->ifa_addr != nullptr) && ifa->ifa_addr->sa_family == AF_INET) // TODO: check performance
       {
         sockaddr_in* sin = reinterpret_cast<sockaddr_in*>(ifa->ifa_addr);
         char ip[INET_ADDRSTRLEN];

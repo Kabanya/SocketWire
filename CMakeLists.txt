@@ -18,7 +18,7 @@ else ()
 endif ()
 
 # No profiling in release builds, mostly because Tracy emmits warnings in that case.
-# option(TRACY_ENABLE "Enable profiling" ${SOCKETWIRE_DEBUG})
+option(TRACY_ENABLE "Enable profiling" ${SOCKETWIRE_DEBUG})
 
 include("get_cpm.cmake")
 include("thirdparty.cmake")
@@ -28,14 +28,13 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Отключить сканирование модулей C++, чтобы избежать проблем с неподдерживаемыми флагами
+# Disable C++ module scanning to avoid problems with unsupported flags because of CMake 3.28
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
-# # Проверка поддержки модулей C++
+# Check for modules in cmake/clang
 # include(CheckCXXCompilerFlag)
 # check_cxx_compiler_flag("-fmodules-ts" COMPILER_SUPPORTS_MODULES)
 # if(COMPILER_SUPPORTS_MODULES)
-#   # Включить модули, если поддерживаются
 #   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fmodules-ts")
 # else()
 #   message(WARNING "The compiler does not support C++ modules. The modules are disabled.")
