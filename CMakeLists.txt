@@ -20,15 +20,15 @@ endif ()
 # No profiling in release builds, mostly because Tracy emmits warnings in that case.
 option(TRACY_ENABLE "Enable profiling" ${SOCKETWIRE_DEBUG})
 
-include("get_cpm.cmake")
-include("thirdparty.cmake")
-include("get_version.cmake")
+include("cmake/get_cpm.cmake")
+include("cmake/thirdparty.cmake")
+include("cmake/get_version.cmake")
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Disable C++ module scanning to avoid problems with unsupported flags because of CMake 3.28
+# Disable C++ module scanning to avoid problems because of cmake 3.28
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 # Check for modules in cmake/clang

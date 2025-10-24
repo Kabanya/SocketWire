@@ -1,7 +1,7 @@
 .vscode
-/**build**
+.cache
+**.DS_Store
+**build**
 /out
 CMakeLists.txt.user
-**.DS_Store
 compile_commands.json
-.cache
