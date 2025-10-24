@@ -18,9 +18,8 @@
 
 #include "NetSocket.h"
 
-namespace SocketWire 
+namespace socketwire
 {
-
 static int get_dgram_socket(addrinfo *addr, bool should_bind, addrinfo *res_addr)
 {
   for (addrinfo *ptr = addr; ptr != nullptr; ptr = ptr->ai_next)
@@ -76,7 +75,7 @@ void receive_messages(int sfd)
   char buffer[1500];
   sockaddr_in fromAddr;
   socklen_t addrLen = sizeof(fromAddr);
-  
+
   int bytesRead = recvfrom(sfd, buffer, sizeof(buffer), 0, 
                           reinterpret_cast<sockaddr*>(&fromAddr), &addrLen);
   if (bytesRead > 0) {
@@ -87,86 +86,86 @@ void receive_messages(int sfd)
 
 Socket::Socket() = default;
 
-Socket::~Socket() 
+Socket::~Socket()
 {
   if (socketFd != -1) {
     close(socketFd);
   }
 }
 
-int Socket::Bind(const char* address, const char* port) 
+int Socket::bind(const char* address, const char* port)
 {
   addrinfo hints{};
   hints.ai_family = AF_INET;
   hints.ai_socktype = SOCK_DGRAM;
   hints.ai_flags = address ? 0 : AI_PASSIVE;
-  
+
   addrinfo* result = nullptr;
   if (getaddrinfo(address, port, &hints, &result) != 0) {
     return -1;
   }
-  
+
   socketFd = socket(AF_INET, SOCK_DGRAM, 0);
   if (socketFd == -1) {
     freeaddrinfo(result);
     return -1;
   }
-  
+
   fcntl(socketFd, F_SETFL, O_NONBLOCK);
   int trueVal = 1;
   setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR, &trueVal, sizeof(int));
-  
+
   if (bind(socketFd, result->ai_addr, result->ai_addrlen) == -1) {
     close(socketFd);
     socketFd = -1;
     freeaddrinfo(result);
     return -1;
   }
-  
+
   freeaddrinfo(result);
   return 0;
 }
 
-int Socket::SendTo(const void* data, size_t length, const sockaddr_in& dest) 
+int Socket::sendTo(const void* data, size_t length, const sockaddr_in& dest)
 {
   if (socketFd == -1) {
     socketFd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socketFd == -1) return -1;
     fcntl(socketFd, F_SETFL, O_NONBLOCK);
   }
-  
-  return sendto(socketFd, data, length, 0, 
+
+  return sendto(socketFd, data, length, 0,
                 reinterpret_cast<const sockaddr*>(&dest), sizeof(dest));
 }
 
-void Socket::SetEventHandler(EventHandler* handler) 
+void Socket::setEventHandler(EventHandler* handler)
 {
   eventHandler = handler;
 }
 
-void Socket::PollReceive() 
+void Socket::pollReceive()
 {
   if (!eventHandler || socketFd == -1) return;
-  
+
   RecvData recvData{};
   socklen_t addrLen = sizeof(recvData.fromAddr);
-  
+
   int bytesRead = recvfrom(socketFd, recvData.data, sizeof(recvData.data), 0,
                           reinterpret_cast<sockaddr*>(&recvData.fromAddr), &addrLen);
-  
-  if (bytesRead > 0) 
+
+  if (bytesRead > 0)
   {
     recvData.bytesRead = bytesRead;
     recvData.timeReceived = std::chrono::duration_cast<std::chrono::microseconds>(
                             std::chrono::steady_clock::now().time_since_epoch()).count();
-    eventHandler->OnDataReceived(recvData);
+    eventHandler->onDataReceived(recvData);
   }
 }
 
-uint16_t Socket::GetLocalPort() const 
+uint16_t Socket::getLocalPort() const
 {
   if (socketFd == -1) return 0;
-  
+
   sockaddr_in addr{};
   socklen_t len = sizeof(addr);
   if (getsockname(socketFd, (sockaddr*)&addr, &len) == 0) {
@@ -175,22 +174,22 @@ uint16_t Socket::GetLocalPort() const
   return 0;
 }
 
-bool Socket::IsPortInUse(const char* address, const char* port) 
+bool Socket::isPortInUse(const char* address, const char* port)
 {
   Socket testSocket;
-  return testSocket.Bind(address, port) != 0;
+  return testSocket.bind(address, port) != 0;
 }
 
-std::vector<std::string> Socket::GetLocalIPs() 
+std::vector<std::string> Socket::getLocalIPs()
 {
   std::vector<std::string> ips;
   ifaddrs* ifap = nullptr;
-  
-  if (getifaddrs(&ifap) == 0) 
+
+  if (getifaddrs(&ifap) == 0)
   {
-    for (ifaddrs* ifa = ifap; ifa != nullptr; ifa = ifa->ifa_next) 
+    for (ifaddrs* ifa = ifap; ifa != nullptr; ifa = ifa->ifa_next)
     {
-      if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET) 
+      if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET)
       {
         sockaddr_in* sin = reinterpret_cast<sockaddr_in*>(ifa->ifa_addr);
         char ip[INET_ADDRSTRLEN];
@@ -200,8 +199,8 @@ std::vector<std::string> Socket::GetLocalIPs()
     }
     freeifaddrs(ifap);
   }
-  
+
   return ips;
 }
 
-} // namespace SocketWire
+} // namespace socketwire

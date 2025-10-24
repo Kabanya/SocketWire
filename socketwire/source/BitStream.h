@@ -4,7 +4,6 @@
 #include <vector>
 #include <cstdint>
 #include <type_traits>
-#include <stdexcept>
 #include <string>
 
 
@@ -18,7 +17,7 @@ private:
 public:
   BitStream();
   BitStream(const std::uint8_t* data, size_t size);
-  
+
   ///@name Побитовые операции
   ///@{
   /**
@@ -32,7 +31,7 @@ public:
    */
   bool ReadBit();
   ///@}
-  
+
   /**
    * @brief Записывает указанное количество бит в поток
    * @param value Значение для записи
@@ -45,7 +44,7 @@ public:
    * @return Значение прочитанных бит
    */
   uint32_t ReadBits(uint8_t bitCount);
-  
+
   ///@name Операции с байтами
   ///@{
   /**
@@ -61,7 +60,7 @@ public:
    */
   void ReadBytes(void* data, size_t size);
   ///@}
-  
+
   ///@name Операции выравнивания
   ///@{
   /**
@@ -73,7 +72,7 @@ public:
    */
   void AlignRead();
   ///@}
-  
+
   /// @name Операции с template
   /// @{
   /**
@@ -87,7 +86,7 @@ public:
       static_assert(std::is_trivially_copyable_v<T>, "Type must be trivially copyable");
       WriteBytes(&value, sizeof(T));
   }
-  
+
   /**
    * @brief Читает значение из потока
    * @tparam T Тип значения (должен быть тривиально копируемым)
@@ -100,7 +99,7 @@ public:
       ReadBytes(&value, sizeof(T));
   }
   ///@}
-  
+
   /**
    * Специализация шаблона для записи строки
    * @brief Записывает строку в поток
@@ -113,7 +112,7 @@ public:
    * @param value Ссылка для записи прочитанной строки
    */
   void Read(std::string& value);
-  
+
   ///@name Операции с массивами булевых значений
   ///@{
   /**
@@ -127,7 +126,7 @@ public:
    */
   std::vector<bool> ReadBoolArray();
   ///@}
-  
+
   /// @name Полезные методы
   /// @{
   /**

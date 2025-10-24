@@ -1,5 +1,5 @@
-Tests
 .vscode
-/build
+/**build**
 CMakeLists.txt.user
 **.DS_Store
+compile_commands.json
