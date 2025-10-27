@@ -9,11 +9,13 @@ CPMAddPackage(
     SPDLOG_USE_STD_FORMAT ON  # std::format from C++20
 )
 
-# A profiler for both CPU and GPU
+# Google Test for unit testing
 CPMAddPackage(
-  GITHUB_REPOSITORY wolfpld/tracy
-  GIT_TAG v0.12.2
+  NAME googletest
+  GITHUB_REPOSITORY google/googletest
+  VERSION 1.17.0
   OPTIONS
-    "TRACY_ON_DEMAND ON"
-    "TRACY_NO_VULKAN ON"
+    "INSTALL_GTEST OFF"
+    "gtest_force_shared_crt ON"
 )
+
