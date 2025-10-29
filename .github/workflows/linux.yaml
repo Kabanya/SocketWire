@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        cxx: [g++-12, clang++-15]
+        cxx: [g++-14, clang++-19]
         build_type: [Debug, RelWithDebInfo, Release]
         include:
           - cxx: g++-12
