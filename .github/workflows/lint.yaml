@@ -19,7 +19,7 @@ jobs:
 
     - uses: jidicula/clang-format-action@v4.11.0
       with:
-        clang-format-version: '17'
+        clang-format-version: '19'
         fallback-style: 'none'
 
     - uses: ZedThree/clang-tidy-review@v0.14.0 # v0.17 was buggy
