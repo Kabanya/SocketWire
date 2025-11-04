@@ -17,9 +17,6 @@ else ()
   set(SOCKETWIRE_DEBUG OFF)
 endif ()
 
-# No profiling in release builds, mostly because Tracy emmits warnings in that case.
-option(TRACY_ENABLE "Enable profiling" ${SOCKETWIRE_DEBUG})
-
 include("cmake/get_cpm.cmake")
 include("cmake/thirdparty.cmake")
 include("cmake/get_version.cmake")
