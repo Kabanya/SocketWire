@@ -1,3 +1,7 @@
+#include <chrono>
+#include <stdio.h>
+#include <cstring>
+
 #if defined(__APPLE__) || defined(__linux__)
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -10,13 +14,7 @@
 #include <netinet/in.h>
 #endif
 
-#include <stdio.h>
-#include <cstring>
-#include <chrono>
-#include <vector>
-#include <string>
-
-#include "NetSocket.h"
+#include "net_socket.hpp"
 
 namespace socketwire
 {

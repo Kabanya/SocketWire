@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include "NetSocket.h"
+#include "net_socket.hpp"
 #include <arpa/inet.h>
 #include <cstring>
 

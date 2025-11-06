@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "BitStream.h"
+#include "bit_stream.hpp"
 
 class BitStreamTest : public ::testing::Test
 {
