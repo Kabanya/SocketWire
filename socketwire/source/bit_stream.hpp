@@ -6,6 +6,8 @@
 #include <type_traits>
 #include <string>
 
+namespace socketwire
+{
 
 class BitStream
 {
@@ -161,5 +163,7 @@ public:
   void writeQuantizedFloat(float value, float min, float max, uint8_t bits);
   float readQuantizedFloat(float min, float max, uint8_t bits);
 };
+
+} // namespace socketwire
 
 #endif // BITSTREAM_H

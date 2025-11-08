@@ -4,7 +4,7 @@
 class BitStreamTest : public ::testing::Test
 {
 protected:
-  BitStream bs;
+  socketwire::BitStream bs;
 };
 
 TEST_F(BitStreamTest, WriteAndReadBit)

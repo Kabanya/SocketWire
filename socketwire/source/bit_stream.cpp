@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <stdexcept>
 
+namespace socketwire
+{
+
 BitStream::BitStream() = default;
 
 BitStream::BitStream(const std::uint8_t* data, size_t size)
@@ -175,7 +178,7 @@ void BitStream::resetWrite()
 
 void BitStream::resetRead()
 {
-    m_ReadPose = 0;
+  m_ReadPose = 0;
 }
 
 void BitStream::clear()
@@ -202,3 +205,5 @@ float BitStream::readQuantizedFloat(float min, float max, uint8_t bits)
   uint32_t quantized = readBits(bits);
   return min + (float(quantized) / float(range)) * (max - min);
 }
+
+} // namespace socketwire
