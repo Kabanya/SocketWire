@@ -5,6 +5,7 @@ include(GoogleTest)
 add_executable(SocketWireTests
   test_BitStream.cpp
   test_NetSocket.cpp
+  test_Performance.cpp
 )
 
 target_link_libraries(SocketWireTests
