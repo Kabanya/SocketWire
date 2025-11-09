@@ -1,21 +1,40 @@
+/*
+Performance test suite for SocketWire library
+Migrated from legacy net_socket tests to use the new ISocket architecture
+with factory pattern and POSIX UDP socket implementation.
+*/
+
 #include <gtest/gtest.h>
 #include <chrono>
 #include <iostream>
 #include <cstring>
-#include <arpa/inet.h>
 #include "bit_stream.hpp"
-#include "net_socket.hpp"
+#include "i_socket.hpp"
+
+// Forward declaration
+namespace socketwire {
+  void register_posix_socket_factory();
+}
+
+using namespace socketwire; //NOLINT
 
 class PerformanceTest : public ::testing::Test
 {
 protected:
   void SetUp() override {
     std::cout << "\n\n________Running_test:_" << ::testing::UnitTest::GetInstance()->current_test_info()->name() << "________\n\n\n";
+
+    // Register POSIX socket factory
+    register_posix_socket_factory();
+    factory = SocketFactoryRegistry::getFactory();
+    ASSERT_NE(factory, nullptr) << "Socket factory should be registered";
   }
 
   void TearDown() override {
     std::cout << "\n";
   }
+
+  ISocketFactory* factory = nullptr;
 
   template<typename Func>
   double measureTime(const std::string& operation_name, int iterations, Func func) {
@@ -246,9 +265,11 @@ TEST_F(PerformanceTest, NetSocketCreation) {
 
   std::cout << "NetSocket Creation Performance:\n";
 
-  measureTime("Create and bind 10K sockets", iterations, []() {
-    socketwire::Socket sock;
-    sock.bind("127.0.0.1", "0");
+  measureTime("Create and bind 10K sockets", iterations, [this]() {
+    SocketConfig config;
+    auto sock = factory->createUDPSocket(config);
+    SocketAddress addr = SocketAddress::fromIPv4(0x7F000001); // 127.0.0.1
+    sock->bind(addr, 0);
   });
 
   SUCCEED();
@@ -260,25 +281,25 @@ TEST_F(PerformanceTest, NetSocketSendReceive) {
   std::cout << "NetSocket Send/Receive Performance:\n";
 
   // Create sender and receiver
-  socketwire::Socket sender;
-  socketwire::Socket receiver;
+  SocketConfig config;
+  auto sender = factory->createUDPSocket(config);
+  auto receiver = factory->createUDPSocket(config);
 
-  ASSERT_EQ(sender.bind("127.0.0.1", "0"), 0);
-  ASSERT_EQ(receiver.bind("127.0.0.1", "0"), 0);
+  ASSERT_NE(sender, nullptr);
+  ASSERT_NE(receiver, nullptr);
 
-  int receiver_port = receiver.getLocalPort();
+  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001); // 127.0.0.1
+  ASSERT_EQ(sender->bind(addr, 0), SocketError::None);
+  ASSERT_EQ(receiver->bind(addr, 0), SocketError::None);
 
-  sockaddr_in dest;
-  std::memset(&dest, 0, sizeof(dest));
-  dest.sin_family = AF_INET;
-  dest.sin_port = htons(receiver_port);
-  inet_pton(AF_INET, "127.0.0.1", &dest.sin_addr);
+  std::uint16_t receiverPort = receiver->localPort();
+  ASSERT_GT(receiverPort, 0);
 
   const char* message = "Performance test message";
   size_t message_len = strlen(message);
 
-  measureTime("Send 10K UDP packets", iterations, [&sender, message, message_len, &dest]() {
-    sender.sendTo(message, message_len, dest);
+  measureTime("Send 10K UDP packets", iterations, [&sender, message, message_len, &addr, receiverPort]() {
+    sender->sendTo(message, message_len, addr, receiverPort);
   });
 
   SUCCEED();
