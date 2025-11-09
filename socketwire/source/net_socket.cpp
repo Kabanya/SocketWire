@@ -74,7 +74,7 @@ void receive_messages(int sfd)
   sockaddr_in fromAddr;
   socklen_t addrLen = sizeof(fromAddr);
 
-  int bytesRead = recvfrom(sfd, buffer, sizeof(buffer), 0, 
+  int bytesRead = recvfrom(sfd, buffer, sizeof(buffer), 0,
                           reinterpret_cast<sockaddr*>(&fromAddr), &addrLen);
   if (bytesRead > 0) {
     buffer[bytesRead] = '\0';

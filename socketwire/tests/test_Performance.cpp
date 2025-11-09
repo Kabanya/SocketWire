@@ -10,7 +10,7 @@ class PerformanceTest : public ::testing::Test
 {
 protected:
   void SetUp() override {
-    std::cout << "\n\n____Running_test:_" << ::testing::UnitTest::GetInstance()->current_test_info()->name() << "____\n\n\n";
+    std::cout << "\n\n________Running_test:_" << ::testing::UnitTest::GetInstance()->current_test_info()->name() << "________\n\n\n";
   }
 
   void TearDown() override {
@@ -38,10 +38,12 @@ protected:
 
     return ms;
   }
+
+  static constexpr double multiplier = 1;
 };
 
 TEST_F(PerformanceTest, BitStreamWriteReadBit) {
-  const int iterations = 1000000;
+  const int iterations = 1000000 * multiplier;
 
   std::cout << "BitStream Bit Operations Performance:\n";
 
@@ -68,7 +70,7 @@ TEST_F(PerformanceTest, BitStreamWriteReadBit) {
 }
 
 TEST_F(PerformanceTest, BitStreamWriteReadBytes) {
-  const int iterations = 100000;
+  const int iterations = 100000 * multiplier;
 
   std::cout << "BitStream Byte Operations Performance:\n";
 
@@ -99,7 +101,7 @@ TEST_F(PerformanceTest, BitStreamWriteReadBytes) {
 }
 
 TEST_F(PerformanceTest, BitStreamWriteReadIntegers) {
-  const int iterations = 500000;
+  const int iterations = 500000 * multiplier;
 
   std::cout << "BitStream Integer Operations Performance:\n";
 
@@ -129,7 +131,7 @@ TEST_F(PerformanceTest, BitStreamWriteReadIntegers) {
 }
 
 TEST_F(PerformanceTest, BitStreamQuantizedFloat) {
-  const int iterations = 200000;
+  const int iterations = 200000 * multiplier;
 
   std::cout << "BitStream Quantized Float Performance:\n";
 
@@ -158,7 +160,7 @@ TEST_F(PerformanceTest, BitStreamQuantizedFloat) {
 }
 
 TEST_F(PerformanceTest, BitStreamStringOperations) {
-  const int iterations = 100000;
+  const int iterations = 100000 * multiplier;
 
   std::cout << "BitStream String Operations Performance:\n";
 
@@ -188,7 +190,7 @@ TEST_F(PerformanceTest, BitStreamStringOperations) {
 }
 
 TEST_F(PerformanceTest, BitStreamMixedOperations) {
-  const int iterations = 50000;
+  const int iterations = 50000 * multiplier;
 
   std::cout << "BitStream Mixed Operations Performance:\n";
 
@@ -240,7 +242,7 @@ TEST_F(PerformanceTest, BitStreamMixedOperations) {
 }
 
 TEST_F(PerformanceTest, NetSocketCreation) {
-  const int iterations = 10000;
+  const int iterations = 10000 * multiplier;
 
   std::cout << "NetSocket Creation Performance:\n";
 
@@ -253,7 +255,7 @@ TEST_F(PerformanceTest, NetSocketCreation) {
 }
 
 TEST_F(PerformanceTest, NetSocketSendReceive) {
-  const int iterations = 10000;
+  const int iterations = 10000 * multiplier;
 
   std::cout << "NetSocket Send/Receive Performance:\n";
 
@@ -283,7 +285,7 @@ TEST_F(PerformanceTest, NetSocketSendReceive) {
 }
 
 TEST_F(PerformanceTest, BitStreamLargeDataTransfer) {
-  const int iterations = 1000;
+  const int iterations = 1000 * multiplier;
   const int data_size = 1024 * 10; // 10 KB
 
   std::cout << "BitStream Large Data Transfer Performance:\n";
@@ -318,7 +320,7 @@ TEST_F(PerformanceTest, BitStreamLargeDataTransfer) {
 }
 
 TEST_F(PerformanceTest, BitStreamAlignment) {
-  const int iterations = 500000;
+  const int iterations = 500000 * multiplier;
 
   std::cout << "BitStream Alignment Performance:\n";
 
