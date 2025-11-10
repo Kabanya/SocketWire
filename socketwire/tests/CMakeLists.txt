@@ -7,6 +7,7 @@ add_executable(SocketWireTests
   test_NetSocket.cpp
   test_Performance.cpp
   test_PosixUDPSocket.cpp
+  test_SocketPoller.cpp
 )
 
 target_link_libraries(SocketWireTests

@@ -10,6 +10,7 @@ with factory pattern and POSIX UDP socket implementation.
 #include <cstring>
 #include "bit_stream.hpp"
 #include "i_socket.hpp"
+#include "socket_poller.hpp"
 
 // Forward declaration
 namespace socketwire {
@@ -97,7 +98,7 @@ TEST_F(PerformanceTest, BitStreamWriteReadBytes) {
   size_t data_len = strlen(data);
 
   // Write performance
-  measureTime("Write 100K byte arrays", iterations, [data, data_len]() {
+  measureTime("Write " + std::to_string(iterations) + " byte arrays", iterations, [data, data_len]() {
     socketwire::BitStream bs;
     bs.writeBytes(data, data_len);
   });
@@ -109,7 +110,7 @@ TEST_F(PerformanceTest, BitStreamWriteReadBytes) {
   }
 
   char buffer[64];
-  measureTime("Read 100K byte arrays", iterations, [&bs_read, &buffer, data_len]() {
+  measureTime("Read " + std::to_string(iterations) + " byte arrays", iterations, [&bs_read, &buffer, data_len]() {
     bs_read.resetRead();
     for (int i = 0; i < 10; ++i) {
       bs_read.readBytes(buffer, data_len);
@@ -125,7 +126,7 @@ TEST_F(PerformanceTest, BitStreamWriteReadIntegers) {
   std::cout << "BitStream Integer Operations Performance:\n";
 
   // Write performance
-  measureTime("Write 500K integers", iterations, []() {
+  measureTime("Write " + std::to_string(iterations) + " integers", iterations, []() {
     socketwire::BitStream bs;
     bs.write(42);
     bs.write(-123);
@@ -139,7 +140,7 @@ TEST_F(PerformanceTest, BitStreamWriteReadIntegers) {
   }
 
   int value;
-  measureTime("Read 500K integers", iterations, [&bs_read, &value]() {
+  measureTime("Read " + std::to_string(iterations) + " integers", iterations, [&bs_read, &value]() {
     bs_read.resetRead();
     for (int i = 0; i < 10; ++i) {
       bs_read.read(value);
@@ -155,7 +156,7 @@ TEST_F(PerformanceTest, BitStreamQuantizedFloat) {
   std::cout << "BitStream Quantized Float Performance:\n";
 
   // Write performance
-  measureTime("Write 200K quantized floats", iterations, []() {
+  measureTime("Write " + std::to_string(iterations) + " quantized floats", iterations, []() {
     socketwire::BitStream bs;
     bs.writeQuantizedFloat(3.14f, 0.0f, 10.0f, 16);
     bs.writeQuantizedFloat(7.5f, 0.0f, 10.0f, 16);
@@ -168,7 +169,7 @@ TEST_F(PerformanceTest, BitStreamQuantizedFloat) {
     bs_read.writeQuantizedFloat(val, 0.0f, 10.0f, 16);
   }
 
-  measureTime("Read 200K quantized floats", iterations, [&bs_read]() {
+  measureTime("Read " + std::to_string(iterations) + " quantized floats", iterations, [&bs_read]() {
     bs_read.resetRead();
     for (int i = 0; i < 10; ++i) {
       bs_read.readQuantizedFloat(0.0f, 10.0f, 16);
@@ -186,7 +187,7 @@ TEST_F(PerformanceTest, BitStreamStringOperations) {
   std::string test_string = "This is a test string for performance measurement";
 
   // Write performance
-  measureTime("Write 100K strings", iterations, [&test_string]() {
+  measureTime("Write " + std::to_string(iterations) + " strings", iterations, [&test_string]() {
     socketwire::BitStream bs;
     bs.write(test_string);
   });
@@ -198,7 +199,7 @@ TEST_F(PerformanceTest, BitStreamStringOperations) {
   }
 
   std::string result;
-  measureTime("Read 100K strings", iterations, [&bs_read, &result]() {
+  measureTime("Read " + std::to_string(iterations) + " strings", iterations, [&bs_read, &result]() {
     bs_read.resetRead();
     for (int i = 0; i < 10; ++i) {
       bs_read.read(result);
@@ -214,7 +215,7 @@ TEST_F(PerformanceTest, BitStreamMixedOperations) {
   std::cout << "BitStream Mixed Operations Performance:\n";
 
   // Complex write scenario
-  double write_time = measureTime("Write 50K mixed data packets", iterations, []() {
+  double write_time = measureTime("Write " + std::to_string(iterations) + " mixed data packets", iterations, []() {
     socketwire::BitStream bs;
 
     // Simulate a game packet
@@ -265,7 +266,7 @@ TEST_F(PerformanceTest, NetSocketCreation) {
 
   std::cout << "NetSocket Creation Performance:\n";
 
-  measureTime("Create and bind 10K sockets", iterations, [this]() {
+  measureTime("Create and bind " + std::to_string(iterations) + " sockets", iterations, [this]() {
     SocketConfig config;
     auto sock = factory->createUDPSocket(config);
     SocketAddress addr = SocketAddress::fromIPv4(0x7F000001); // 127.0.0.1
@@ -313,7 +314,7 @@ TEST_F(PerformanceTest, BitStreamLargeDataTransfer) {
 
   std::vector<char> large_data(data_size, 'X');
 
-  double write_time = measureTime("Write 1K x 10KB blocks", iterations, [&large_data]() {
+  double write_time = measureTime("Write " + std::to_string(iterations) + " x " + std::to_string(data_size/1024) + " blocks", iterations, [&large_data]() {
     socketwire::BitStream bs;
     bs.writeBytes(large_data.data(), large_data.size());
   });
@@ -324,7 +325,7 @@ TEST_F(PerformanceTest, BitStreamLargeDataTransfer) {
   }
 
   std::vector<char> read_buffer(data_size);
-  double read_time = measureTime("Read 1K x 10KB blocks", iterations, [&bs_read, &read_buffer]() {
+  double read_time = measureTime("Read " + std::to_string(iterations) + " x " + std::to_string(data_size/1024) + " blocks", iterations, [&bs_read, &read_buffer]() {
     bs_read.resetRead();
     bs_read.readBytes(read_buffer.data(), read_buffer.size());
   });
@@ -345,7 +346,7 @@ TEST_F(PerformanceTest, BitStreamAlignment) {
 
   std::cout << "BitStream Alignment Performance:\n";
 
-  measureTime("Write + Align 500K times", iterations, []() {
+  measureTime("Write + Align " + std::to_string(iterations) + " times", iterations, []() {
     socketwire::BitStream bs;
     bs.writeBits(0b111, 3);
     bs.alignWrite();
@@ -359,13 +360,160 @@ TEST_F(PerformanceTest, BitStreamAlignment) {
     bs_read.writeBytes("A", 1);
   }
 
-  measureTime("Read + Align 500K times", iterations, [&bs_read]() {
+  measureTime("Read + Align " + std::to_string(iterations) + " times", iterations, [&bs_read]() {
     bs_read.resetRead();
     bs_read.readBits(3);
     bs_read.alignRead();
     char c;
     bs_read.readBytes(&c, 1);
   });
+
+  SUCCEED();
+}
+
+TEST_F(PerformanceTest, SocketPollerAddRemoveSockets) {
+  const int iterations = 1000 * multiplier;
+
+  std::cout << "SocketPoller Add/Remove Sockets Performance:\n";
+
+  measureTime("Add/Remove " + std::to_string(iterations) + " sockets", iterations, [this]() {
+    SocketPoller poller;
+    SocketConfig config;
+    auto socket = factory->createUDPSocket(config);
+    SocketAddress addr = SocketAddress::fromIPv4(0x7F000001); // 127.0.0.1
+    socket->bind(addr, 0);
+    poller.addSocket(socket.get(), false);
+    poller.removeSocket(socket.get());
+  });
+
+  SUCCEED();
+}
+
+TEST_F(PerformanceTest, SocketPollerPollEmpty) {
+  const int iterations = 10000 * multiplier;
+
+  std::cout << "SocketPoller Poll Empty Performance:\n";
+
+  SocketPoller poller;
+
+  measureTime("Poll empty poller " + std::to_string(iterations) + " times", iterations, [&poller]() {
+    auto events = poller.poll(0); // Non-blocking
+    (void)events;
+  });
+
+  SUCCEED();
+}
+
+TEST_F(PerformanceTest, SocketPollerPollWithSockets) {
+  const int num_sockets = 100;
+  const int iterations = 1000 * multiplier;
+
+  std::cout << "SocketPoller Poll With Sockets Performance:\n";
+
+  std::vector<std::unique_ptr<ISocket>> sockets;
+  SocketPoller poller;
+  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001); // 127.0.0.1
+
+  // Create and add sockets
+  for (int i = 0; i < num_sockets; ++i) {
+    SocketConfig config;
+    auto socket = factory->createUDPSocket(config);
+    socket->bind(addr, 0);
+    sockets.push_back(std::move(socket));
+    poller.addSocket(sockets.back().get(), false);
+  }
+
+  measureTime("Poll 100 sockets 1K times", iterations, [&poller]() {
+    auto events = poller.poll(0); // Non-blocking
+    (void)events;
+  });
+
+  SUCCEED();
+}
+
+TEST_F(PerformanceTest, SocketPollerDispatchEvents) {
+  const int iterations = 100000 * multiplier;
+
+  std::cout << "SocketPoller Dispatch Events Performance:\n";
+
+  // Simple event handler that does nothing
+  class DummyHandler : public ISocketEventHandler {
+  public:
+    void onDataReceived(const SocketAddress&, std::uint16_t, const void*, std::size_t) override {}
+    void onSocketError(SocketError) override {}
+    void onSocketClosed() override {}
+  };
+
+  DummyHandler handler;
+  SocketPoller poller;
+
+  // Create a socket and add to poller
+  SocketConfig config;
+  auto socket = factory->createUDPSocket(config);
+  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
+  socket->bind(addr, 0);
+  poller.addSocket(socket.get(), false);
+
+  // Create dummy events
+  std::vector<SocketEvent> events;
+  SocketEvent ev;
+  ev.socket = socket.get();
+  ev.readable = true;
+  events.push_back(ev);
+
+  measureTime("Dispatch " + std::to_string(iterations) + " events", iterations, [&poller, &events, &handler]() {
+    poller.dispatchAll(events, &handler);
+  });
+
+  SUCCEED();
+}
+
+TEST_F(PerformanceTest, SocketPollerIntegrationSendReceive) {
+  const int iterations = 10000 * multiplier;
+
+  std::cout << "SocketPoller Integration Send/Receive Performance:\n";
+
+  // Create sender and receiver
+  SocketConfig config;
+  auto sender = factory->createUDPSocket(config);
+  auto receiver = factory->createUDPSocket(config);
+
+  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001); // 127.0.0.1
+  sender->bind(addr, 0);
+  receiver->bind(addr, 0);
+  uint16_t receiverPort = receiver->localPort();
+
+  SocketPoller poller;
+  poller.addSocket(receiver.get(), false);
+
+  const char* message = "Perf test message";
+  size_t message_len = strlen(message);
+
+  // Handler to count received messages
+  class CountingHandler : public ISocketEventHandler {
+  public:
+    int count = 0;
+    void onDataReceived(const SocketAddress&, std::uint16_t, const void*, std::size_t) override {
+      ++count;
+    }
+    void onSocketError(SocketError) override {}
+    void onSocketClosed() override {}
+  };
+
+  CountingHandler handler;
+
+  measureTime("Send/Receive " + std::to_string(iterations) + " messages via poller", iterations, [&]() {
+    // Send message
+    sender->sendTo(message, message_len, addr, receiverPort);
+
+    // Poll and dispatch
+    auto events = poller.poll(10); // Short timeout
+    if (!events.empty()) {
+      poller.dispatchReadable(events[0], &handler);
+    }
+  });
+
+  std::cout << "  Total messages received: " << handler.count << "\n";
 
   SUCCEED();
 }
