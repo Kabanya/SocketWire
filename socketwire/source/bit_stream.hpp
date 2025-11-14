@@ -1,5 +1,4 @@
-#ifndef BITSTREAM_H
-#define BITSTREAM_H
+#pragma once
 
 #include <vector>
 #include <cstdint>
@@ -165,5 +164,3 @@ public:
 };
 
 } // namespace socketwire
-
-#endif // BITSTREAM_H

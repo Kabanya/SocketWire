@@ -1,5 +1,4 @@
-#ifndef SOCKETWIRE_I_SOCKET_HPP
-#define SOCKETWIRE_I_SOCKET_HPP
+#pragma once
 
 /*
   Socket abstraction for cross-platform network layer.
@@ -236,5 +235,3 @@ public:
 };
 
 } // namespace socketwire
-
-#endif // SOCKETWIRE_I_SOCKET_HPP
