@@ -1,6 +1,11 @@
 # SocketWire
 
-Cross-platform framework for multiplayer games. Uses C++23 and has no runtime dependencies. GoogleTest is used only for testing.
+Cross-platform framework for multiplayer games. Uses C++23, libsodium for cryptography, and has no runtime dependencies. GoogleTest is used only for testing.
+
+## Requirements
+
+- CMake 3.28 or higher
+- A C++ compiler that supports C++23 standard
 
 ## Examples
 
