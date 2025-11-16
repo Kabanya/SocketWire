@@ -79,7 +79,7 @@ struct ReceivedPacket
 class IReliableConnectionHandler
 {
 public:
-  virtual ~IReliableConnectionHandler() = default;
+  virtual ~IReliableConnectionHandler() = default; // disconect();
 
   // Called when connection is established
   virtual void onConnected() {}
@@ -98,12 +98,12 @@ public:
 };
 
 
-// ReliableConnection - manages a single reliable connection over UDP
+// Manages a single reliable connection over UDP
 class ReliableConnection
 {
 public:
   explicit ReliableConnection(ISocket* socket, const ReliableConnectionConfig& cfg = {});
-  ~ReliableConnection() = default;
+  ~ReliableConnection();
 
   // Connection management
   void connect(const SocketAddress& addr, std::uint16_t port);
@@ -116,14 +116,14 @@ public:
   void setConnected() { state = ConnectionState::Connected; }
 
   // Send packets
-  bool sendReliable(std::uint8_t channel, const void* data, std::size_t size);
-  bool sendUnreliable(std::uint8_t channel, const void* data, std::size_t size);
-  bool sendUnsequenced(std::uint8_t channel, const void* data, std::size_t size);
+  bool sendReliable(const std::uint8_t channel, const void* data, std::size_t size);
+  bool sendUnreliable(const std::uint8_t channel, const void* data, std::size_t size);
+  bool sendUnsequenced(const std::uint8_t channel, const void* data, std::size_t size);
 
   // BitStream convenience methods
-  bool sendReliable(std::uint8_t channel, BitStream& stream);
-  bool sendUnreliable(std::uint8_t channel, BitStream& stream);
-  bool sendUnsequenced(std::uint8_t channel, BitStream& stream);
+  bool sendReliable(const std::uint8_t channel, const BitStream& stream);
+  bool sendUnreliable(const std::uint8_t channel, const BitStream& stream);
+  bool sendUnsequenced(const std::uint8_t channel, const BitStream& stream);
 
   // Update - call regularly (e.g., every frame)
   void update();
@@ -188,7 +188,7 @@ private:
   void cleanupOldSequences();
 
   std::uint32_t getNextSequence() { return sendSequence++; }
-  bool isSequenceNewer(std::uint32_t s1, std::uint32_t s2);
+  static bool isSequenceNewer(std::uint32_t s1, std::uint32_t s2);
 };
 
 /*
