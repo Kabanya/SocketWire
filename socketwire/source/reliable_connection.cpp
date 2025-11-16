@@ -478,6 +478,131 @@ ReliableConnection::~ReliableConnection()
 
 // ---------------------------------- ConnectionManager ----------------------------------
 
+ConnectionManager::ConnectionManager(ISocket* socket, const ReliableConnectionConfig& cfg)
+  : socket(socket)
+  , config(cfg)
+{
+}
 
+ConnectionManager::~ConnectionManager()
+{
+  for (auto* client : clients)
+  {
+    delete client->connection;
+    delete client;
+  }
+  clients.clear();
+  clientMap.clear();
+}
+
+void ConnectionManager::update()
+{
+  for (auto* client : clients)
+  {
+    if (client->connection != nullptr)
+      client->connection->update();
+  }
+
+  // Remove disconnected clients
+  clients.erase(
+    std::remove_if(clients.begin(), clients.end(),
+      [this](RemoteClient* client) {
+        if (client->connection->getState() == ConnectionState::Disconnected)
+        {
+          if (onClientDisconnected != nullptr)
+            onClientDisconnected(client);
+
+          std::uint64_t key = makeAddressKey(client->address, client->port);
+          clientMap.erase(key);
+
+          delete client->connection;
+          delete client;
+          return true;
+        }
+        return false;
+      }),
+    clients.end()
+  );
+}
+
+void ConnectionManager::processPacket(const void* data, std::size_t size,
+                                     const SocketAddress& from, std::uint16_t fromPort)
+{
+  RemoteClient* client = findOrCreateClient(from, fromPort);
+  if (client != nullptr && client->connection != nullptr)
+  {
+    client->connection->processPacket(data, size, from, fromPort);
+  }
+}
+
+void ConnectionManager::broadcastReliable(std::uint8_t channel, const void* data, std::size_t size)
+{
+  for (auto* client : clients)
+  {
+    if (client->connection != nullptr && client->connection->isConnected())
+      client->connection->sendReliable(channel, data, size);
+  }
+}
+
+void ConnectionManager::broadcastUnreliable(std::uint8_t channel, const void* data, std::size_t size)
+{
+  for (auto* client : clients)
+  {
+    if (client->connection != nullptr && client->connection->isConnected())
+      client->connection->sendUnreliable(channel, data, size);
+  }
+}
+
+std::vector<ConnectionManager::RemoteClient*> ConnectionManager::getConnections()
+{
+  return clients;
+}
+
+ConnectionManager::RemoteClient* ConnectionManager::getConnection(const SocketAddress& addr, std::uint16_t port)
+{
+  std::uint64_t key = makeAddressKey(addr, port);
+  auto it = clientMap.find(key);
+  return (it != clientMap.end()) ? it->second : nullptr;
+}
+
+ConnectionManager::RemoteClient* ConnectionManager::findOrCreateClient(const SocketAddress& addr, std::uint16_t port)
+{
+  std::uint64_t key = makeAddressKey(addr, port);
+
+  auto it = clientMap.find(key);
+  if (it != clientMap.end())
+    return it->second;
+
+  // Create new client
+  RemoteClient* client = new RemoteClient();
+  client->address = addr;
+  client->port = port;
+  client->connection = new ReliableConnection(socket, config);
+  client->connection->setRemoteAddress(addr, port);
+  client->connection->setHandler(eventHandler);
+
+  clients.push_back(client);
+  clientMap[key] = client;
+
+  return client;
+}
+
+void ConnectionManager::removeClient(RemoteClient* client)
+{
+  std::uint64_t key = makeAddressKey(client->address, client->port);
+  clientMap.erase(key);
+
+  auto it = std::find(clients.begin(), clients.end(), client);
+  if (it != clients.end())
+    clients.erase(it);
+
+  delete client->connection;
+  delete client;
+}
+
+std::uint64_t ConnectionManager::makeAddressKey(const SocketAddress& addr, std::uint16_t port)
+{
+  return makeConnectionKey(addr.ipv4.hostOrderAddress, port);
+}
 
 } // namespace socketwire

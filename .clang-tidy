@@ -62,7 +62,7 @@ Checks: >
   clang-analyzer-deadcode.DeadStores,
   clang-analyzer-security.insecureAPI.strcpy
 
-HeaderFilterRegex: '\.hpp$'
+HeaderFilterRegex: '\.(hpp|h|cpp|cc|cxx)$'
 
 WarningsAsErrors: '*'
 
@@ -102,3 +102,21 @@ CheckOptions: # inspire by C++ Core Guidelines
     value: snake_case
   - key: readability-identifier-naming.ConstexprVariableCase
     value: snake_case
+
+  # # Const-correctness check - warn if local variables can be declared const
+  # - key: misc-const-correctness.AnalyzeValues
+  #   value: 'true'
+  # - key: misc-const-correctness.AnalyzeReferences
+  #   value: 'true'
+  # - key: misc-const-correctness.AnalyzePointers
+  #   value: 'true'
+  # - key: misc-const-correctness.WarnPointersAsPointers
+  #   value: 'true'
+  # - key: misc-const-correctness.WarnPointersAsValues
+  #   value: 'false'
+  # - key: misc-const-correctness.TransformValues
+  #   value: 'true'
+  # - key: misc-const-correctness.TransformReferences
+  #   value: 'true'
+  # - key: misc-const-correctness.TransformPointersAsPointers
+  #   value: 'true'

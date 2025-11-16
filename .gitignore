@@ -6,5 +6,5 @@
 /out
 CMakeLists.txt.user
 compile_commands.json
-temp examples
+/temp_examples
 scripts

@@ -6,6 +6,7 @@ add_library(SocketWire STATIC
   posix_udp_socket.cpp
   socket_poller.hpp
   crypto.hpp
+  reliable_connection.hpp  reliable_connection.cpp
 )
 
 target_include_directories(SocketWire PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
