@@ -441,7 +441,8 @@ private:
   }
 };
 
-/*CryptoContext
+/*
+  CryptoContext
   Uses session keys to provide encryption/decryption of datagrams.
   Each direction has its own NonceGenerator (txNonce / rxNonce).
   Sequence numbers are external (provided by transport or reliability layer).
@@ -460,9 +461,11 @@ public:
 #endif
   }
 
-  /* Encryption: produce ciphertext (BitStream) from plaintext buffer.
-     AD (Associated Data) can include sequence number, channel id, etc.
-     For simplicity, we treat seq as AD (little-endian 64-bit). */
+  /*
+    Encryption: produce ciphertext (BitStream) from plaintext buffer.
+    AD (Associated Data) can include sequence number, channel id, etc.
+    For simplicity, we treat seq as AD (little-endian 64-bit).
+  */
   bool encrypt(std::uint64_t seq,
                const unsigned char* plain,
                std::size_t plainLen,
@@ -629,7 +632,7 @@ inline bool cipherSuiteSupported(CipherSuite s)
 }
 
 // Optional Utility: Identity Signature
-//  Placeholder: In future, we can use Ed25519 for identity signatures.
+// Placeholder: In future, we can use Ed25519 for identity signatures.
 
 struct IdentitySignature
 {

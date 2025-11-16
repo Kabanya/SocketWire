@@ -9,6 +9,9 @@ add_executable(SocketWireTests
   test_Performance.cpp
   test_PosixUDPSocket.cpp
   test_SocketPoller.cpp
+  test_ReliableConnection.cpp
+  test_ReliableConnection_Integration.cpp
+  test_ReliableConnection_Performance.cpp
 )
 
 target_link_libraries(SocketWireTests

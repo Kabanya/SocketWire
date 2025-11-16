@@ -234,4 +234,10 @@ public:
   static ISocketFactory* getFactory();
 };
 
+/*
+  Platform-specific socket factory registration.
+  Call this function to register the POSIX socket factory implementation.
+ */
+void register_posix_socket_factory();
+
 } // namespace socketwire
