@@ -23,6 +23,8 @@ using socketwire::SocketConfig;
 using socketwire::SocketType;
 using socketwire::SocketFactoryRegistry;
 
+namespace {
+
 // Mock socket for testing
 class MockSocket : public ISocket
 {
@@ -862,3 +864,4 @@ TEST_F(ConnectionManagerTest, UserData)
 
   delete userData;
 }
+} // anonymous namespace

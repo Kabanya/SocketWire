@@ -473,7 +473,12 @@ void ReliableConnection::cleanupOldSequences()
 
 ReliableConnection::~ReliableConnection()
 {
-  disconnect();
+  // Don't call disconnect() which may trigger callbacks during destruction
+  // Just clean up resources directly
+  state = ConnectionState::Disconnected;
+  pendingPackets.clear();
+  receivedSequences.clear();
+  pendingReceived.clear();
 }
 
 // ---------------------------------- ConnectionManager ----------------------------------

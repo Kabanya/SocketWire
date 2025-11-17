@@ -15,6 +15,13 @@
 
 using namespace socketwire; //NOLINT
 
+// Forward declaration of registration function
+namespace socketwire {
+  void register_posix_socket_factory();
+}
+
+namespace {
+
 // Mock event handler for testing
 class MockEventHandler : public ISocketEventHandler
 {
@@ -25,11 +32,6 @@ public:
               (override));
   MOCK_METHOD(void, onSocketError, (SocketError error), (override));
 };
-
-// Forward declaration of registration function
-namespace socketwire {
-  void register_posix_socket_factory();
-}
 
 class NetSocketTest : public ::testing::Test
 {
@@ -329,3 +331,4 @@ TEST_F(NetSocketTest, MultipleMessagesSequential)
     EXPECT_EQ(received, message) << "Message " << i << " should match";
   }
 }
+} // anonymous namespace
