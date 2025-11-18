@@ -22,3 +22,10 @@ target_link_libraries(SocketWireTests
 )
 
 gtest_discover_tests(SocketWireTests)
+
+# temp target
+add_custom_target(dump_test_results
+  COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/test_results_to_txt.py --build-dir ${CMAKE_BINARY_DIR} --output ${CMAKE_BINARY_DIR}/test-results.txt
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  COMMENT "Run CTest and write a human-readable test-results.txt to the build directory"
+)

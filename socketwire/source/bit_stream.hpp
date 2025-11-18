@@ -19,68 +19,34 @@ public:
   BitStream();
   BitStream(const std::uint8_t* data, size_t size);
 
-  ///@name Побитовые операции
-  ///@{
-  /**
-   * @brief Записывает один бит в поток
-   * @param value Значение бита для записи
-   */
-  void writeBit(bool value);
-  /**
-   * @brief Читает один бит из потока
-   * @return Значение прочитанного бита
-   */
-  bool readBit();
-  ///@}
+  // -----------------Bit operations-----------------
 
-  /**
-   * @brief Записывает указанное количество бит в поток
-   * @param value Значение для записи
-   * @param bitCount Количество бит для записи
-   */
+  // Writes a single bit to the stream
+  void writeBit(bool value);
+  // Reads a single bit from the stream
+  bool readBit();
+
+  // Writes the specified number of bits to the stream
   void writeBits(uint32_t value, uint8_t bit_count);
-  /**
-   * @brief Читает указанное количество бит из потока
-   * @param bitCount Количество бит для чтения
-   * @return Значение прочитанных бит
-   */
+  // Reads the specified number of bits from the stream
   uint32_t readBits(uint8_t bit_count);
 
-  ///@name Операции с байтами
-  ///@{
-  /**
-   * @brief Записывает массив байт в поток
-   * @param data Указатель на данные для записи
-   * @param size Размер данных в байтах
-   */
+  // -----------------Byte operations-----------------
+
+  // Writes an array of bytes to the stream
   void writeBytes(const void* data, size_t size);
-  /**
-   * @brief Читает массив байт из потока
-   * @param data Указатель для записи прочитанных данных
-   * @param size Размер данных в байтах для чтения
-   */
+  // Reads an array of bytes from the stream
   void readBytes(void* data, size_t size);
-  ///@}
 
-  ///@name Операции выравнивания
-  ///@{
-  /**
-   * @brief Выравнивает указатель записи на границу байта
-   */
+  // Alignment operations.
+  // Aligns the write pointer to the byte boundary
   void alignWrite();
-  /**
-   * @brief Выравнивает указатель чтения на границу байта
-   */
+  // Aligns the read pointer to the byte boundary
   void alignRead();
-  ///@}
 
-  /// @name Операции с template
-  /// @{
-  /**
-   * @brief Записывает значение в поток
-   * @tparam T Тип значения (должен быть тривиально копируемым)
-   * @param value Значение для записи
-   */
+  // -----------------Template operations-----------------
+
+  // Writes a value to the stream (type must be trivially copyable)
   template<typename T>
   void write(const T& value)
   {
@@ -88,78 +54,47 @@ public:
     writeBytes(&value, sizeof(T));
   }
 
-  /**
-   * @brief Читает значение из потока
-   * @tparam T Тип значения (должен быть тривиально копируемым)
-   * @param value Ссылка для записи прочитанного значения
-   */
+  // Reads a value from the stream (type must be trivially copyable)
   template<typename T>
   void read(T& value)
   {
     static_assert(std::is_trivially_copyable_v<T>, "Type must be trivially copyable");
     readBytes(&value, sizeof(T));
   }
-  ///@}
 
-  /**
-   * Специализация шаблона для записи строки
-   * @brief Записывает строку в поток
-   * @param value Строка для записи
-   */
+  // Template specialization for writing a string.
+  // Writes a string to the stream
   void write(const std::string& value);
-  /**
-   * Специализация шаблона для чтения строки
-   * @brief Читает строку из потока
-   * @param value Ссылка для записи прочитанной строки
-   */
+  // Template specialization for reading a string.
+  // Reads a string from the stream
   void read(std::string& value);
 
-  ///@name Операции с массивами булевых значений
-  ///@{
-  /**
-   * @brief Записывает массив булевых значений в поток
-   * @param bools Вектор булевых значений для записи
-   */
+  // Boolean array operations.
+  // Writes an array of boolean values to the stream
   void writeBoolArray(const std::vector<bool>& bools);
-  /**
-   * @brief Читает массив булевых значений из потока
-   * @return Вектор прочитанных булевых значений
-   */
+  // Reads an array of boolean values from the stream
   std::vector<bool> readBoolArray();
-  ///@}
 
-  /// @name Полезные методы
-  /// @{
-  /**
-   * @brief Возвращает указатель на данные в потоке
-   * @return Указатель на данные в потоке
-   */
+  // -----------------Utility methods-----------------
+
+  // Returns a pointer to the data in the stream
   const std::uint8_t* getData() const;
-  /**
-   * @brief Возвращает размер данных в потоке в байтах
-   * @return Размер данных в потоке в байтах
-   */
+  // Returns the size of the data in the stream in bytes
   size_t getSizeBytes() const;
-  /**
-   * @brief Возвращает размер данных в потоке в битах
-   * @return Размер данных в потоке в битах
-   */
+  // Returns the size of the data in the stream in bits
   size_t getSizeBits() const;
-  /**
-   * @brief Сбрасывает указатель записи в начало потока
-   */
+  // Resets the write pointer to the beginning of the stream
   void resetWrite();
-  /**
-   * @brief Сбрасывает указатель чтения в начало потока
-   */
+  // Resets the read pointer to the beginning of the stream
   void resetRead();
-  /**
-   * @brief Очищает поток
-   */
+  // Clears the stream
   void clear();
-  ///@}
 
+  // -----------------Quantized float operations-----------------
+
+  // Writes a quantized float to the stream
   void writeQuantizedFloat(float value, float min, float max, uint8_t bits);
+  // Reads a quantized float from the stream
   float readQuantizedFloat(float min, float max, uint8_t bits);
 };
 
