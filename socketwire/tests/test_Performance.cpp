@@ -11,11 +11,7 @@ with factory pattern and POSIX UDP socket implementation.
 #include "bit_stream.hpp"
 #include "i_socket.hpp"
 #include "socket_poller.hpp"
-
-// Forward declaration
-namespace socketwire {
-  void register_posix_socket_factory();
-}
+#include "socket_init.hpp"
 
 using namespace socketwire; //NOLINT
 
@@ -25,8 +21,9 @@ protected:
   void SetUp() override {
     std::cout << "\n\n________Running_test:_" << ::testing::UnitTest::GetInstance()->current_test_info()->name() << "________\n\n\n";
 
-    // Register POSIX socket factory
-    register_posix_socket_factory();
+    // Initialize platform-specific socket factory
+    bool result = initialize_sockets();
+    ASSERT_TRUE(result) << "Socket initialization should succeed";
     factory = SocketFactoryRegistry::getFactory();
     ASSERT_NE(factory, nullptr) << "Socket factory should be registered";
   }

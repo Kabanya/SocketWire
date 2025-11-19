@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "reliable_connection.hpp"
 #include "i_socket.hpp"
+#include "socket_init.hpp"
 #include <thread>
 #include <atomic>
 #include <memory>
@@ -22,10 +23,16 @@ class IntegrationTest : public ::testing::Test
 protected:
   void SetUp() override
   {
-    socketwire::register_posix_socket_factory();
+    bool result = socketwire::initialize_sockets();
+    ASSERT_TRUE(result) << "Socket initialization should succeed";
 
     auto factory = SocketFactoryRegistry::getFactory();
     ASSERT_NE(factory, nullptr) << "Socket factory should be available";
+  }
+
+  void TearDown() override
+  {
+    socketwire::shutdown_sockets();
   }
 };
 

@@ -17,6 +17,7 @@
 #include <gmock/gmock.h>
 #include "socket_poller.hpp"
 #include "i_socket.hpp"
+#include "socket_init.hpp"
 
 #include <cstring>
 #include <memory>
@@ -35,24 +36,20 @@ public:
   MOCK_METHOD(void, onSocketClosed, (), (override));
 };
 
-// Forward declaration of registration function
-namespace socketwire {
-  void register_posix_socket_factory();
-}
-
 class SocketPollerTest : public ::testing::Test
 {
 protected:
   void SetUp() override
   {
-    register_posix_socket_factory();
+    bool result = initialize_sockets();
+    ASSERT_TRUE(result) << "Socket initialization should succeed";
     factory = SocketFactoryRegistry::getFactory();
     ASSERT_NE(factory, nullptr);
   }
 
   void TearDown() override
   {
-    // Cleanup if needed
+    shutdown_sockets();
   }
 
   ISocketFactory* factory = nullptr;
@@ -67,14 +64,30 @@ protected:
 TEST_F(SocketPollerTest, Constructor_DefaultConfig)
 {
   SocketPoller poller;
-  EXPECT_NE(poller.backendType(), PollBackend::Stub);
+#if defined(_WIN32) || defined(_WIN64)
+  EXPECT_EQ(poller.backendType(), PollBackend::WSAPoll);
+#elif defined(__linux__)
+  EXPECT_EQ(poller.backendType(), PollBackend::Epoll);
+#elif defined(__APPLE__)
+  EXPECT_EQ(poller.backendType(), PollBackend::Kqueue);
+#else
+  EXPECT_EQ(poller.backendType(), PollBackend::Select);
+#endif
 }
 
 TEST_F(SocketPollerTest, Constructor_CustomConfig)
 {
   SocketPollerConfig cfg{128};
   SocketPoller poller(cfg);
-  EXPECT_NE(poller.backendType(), PollBackend::Stub);
+#if defined(_WIN32) || defined(_WIN64)
+  EXPECT_EQ(poller.backendType(), PollBackend::WSAPoll);
+#elif defined(__linux__)
+  EXPECT_EQ(poller.backendType(), PollBackend::Epoll);
+#elif defined(__APPLE__)
+  EXPECT_EQ(poller.backendType(), PollBackend::Kqueue);
+#else
+  EXPECT_EQ(poller.backendType(), PollBackend::Select);
+#endif
 }
 
 TEST_F(SocketPollerTest, AddRemoveSocket)
@@ -118,6 +131,10 @@ TEST_F(SocketPollerTest, Poll_WithTimeout)
   SocketPoller poller;
   auto socket = createUDPSocket();
   ASSERT_TRUE(socket != nullptr);
+  
+  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
+  EXPECT_EQ(socket->bind(addr, 0), SocketError::None);
+  
   poller.addSocket(socket.get(), false);
 
   // Poll with timeout (should return empty if no events)
@@ -170,7 +187,9 @@ TEST_F(SocketPollerTest, BackendType)
 {
   SocketPoller poller;
   auto backend = poller.backendType();
-#if defined(__linux__)
+#if defined(_WIN32) || defined(_WIN64)
+  EXPECT_EQ(backend, PollBackend::WSAPoll);
+#elif defined(__linux__)
   EXPECT_EQ(backend, PollBackend::Epoll);
 #elif defined(__APPLE__)
   EXPECT_EQ(backend, PollBackend::Kqueue);

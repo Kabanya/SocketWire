@@ -8,17 +8,14 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "i_socket.hpp"
+#include "socket_init.hpp"
 
-#include <thread>
-#include <chrono>
 #include <cstring>
 
 using namespace socketwire; //NOLINT
 
 // Forward declaration of registration function
-namespace socketwire {
-  void register_posix_socket_factory();
-}
+
 
 namespace {
 
@@ -38,8 +35,9 @@ class NetSocketTest : public ::testing::Test
 protected:
   void SetUp() override
   {
-    // Register POSIX socket factory
-    register_posix_socket_factory();
+    // Initialize platform-specific socket factory
+    bool result = initialize_sockets();
+    ASSERT_TRUE(result) << "Socket initialization should succeed";
 
     // Get factory instance
     factory = SocketFactoryRegistry::getFactory();
@@ -49,6 +47,7 @@ protected:
   void TearDown() override
   {
     // Cleanup
+    shutdown_sockets();
   }
 
   ISocketFactory* factory = nullptr;

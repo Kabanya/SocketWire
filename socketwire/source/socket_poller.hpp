@@ -33,7 +33,6 @@
 #include <cstdint>
 #include <vector>
 #include <unordered_map>
-#include <utility>
 
 #include "i_socket.hpp"
 
@@ -68,10 +67,12 @@
   #include <unistd.h>
 #endif
 
-namespace socketwire {
+namespace socketwire
+{
 
 // Event structure for a single socket.
-struct SocketEvent {
+struct SocketEvent
+{
   ISocket* socket = nullptr;
   bool readable = false;
   bool writable = false;
@@ -80,7 +81,8 @@ struct SocketEvent {
 };
 
 // Backend type
-enum class PollBackend : std::uint8_t {
+enum class PollBackend : std::uint8_t
+{
   Epoll,
   Kqueue,
   Select,
@@ -98,7 +100,8 @@ struct SocketPollerConfig {
 
 
 // SocketPoller — abstraction over epoll/kqueue/select.
-class SocketPoller {
+class SocketPoller
+{
 public:
   explicit SocketPoller(const SocketPollerConfig& cfg = {});
   ~SocketPoller();
@@ -172,16 +175,19 @@ private:
   }
 };
 
-inline SocketPoller::SocketPoller(const SocketPollerConfig& cfg) {
+inline SocketPoller::SocketPoller(const SocketPollerConfig& cfg)
+{
   fdMap.reserve(cfg.reserveHint);
   initBackend();
 }
 
-inline SocketPoller::~SocketPoller() {
+inline SocketPoller::~SocketPoller()
+{
   shutdownBackend();
 }
 
-inline void SocketPoller::initBackend() {
+inline void SocketPoller::initBackend()
+{
 #if SOCKETWIRE_PLATFORM_WINDOWS
   backend = PollBackend::WSAPoll;
   // pollFds will grow dynamically as needed
@@ -219,7 +225,8 @@ inline void SocketPoller::initBackend() {
 #endif
 }
 
-inline void SocketPoller::shutdownBackend() {
+inline void SocketPoller::shutdownBackend()
+{
 #if SOCKETWIRE_PLATFORM_WINDOWS
   pollFds.clear();
 #elif SOCKETWIRE_PLATFORM_LINUX
@@ -236,7 +243,8 @@ inline void SocketPoller::shutdownBackend() {
   fdMap.clear();
 }
 
-inline bool SocketPoller::addSocket(ISocket* socket, bool watchWritable) {
+inline bool SocketPoller::addSocket(ISocket* socket, bool watchWritable)
+{
   if (socket == nullptr) return false;
   int fd = socket->nativeHandle();
   if (fd < 0) return false;
@@ -246,7 +254,8 @@ inline bool SocketPoller::addSocket(ISocket* socket, bool watchWritable) {
   return true;
 }
 
-inline void SocketPoller::removeSocket(ISocket* socket) {
+inline void SocketPoller::removeSocket(ISocket* socket)
+{
   if (socket == nullptr) return;
   int fd = socket->nativeHandle();
   if (fd < 0) return;
@@ -256,7 +265,8 @@ inline void SocketPoller::removeSocket(ISocket* socket) {
   fdMap.erase(it);
 }
 
-inline bool SocketPoller::backendAdd(ISocket* socket, bool watchWritable) {
+inline bool SocketPoller::backendAdd(ISocket* socket, bool watchWritable)
+{
   int fd = socket->nativeHandle();
 
 #if SOCKETWIRE_PLATFORM_WINDOWS

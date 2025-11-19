@@ -1,7 +1,7 @@
 /*
-  Test suite for POSIX UDP Socket implementation
-  This file contains comprehensive unit tests for the PosixUDPSocket class,
-  which provides UDP socket functionality on POSIX-compliant systems (Linux, macOS, BSD).
+  Test suite for UDP Socket implementation (Cross-platform)
+  This file contains comprehensive unit tests for the UDP Socket implementation,
+  which provides UDP socket functionality on all supported platforms (Windows, Linux, macOS, BSD).
 
   Test Categories:
   - Constructor and Factory Tests: Socket creation and configuration
@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "i_socket.hpp"
+#include "socket_init.hpp"
 
 #include <thread>
 #include <chrono>
@@ -38,18 +39,14 @@ public:
   MOCK_METHOD(void, onSocketError, (SocketError error), (override));
 };
 
-// Forward declaration of registration function
-namespace socketwire {
-  void register_posix_socket_factory();
-}
-
-class PosixUDPSocketTest : public ::testing::Test
+class UDPSocketTest : public ::testing::Test
 {
 protected:
   void SetUp() override
   {
-    // Register POSIX socket factory
-    register_posix_socket_factory();
+    // Initialize platform-specific socket factory
+    bool result = initialize_sockets();
+    ASSERT_TRUE(result) << "Socket initialization should succeed";
 
     // Get factory instance
     factory = SocketFactoryRegistry::getFactory();
@@ -59,6 +56,7 @@ protected:
   void TearDown() override
   {
     // Cleanup
+    shutdown_sockets();
   }
 
   ISocketFactory* factory = nullptr;
@@ -66,7 +64,7 @@ protected:
 
 // ========== Constructor and Factory Tests ==========
 
-TEST_F(PosixUDPSocketTest, CreateUDPSocket)
+TEST_F(UDPSocketTest, CreateUDPSocket)
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
@@ -75,7 +73,7 @@ TEST_F(PosixUDPSocketTest, CreateUDPSocket)
   EXPECT_EQ(socket->type(), SocketType::UDP);
 }
 
-TEST_F(PosixUDPSocketTest, CreateWithCustomConfig)
+TEST_F(UDPSocketTest, CreateWithCustomConfig)
 {
   SocketConfig config;
   config.nonBlocking = false;
@@ -90,7 +88,7 @@ TEST_F(PosixUDPSocketTest, CreateWithCustomConfig)
 }
 
 
-TEST_F(PosixUDPSocketTest, BindToAnyPort) //bind test
+TEST_F(UDPSocketTest, BindToAnyPort) //bind test
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
@@ -103,7 +101,7 @@ TEST_F(PosixUDPSocketTest, BindToAnyPort) //bind test
   EXPECT_GT(socket->localPort(), 0) << "Should assign a valid port";
 }
 
-TEST_F(PosixUDPSocketTest, BindToSpecificPort)
+TEST_F(UDPSocketTest, BindToSpecificPort)
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
@@ -119,7 +117,7 @@ TEST_F(PosixUDPSocketTest, BindToSpecificPort)
   EXPECT_GT(assignedPort, 0);
 }
 
-TEST_F(PosixUDPSocketTest, BindTwiceReturnsError)
+TEST_F(UDPSocketTest, BindTwiceReturnsError)
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
@@ -135,7 +133,7 @@ TEST_F(PosixUDPSocketTest, BindTwiceReturnsError)
   EXPECT_NE(err2, SocketError::None) << "Second bind should fail";
 }
 
-TEST_F(PosixUDPSocketTest, BindMultipleSocketsDifferentPorts)
+TEST_F(UDPSocketTest, BindMultipleSocketsDifferentPorts)
 {
   SocketConfig config;
   auto socket1 = factory->createSocket(SocketType::UDP, config);
@@ -154,7 +152,7 @@ TEST_F(PosixUDPSocketTest, BindMultipleSocketsDifferentPorts)
 }
 
 // SEND AND RECEIVE
-TEST_F(PosixUDPSocketTest, SendToAndReceive)
+TEST_F(UDPSocketTest, SendAndReceive)
 {
   SocketConfig config;
   auto sender = factory->createSocket(SocketType::UDP, config);
@@ -195,7 +193,7 @@ TEST_F(PosixUDPSocketTest, SendToAndReceive)
   EXPECT_EQ(std::string(buffer, recvResult.bytes), std::string(message));
 }
 
-TEST_F(PosixUDPSocketTest, SendWithoutBind)
+TEST_F(UDPSocketTest, SendWithoutBind)
 {
   SocketConfig config;
   auto sender = factory->createSocket(SocketType::UDP, config);
@@ -212,7 +210,7 @@ TEST_F(PosixUDPSocketTest, SendWithoutBind)
               result.error == SocketError::System);
 }
 
-TEST_F(PosixUDPSocketTest, SendNullDataReturnsError)
+TEST_F(UDPSocketTest, SendNullDataReturnsError)
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
@@ -226,7 +224,7 @@ TEST_F(PosixUDPSocketTest, SendNullDataReturnsError)
   EXPECT_EQ(result.error, SocketError::InvalidParam);
 }
 
-TEST_F(PosixUDPSocketTest, SendZeroLengthReturnsError)
+TEST_F(UDPSocketTest, SendZeroLengthReturnsError)
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
@@ -241,7 +239,7 @@ TEST_F(PosixUDPSocketTest, SendZeroLengthReturnsError)
   EXPECT_EQ(result.error, SocketError::InvalidParam);
 }
 
-TEST_F(PosixUDPSocketTest, ReceiveWithoutBindReturnsError)
+TEST_F(UDPSocketTest, ReceiveWithoutBindReturnsError)
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
@@ -257,7 +255,7 @@ TEST_F(PosixUDPSocketTest, ReceiveWithoutBindReturnsError)
   EXPECT_EQ(result.error, SocketError::NotBound);
 }
 
-TEST_F(PosixUDPSocketTest, ReceiveNullBufferReturnsError)
+TEST_F(UDPSocketTest, ReceiveNullBufferReturnsError)
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
@@ -275,7 +273,7 @@ TEST_F(PosixUDPSocketTest, ReceiveNullBufferReturnsError)
   EXPECT_EQ(result.error, SocketError::InvalidParam);
 }
 
-TEST_F(PosixUDPSocketTest, MultipleMessages)
+TEST_F(UDPSocketTest, MultipleMessages)
 {
   SocketConfig config;
   auto sender = factory->createSocket(SocketType::UDP, config);
@@ -315,7 +313,7 @@ TEST_F(PosixUDPSocketTest, MultipleMessages)
 
 // ========== Blocking Mode Tests ==========
 
-TEST_F(PosixUDPSocketTest, DefaultNonBlocking)
+TEST_F(UDPSocketTest, DefaultNonBlocking)
 {
   SocketConfig config;
   config.nonBlocking = true;
@@ -329,7 +327,7 @@ TEST_F(PosixUDPSocketTest, DefaultNonBlocking)
   EXPECT_FALSE(socket->isBlocking()) << "Should be non-blocking by default";
 }
 
-TEST_F(PosixUDPSocketTest, SetBlockingMode)
+TEST_F(UDPSocketTest, NonBlockingReceive)
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
@@ -349,7 +347,7 @@ TEST_F(PosixUDPSocketTest, SetBlockingMode)
   EXPECT_FALSE(socket->isBlocking());
 }
 
-TEST_F(PosixUDPSocketTest, SetBlockingWithoutBindReturnsError)
+TEST_F(UDPSocketTest, SetBlockingWithoutBindReturnsError)
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
@@ -359,7 +357,7 @@ TEST_F(PosixUDPSocketTest, SetBlockingWithoutBindReturnsError)
   EXPECT_EQ(err, SocketError::NotBound);
 }
 
-TEST_F(PosixUDPSocketTest, NonBlockingReceiveReturnsWouldBlock)
+TEST_F(UDPSocketTest, NonBlockingReceiveReturnsWouldBlock)
 {
   SocketConfig config;
   config.nonBlocking = true;
@@ -382,7 +380,7 @@ TEST_F(PosixUDPSocketTest, NonBlockingReceiveReturnsWouldBlock)
 }
 
 // POLL TEST
-TEST_F(PosixUDPSocketTest, PollWithHandler)
+TEST_F(UDPSocketTest, PollWithHandler)
 {
   SocketConfig config;
   auto sender = factory->createSocket(SocketType::UDP, config);
@@ -422,7 +420,7 @@ TEST_F(PosixUDPSocketTest, PollWithHandler)
   ::testing::Mock::VerifyAndClearExpectations(&mockHandler);
 }
 
-TEST_F(PosixUDPSocketTest, PollWithNullHandler)
+TEST_F(UDPSocketTest, PollWithoutData)
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
@@ -435,7 +433,7 @@ TEST_F(PosixUDPSocketTest, PollWithNullHandler)
   socket->poll(nullptr);
 }
 
-TEST_F(PosixUDPSocketTest, PollMultiplePackets)
+TEST_F(UDPSocketTest, PollMultiplePackets)
 {
   SocketConfig config;
   auto sender = factory->createSocket(SocketType::UDP, config);
@@ -477,7 +475,7 @@ TEST_F(PosixUDPSocketTest, PollMultiplePackets)
 
 // CLOSE TEST
 
-TEST_F(PosixUDPSocketTest, CloseSocket)
+TEST_F(UDPSocketTest, CloseSocket)
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
@@ -495,7 +493,7 @@ TEST_F(PosixUDPSocketTest, CloseSocket)
   EXPECT_EQ(socket->nativeHandle(), -1) << "Handle should be invalid after close";
 }
 
-TEST_F(PosixUDPSocketTest, CloseMultipleTimes)
+TEST_F(UDPSocketTest, CloseMultipleTimes)
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
@@ -510,7 +508,7 @@ TEST_F(PosixUDPSocketTest, CloseMultipleTimes)
   socket->close();
 }
 
-TEST_F(PosixUDPSocketTest, DestructorClosesSocket)
+TEST_F(UDPSocketTest, DestructorClosesSocket)
 {
   SocketConfig config;
   std::uint16_t port = 0;
@@ -533,7 +531,7 @@ TEST_F(PosixUDPSocketTest, DestructorClosesSocket)
 }
 
 // NATIVE HANDLE TEST
-TEST_F(PosixUDPSocketTest, NativeHandleValid)
+TEST_F(UDPSocketTest, NativeHandle)
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
@@ -551,7 +549,7 @@ TEST_F(PosixUDPSocketTest, NativeHandleValid)
 
 // ========== Large Data Tests ==========
 
-TEST_F(PosixUDPSocketTest, SendLargePacket)
+TEST_F(UDPSocketTest, LargePacket)
 {
   SocketConfig config;
   auto sender = factory->createSocket(SocketType::UDP, config);
@@ -592,7 +590,7 @@ TEST_F(PosixUDPSocketTest, SendLargePacket)
 }
 
 // TYPE TEST
-TEST_F(PosixUDPSocketTest, SocketTypeIsUDP)
+TEST_F(UDPSocketTest, SocketType)
 {
   SocketConfig config;
   auto socket = factory->createSocket(SocketType::UDP, config);
