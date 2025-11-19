@@ -240,4 +240,10 @@ public:
  */
 void register_posix_socket_factory();
 
+/*
+  Platform-specific socket factory registration for Windows.
+  Call this function to register the Windows socket factory implementation.
+ */
+void register_windows_socket_factory();
+
 } // namespace socketwire

@@ -43,7 +43,11 @@
   #define SOCKETWIRE_PLATFORM_WINDOWS 0
 #endif
 
-#if !SOCKETWIRE_PLATFORM_WINDOWS
+#if SOCKETWIRE_PLATFORM_WINDOWS
+  #define WIN32_LEAN_AND_MEAN
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+#else
   #if defined(__linux__)
     #define SOCKETWIRE_PLATFORM_LINUX 1
   #else
@@ -80,6 +84,7 @@ enum class PollBackend : std::uint8_t {
   Epoll,
   Kqueue,
   Select,
+  WSAPoll,
   Stub
 };
 
@@ -134,13 +139,13 @@ private:
 
   std::unordered_map<int, Watched> fdMap; // nativeHandle -> Watched
 
-#if SOCKETWIRE_PLATFORM_LINUX
+#if SOCKETWIRE_PLATFORM_WINDOWS
+  std::vector<WSAPOLLFD> pollFds; // Windows WSAPoll
+#elif SOCKETWIRE_PLATFORM_LINUX
   int epollFd = -1;   // Linux
-#endif
-#if SOCKETWIRE_PLATFORM_APPLE
+#elif SOCKETWIRE_PLATFORM_APPLE
   int kqueueFd = -1;  // macOS/BSD
-#endif
-#if !SOCKETWIRE_PLATFORM_WINDOWS
+#else
   fd_set readSet;     // Select fallback
   fd_set writeSet;
   fd_set errorSet;
@@ -178,7 +183,8 @@ inline SocketPoller::~SocketPoller() {
 
 inline void SocketPoller::initBackend() {
 #if SOCKETWIRE_PLATFORM_WINDOWS
-  backend = PollBackend::Stub; // TODO: Implement IOCP/WSAPoll.
+  backend = PollBackend::WSAPoll;
+  // pollFds will grow dynamically as needed
 #elif SOCKETWIRE_PLATFORM_LINUX
   epollFd = ::epoll_create1(0);
   if (epollFd != -1) {
@@ -214,13 +220,14 @@ inline void SocketPoller::initBackend() {
 }
 
 inline void SocketPoller::shutdownBackend() {
-#if SOCKETWIRE_PLATFORM_LINUX
+#if SOCKETWIRE_PLATFORM_WINDOWS
+  pollFds.clear();
+#elif SOCKETWIRE_PLATFORM_LINUX
   if (backend == PollBackend::Epoll && epollFd != -1) {
     ::close(epollFd);
     epollFd = -1;
   }
-#endif
-#if SOCKETWIRE_PLATFORM_APPLE
+#elif SOCKETWIRE_PLATFORM_APPLE
   if (backend == PollBackend::Kqueue && kqueueFd != -1) {
     ::close(kqueueFd);
     kqueueFd = -1;
@@ -250,11 +257,20 @@ inline void SocketPoller::removeSocket(ISocket* socket) {
 }
 
 inline bool SocketPoller::backendAdd(ISocket* socket, bool watchWritable) {
-#if SOCKETWIRE_PLATFORM_WINDOWS
-  (void)socket; (void)watchWritable;
-  return true; // Stub: do nothing
-#else
   int fd = socket->nativeHandle();
+
+#if SOCKETWIRE_PLATFORM_WINDOWS
+  if (backend == PollBackend::WSAPoll) {
+    WSAPOLLFD pfd;
+    pfd.fd = static_cast<SOCKET>(fd);
+    pfd.events = POLLIN;
+    if (watchWritable) pfd.events |= POLLOUT;
+    pfd.revents = 0;
+    pollFds.push_back(pfd);
+    return true;
+  }
+  return false;
+#else
 
 #if SOCKETWIRE_PLATFORM_LINUX
   if (backend == PollBackend::Epoll) {
@@ -294,10 +310,17 @@ inline bool SocketPoller::backendAdd(ISocket* socket, bool watchWritable) {
 }
 
 inline void SocketPoller::backendRemove(ISocket* socket) {
-#if SOCKETWIRE_PLATFORM_WINDOWS
-  (void)socket;
-#else
   int fd = socket->nativeHandle();
+
+#if SOCKETWIRE_PLATFORM_WINDOWS
+  if (backend == PollBackend::WSAPoll) {
+    auto it = std::find_if(pollFds.begin(), pollFds.end(),
+      [fd](const WSAPOLLFD& pfd) { return pfd.fd == static_cast<SOCKET>(fd); });
+    if (it != pollFds.end()) {
+      pollFds.erase(it);
+    }
+  }
+#else
 
 #if SOCKETWIRE_PLATFORM_LINUX
   if (backend == PollBackend::Epoll) {
@@ -340,8 +363,30 @@ inline std::vector<SocketEvent> SocketPoller::backendPoll(int timeoutMs) {
   events.reserve(fdMap.size());
 
 #if SOCKETWIRE_PLATFORM_WINDOWS
-  (void)timeoutMs;
-  // Stub: no implementation — return empty.
+  if (backend == PollBackend::WSAPoll) {
+    if (pollFds.empty()) return events;
+    
+    int waitTime = (timeoutMs < 0) ? -1 : timeoutMs;
+    int n = ::WSAPoll(pollFds.data(), static_cast<ULONG>(pollFds.size()), waitTime);
+    
+    if (n > 0) {
+      for (const auto& pfd : pollFds) {
+        if (pfd.revents == 0) continue;
+        
+        int fd = static_cast<int>(pfd.fd);
+        auto it = fdMap.find(fd);
+        if (it == fdMap.end()) continue;
+        
+        bool r = (pfd.revents & POLLIN) != 0;
+        bool w = (pfd.revents & POLLOUT) != 0;
+        bool e = (pfd.revents & POLLERR) != 0;
+        bool c = (pfd.revents & POLLHUP) != 0;
+        events.push_back(makeEvent(it->second.socket, r, w, e, c));
+      }
+    }
+    return events;
+  }
+  // Fallback for other backends (shouldn't happen on Windows)
   return events;
 #else
 
