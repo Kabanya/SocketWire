@@ -144,15 +144,17 @@ private:
 
 #if SOCKETWIRE_PLATFORM_WINDOWS
   std::vector<WSAPOLLFD> pollFds; // Windows WSAPoll
-#elif SOCKETWIRE_PLATFORM_LINUX
-  int epollFd = -1;   // Linux
-#elif SOCKETWIRE_PLATFORM_APPLE
-  int kqueueFd = -1;  // macOS/BSD
 #else
-  fd_set readSet;     // Select fallback
+  fd_set readSet;     // Select fallback (available on all POSIX)
   fd_set writeSet;
   fd_set errorSet;
   int selectMaxFd = -1;
+  
+  #if SOCKETWIRE_PLATFORM_LINUX
+    int epollFd = -1;   // Linux
+  #elif SOCKETWIRE_PLATFORM_APPLE
+    int kqueueFd = -1;  // macOS/BSD
+  #endif
 #endif
 
   void initBackend();

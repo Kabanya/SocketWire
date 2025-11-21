@@ -16,15 +16,21 @@
 
 #include "bit_stream.hpp"
 
-#if !defined(SOCKETWIRE_CRYPTO_FORCE_NO_SODIUM)
-  #if __has_include(<sodium.h>)
-    #include <sodium.h>
-    #define SOCKETWIRE_HAVE_LIBSODIUM 1
+#if !defined(SOCKETWIRE_HAVE_LIBSODIUM)
+  #if !defined(SOCKETWIRE_CRYPTO_FORCE_NO_SODIUM)
+    #if __has_include(<sodium.h>)
+      #include <sodium.h>
+      #define SOCKETWIRE_HAVE_LIBSODIUM 1
+    #else
+      #define SOCKETWIRE_HAVE_LIBSODIUM 0
+    #endif
   #else
     #define SOCKETWIRE_HAVE_LIBSODIUM 0
   #endif
-#else
-  #define SOCKETWIRE_HAVE_LIBSODIUM 0
+#endif
+
+#if SOCKETWIRE_HAVE_LIBSODIUM
+  #include <sodium.h>
 #endif
 
 namespace socketwire::crypto

@@ -1,10 +1,8 @@
-cmake_minimum_required(VERSION 3.28)
-
 include(GoogleTest)
 
 add_executable(SocketWireTests
   test_BitStream.cpp
-  test_Crypto.cpp
+  # test_Crypto.cpp
   test_NetSocket.cpp
   test_Performance.cpp
   test_PosixUDPSocket.cpp

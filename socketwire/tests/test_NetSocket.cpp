@@ -11,6 +11,8 @@
 #include "socket_init.hpp"
 
 #include <cstring>
+#include <thread>
+#include <chrono>
 
 using namespace socketwire; //NOLINT
 
