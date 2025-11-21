@@ -43,4 +43,3 @@ add_library(project_options INTERFACE)
 add_library(project_warnings INTERFACE)
 
 add_subdirectory(socketwire)
-

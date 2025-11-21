@@ -9,6 +9,8 @@ add_library(SocketWire STATIC
   reliable_connection.cpp
   socket_init.hpp
   socket_poller.hpp
+  socket_constants.hpp
+  socket_constants.cpp
 )
 
 if(WIN32)
