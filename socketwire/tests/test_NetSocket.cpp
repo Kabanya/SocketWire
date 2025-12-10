@@ -9,6 +9,7 @@
 #include <gmock/gmock.h>
 #include "i_socket.hpp"
 #include "socket_init.hpp"
+#include "socket_constants.hpp"
 
 #include <cstring>
 #include <thread>
@@ -331,5 +332,97 @@ TEST_F(NetSocketTest, MultipleMessagesSequential)
     std::string received(buffer, recvResult.bytes);
     EXPECT_EQ(received, message) << "Message " << i << " should match";
   }
+}
+
+TEST_F(NetSocketTest, SendAndReceiveIPv6Loopback)
+{
+  SocketConfig config;
+  config.enableIPv6 = true;
+
+  auto sender = factory->createUDPSocket(config);
+  auto receiver = factory->createUDPSocket(config);
+
+  ASSERT_NE(sender, nullptr);
+  ASSERT_NE(receiver, nullptr);
+
+  SocketAddress v6Loop = SocketConstants::loopbackIPv6();
+
+  ASSERT_EQ(receiver->bind(v6Loop, 0), SocketError::None);
+  std::uint16_t receiverPort = receiver->localPort();
+  ASSERT_GT(receiverPort, 0);
+
+  ASSERT_EQ(sender->bind(v6Loop, 0), SocketError::None);
+  std::uint16_t senderPort = sender->localPort();
+
+  const char* msg = "HiIPv6";
+  std::size_t msgLen = std::strlen(msg);
+
+  SocketResult sent = sender->sendTo(msg, msgLen, v6Loop, receiverPort);
+  EXPECT_TRUE(sent.succeeded());
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+  char buffer[64];
+  SocketAddress fromAddr;
+  std::uint16_t fromPort = 0;
+
+  SocketResult received = receiver->receive(buffer, sizeof(buffer), fromAddr, fromPort);
+  EXPECT_TRUE(received.succeeded());
+  EXPECT_EQ(received.bytes, static_cast<std::ptrdiff_t>(msgLen));
+  EXPECT_EQ(std::string(buffer, received.bytes), std::string(msg));
+  EXPECT_EQ(fromPort, senderPort);
+  EXPECT_TRUE(fromAddr.isIPv6);
+}
+
+TEST_F(NetSocketTest, DualStackIPv4ToIPv6Mapped)
+{
+  SocketConfig recvCfg;
+  recvCfg.enableIPv6 = true; // allow dual-stack
+  auto receiver = factory->createUDPSocket(recvCfg);
+  ASSERT_NE(receiver, nullptr);
+
+  SocketAddress any6 = SocketConstants::anyIPv6();
+  ASSERT_EQ(receiver->bind(any6, 0), SocketError::None);
+  std::uint16_t receiverPort = receiver->localPort();
+
+  SocketConfig sendCfg; // IPv4-only is fine
+  auto sender = factory->createUDPSocket(sendCfg);
+  ASSERT_NE(sender, nullptr);
+  ASSERT_EQ(sender->bind(SocketConstants::loopback(), 0), SocketError::None);
+  std::uint16_t senderPort = sender->localPort();
+
+  const char* payload = "dual";
+  std::size_t payloadLen = std::strlen(payload);
+
+  SocketResult sent = sender->sendTo(payload, payloadLen, SocketConstants::loopback(), receiverPort);
+  EXPECT_TRUE(sent.succeeded());
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+  char buffer[64];
+  SocketAddress fromAddr;
+  std::uint16_t fromPort = 0;
+  SocketResult recv = receiver->receive(buffer, sizeof(buffer), fromAddr, fromPort);
+  EXPECT_TRUE(recv.succeeded());
+  EXPECT_EQ(recv.bytes, static_cast<std::ptrdiff_t>(payloadLen));
+  EXPECT_FALSE(fromAddr.isIPv6); // mapped IPv4 returned as IPv4
+  EXPECT_EQ(fromAddr.ipv4.hostOrderAddress, SocketConstants::IPV4_LOOPBACK);
+  EXPECT_EQ(fromPort, senderPort);
+}
+
+TEST(NetSocketStandalone, ParseAndFormatIPv6)
+{
+  std::array<std::uint8_t, 16> bytes{};
+  std::uint32_t scopeId = 0;
+  ASSERT_TRUE(SocketConstants::parseIPv6("::1", bytes, scopeId));
+  EXPECT_EQ(scopeId, 0u);
+
+  char buf[64];
+  ASSERT_TRUE(SocketConstants::formatIPv6(bytes, scopeId, buf, sizeof(buf)));
+  EXPECT_STREQ(buf, "::1");
+
+  SocketAddress addr = SocketConstants::fromString("::1");
+  EXPECT_TRUE(addr.isIPv6);
+  EXPECT_EQ(addr.ipv6.bytes[15], 1);
 }
 } // anonymous namespace
