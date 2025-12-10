@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <cassert>
+#include <array>
 
 #if !defined(_WIN32) && !defined(_WIN64)
   #error "windows_udp_socket.cpp is for Windows platforms only."
@@ -81,15 +82,81 @@ static SocketError map_last_error()
   return map_wsa_error(WSAGetLastError());
 }
 
-// Utility: filling sockaddr_in from SocketAddress + host-order port
-static void fill_sockaddr_ipv4(sockaddr_in& out,
-                               const SocketAddress& address,
-                               std::uint16_t portHostOrder)
+// Utility: detect IPv4-mapped IPv6 address
+static bool is_ipv4_mapped(const in6_addr& addr)
 {
-  std::memset(&out, 0, sizeof(out));
-  out.sin_family = AF_INET;
-  out.sin_port = htons(portHostOrder);
-  out.sin_addr.s_addr = htonl(address.ipv4.hostOrderAddress);
+  static const std::uint8_t prefix[12] = { 0,0,0,0,0,0,0,0,0,0,0xFF,0xFF };
+  return std::memcmp(addr.s6_addr, prefix, 12) == 0;
+}
+
+// Utility: fill sockaddr_storage from SocketAddress
+static bool fill_sockaddr_storage(const SocketAddress& address,
+                                  std::uint16_t portHostOrder,
+                                  bool preferIPv6,
+                                  sockaddr_storage& storage,
+                                  int& family,
+                                  int& addrLen)
+{
+  std::memset(&storage, 0, sizeof(storage));
+
+  if (address.isIPv6)
+  {
+    auto* addr6 = reinterpret_cast<sockaddr_in6*>(&storage);
+    addr6->sin6_family = AF_INET6;
+    addr6->sin6_port = htons(portHostOrder);
+    std::memcpy(&addr6->sin6_addr, address.ipv6.bytes.data(), address.ipv6.bytes.size());
+    addr6->sin6_scope_id = address.ipv6.scopeId;
+    family = AF_INET6;
+    addrLen = sizeof(sockaddr_in6);
+    return true;
+  }
+
+  if (preferIPv6)
+  {
+    auto* addr6 = reinterpret_cast<sockaddr_in6*>(&storage);
+    addr6->sin6_family = AF_INET6;
+    addr6->sin6_port = htons(portHostOrder);
+    // Build IPv4-mapped IPv6 address ::ffff:a.b.c.d
+    addr6->sin6_addr = IN6ADDR_ANY_INIT;
+    addr6->sin6_addr.s6_addr[10] = 0xFF;
+    addr6->sin6_addr.s6_addr[11] = 0xFF;
+    const std::uint32_t be = htonl(address.ipv4.hostOrderAddress);
+    std::memcpy(addr6->sin6_addr.s6_addr + 12, &be, sizeof(be));
+    family = AF_INET6;
+    addrLen = sizeof(sockaddr_in6);
+    return true;
+  }
+
+  auto* addr4 = reinterpret_cast<sockaddr_in*>(&storage);
+  addr4->sin_family = AF_INET;
+  addr4->sin_port = htons(portHostOrder);
+  addr4->sin_addr.s_addr = htonl(address.ipv4.hostOrderAddress);
+  family = AF_INET;
+  addrLen = sizeof(sockaddr_in);
+  return true;
+}
+
+static SocketAddress socketaddress_from_sockaddr(const sockaddr_storage& storage)
+{
+  if (storage.ss_family == AF_INET)
+  {
+    const auto* addr = reinterpret_cast<const sockaddr_in*>(&storage);
+    return SocketAddress::fromIPv4(ntohl(addr->sin_addr.s_addr));
+  }
+  if (storage.ss_family == AF_INET6)
+  {
+    const auto* addr6 = reinterpret_cast<const sockaddr_in6*>(&storage);
+    if (is_ipv4_mapped(addr6->sin6_addr))
+    {
+      std::uint32_t be = 0;
+      std::memcpy(&be, addr6->sin6_addr.s6_addr + 12, sizeof(be));
+      return SocketAddress::fromIPv4(ntohl(be));
+    }
+    std::array<std::uint8_t, 16> bytes{};
+    std::memcpy(bytes.data(), &addr6->sin6_addr, bytes.size());
+    return SocketAddress::fromIPv6(bytes, addr6->sin6_scope_id);
+  }
+  return SocketAddress::fromIPv4(0);
 }
 
 // Windows UDP implementation based on ISocket
@@ -121,6 +188,7 @@ private:
   bool blocking = false;
   std::uint16_t boundPort = 0;
   SocketConfig config;
+  int family = AF_UNSPEC;
 };
 
 WindowsUDPSocket::WindowsUDPSocket(const SocketConfig& cfg)
@@ -140,12 +208,24 @@ SocketError WindowsUDPSocket::bind(const SocketAddress& address, std::uint16_t p
   if (!getWSAInitializer().isInitialized())
     return SocketError::System;
 
+  if (address.isIPv6 && !config.enableIPv6)
+    return SocketError::Unsupported;
+
   if (sock != INVALID_SOCKET)
     return SocketError::InvalidParam; // already open
 
-  sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  family = address.isIPv6 ? AF_INET6 : AF_INET;
+  sock = ::socket(family, SOCK_DGRAM, IPPROTO_UDP);
   if (sock == INVALID_SOCKET)
     return map_last_error();
+
+  if (family == AF_INET6)
+  {
+    // Enable dual-stack if requested so IPv4-mapped addresses are accepted
+    BOOL v6only = config.enableIPv6 ? FALSE : TRUE;
+    ::setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY,
+                 reinterpret_cast<const char*>(&v6only), sizeof(v6only));
+  }
 
   if (config.reuseAddress)
   {
@@ -174,22 +254,39 @@ SocketError WindowsUDPSocket::bind(const SocketAddress& address, std::uint16_t p
     blocking = true;
   }
 
-  sockaddr_in addr{};
-  fill_sockaddr_ipv4(addr, address, port);
-  if (::bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0)
+  sockaddr_storage addr{};
+  int addrLen = 0;
+  int targetFamily = AF_UNSPEC;
+  if (!fill_sockaddr_storage(address, port, family == AF_INET6, addr, targetFamily, addrLen))
+  {
+    ::closesocket(sock);
+    sock = INVALID_SOCKET;
+    family = AF_UNSPEC;
+    return SocketError::InvalidParam;
+  }
+
+  if (::bind(sock, reinterpret_cast<sockaddr*>(&addr), addrLen) != 0)
   {
     SocketError err = map_last_error();
     ::closesocket(sock);
     sock = INVALID_SOCKET;
+    family = AF_UNSPEC;
     return err;
   }
 
   // Get the actual assigned port (important when port == 0)
-  sockaddr_in boundAddr{};
-  int addrLen = sizeof(boundAddr);
-  if (::getsockname(sock, reinterpret_cast<sockaddr*>(&boundAddr), &addrLen) == 0)
+  sockaddr_storage boundAddr{};
+  int boundLen = sizeof(boundAddr);
+  if (::getsockname(sock, reinterpret_cast<sockaddr*>(&boundAddr), &boundLen) == 0)
   {
-    boundPort = ntohs(boundAddr.sin_port);
+    if (boundAddr.ss_family == AF_INET)
+    {
+      boundPort = ntohs(reinterpret_cast<sockaddr_in*>(&boundAddr)->sin_port);
+    }
+    else if (boundAddr.ss_family == AF_INET6)
+    {
+      boundPort = ntohs(reinterpret_cast<sockaddr_in6*>(&boundAddr)->sin6_port);
+    }
   }
   else
   {
@@ -210,12 +307,26 @@ SocketResult WindowsUDPSocket::sendTo(const void* data,
   if (data == nullptr || length == 0)
     return { -1, SocketError::InvalidParam };
 
+  if (sock != INVALID_SOCKET && toAddr.isIPv6 && family == AF_INET)
+    return { -1, SocketError::Unsupported };
+
+  if (toAddr.isIPv6 && !config.enableIPv6)
+    return { -1, SocketError::Unsupported };
+
   // Lazy open if socket is not created (UDP allows send without bind)
   if (sock == INVALID_SOCKET)
   {
-    sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    family = toAddr.isIPv6 ? AF_INET6 : AF_INET;
+    sock = ::socket(family, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == INVALID_SOCKET)
       return { -1, map_last_error() };
+
+    if (family == AF_INET6)
+    {
+      BOOL v6only = config.enableIPv6 ? FALSE : TRUE;
+      ::setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY,
+                   reinterpret_cast<const char*>(&v6only), sizeof(v6only));
+    }
 
     if (config.nonBlocking)
     {
@@ -236,15 +347,18 @@ SocketResult WindowsUDPSocket::sendTo(const void* data,
     }
   }
 
-  sockaddr_in addr{};
-  fill_sockaddr_ipv4(addr, toAddr, toPort);
+  sockaddr_storage addr{};
+  int addrLen = 0;
+  int targetFamily = AF_UNSPEC;
+  if (!fill_sockaddr_storage(toAddr, toPort, family == AF_INET6, addr, targetFamily, addrLen))
+    return { -1, SocketError::InvalidParam };
 
   int sent = ::sendto(sock,
                       reinterpret_cast<const char*>(data),
                       static_cast<int>(length),
                       0,
                       reinterpret_cast<sockaddr*>(&addr),
-                      sizeof(addr));
+                      addrLen);
   if (sent == SOCKET_ERROR)
     return { -1, map_last_error() };
 
@@ -261,7 +375,7 @@ SocketResult WindowsUDPSocket::receive(void* buffer,
   if (buffer == nullptr || capacity == 0)
     return { -1, SocketError::InvalidParam };
 
-  sockaddr_in addr{};
+  sockaddr_storage addr{};
   int len = sizeof(addr);
   int got = ::recvfrom(sock,
                        reinterpret_cast<char*>(buffer),
@@ -272,8 +386,13 @@ SocketResult WindowsUDPSocket::receive(void* buffer,
   if (got == SOCKET_ERROR)
     return { -1, map_last_error() };
 
-  fromAddr = SocketAddress::fromIPv4(ntohl(addr.sin_addr.s_addr));
-  fromPort = ntohs(addr.sin_port);
+  fromAddr = socketaddress_from_sockaddr(addr);
+  if (addr.ss_family == AF_INET)
+    fromPort = ntohs(reinterpret_cast<sockaddr_in*>(&addr)->sin_port);
+  else if (addr.ss_family == AF_INET6)
+    fromPort = ntohs(reinterpret_cast<sockaddr_in6*>(&addr)->sin6_port);
+  else
+    fromPort = 0;
   return { got, SocketError::None };
 }
 
@@ -345,6 +464,7 @@ void WindowsUDPSocket::close()
     ::closesocket(sock);
     sock = INVALID_SOCKET;
     boundPort = 0;
+    family = AF_UNSPEC;
   }
 }
 

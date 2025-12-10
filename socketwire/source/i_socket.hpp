@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <memory>
+#include <array>
 
 #if defined(_WIN32) || defined(_WIN64)
   #define SOCKETWIRE_PLATFORM_WINDOWS 1
@@ -64,19 +65,35 @@ struct SocketAddressIPv4
   // Utility functions for setting/getting can be implemented separately.
 };
 
+struct SocketAddressIPv6
+{
+  std::array<std::uint8_t, 16> bytes{}; // Network-order bytes
+  std::uint32_t scopeId = 0;            // Scope ID for link-local addresses
+};
+
 
 // Extensible structure to support IPv6 (in the future).
 struct SocketAddress
 {
   bool isIPv6 = false;
   SocketAddressIPv4 ipv4{};
-  // TODO: IPv6 structure (e.g., byte array[16])
+  SocketAddressIPv6 ipv6{};
 
   static SocketAddress fromIPv4(std::uint32_t hostOrderAddr)
   {
     SocketAddress a;
     a.isIPv6 = false;
     a.ipv4.hostOrderAddress = hostOrderAddr;
+    return a;
+  }
+
+  static SocketAddress fromIPv6(const std::array<std::uint8_t, 16>& bytes,
+                                std::uint32_t scopeId = 0)
+  {
+    SocketAddress a;
+    a.isIPv6 = true;
+    a.ipv6.bytes = bytes;
+    a.ipv6.scopeId = scopeId;
     return a;
   }
 };
@@ -86,7 +103,7 @@ struct SocketConfig
 {
   bool nonBlocking = true;
   bool reuseAddress = true;
-  bool enableIPv6 = false;       // reserved for future implementation
+  bool enableIPv6 = false;       // enable IPv6 / dual-stack sockets
   int  sendBufferSize = 0;       // 0 = keep default
   int  recvBufferSize = 0;
   // Later: QoS, DSCP, broadcast, multicast, etc.
