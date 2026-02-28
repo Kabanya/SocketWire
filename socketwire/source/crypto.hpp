@@ -207,7 +207,11 @@ struct ClientHelloData
 {
   std::uint8_t versionMajor = kProtocolVersionMajor;
   std::uint8_t versionMinor = kProtocolVersionMinor;
+#if SOCKETWIRE_HAVE_LIBSODIUM
   CipherSuite suite = CipherSuite::XChaCha20Poly1305;
+#else
+  CipherSuite suite = CipherSuite::None;
+#endif
   std::array<unsigned char, 32> nonce{}; // arbitrary handshake nonce
   std::vector<unsigned char> clientPub;  // variable to avoid compile-time libsodium check
 };
@@ -216,7 +220,11 @@ struct ServerHelloData
 {
   std::uint8_t versionMajor = kProtocolVersionMajor;
   std::uint8_t versionMinor = kProtocolVersionMinor;
+#if SOCKETWIRE_HAVE_LIBSODIUM
   CipherSuite suite = CipherSuite::XChaCha20Poly1305;
+#else
+  CipherSuite suite = CipherSuite::None;
+#endif
   std::array<unsigned char, 32> nonce{};
   std::vector<unsigned char> serverPub;
 };
@@ -556,6 +564,8 @@ public:
       ctx.haveKeys = true;
       ctx.suite = CipherSuite::XChaCha20Poly1305;
     }
+#else
+    (void)keys;
 #endif
     return ctx;
   }
@@ -574,23 +584,24 @@ public:
       ctx.haveKeys = true;
       ctx.suite = CipherSuite::XChaCha20Poly1305;
     }
+#else
+    (void)keys;
 #endif
     return ctx;
   }
 
 private:
-  [[maybe_unused]]
-  CipherSuite suite = CipherSuite::None;
-  bool haveKeys = false;
+  [[maybe_unused]] CipherSuite suite = CipherSuite::None;
+  [[maybe_unused]] bool haveKeys = false;
 #if SOCKETWIRE_HAVE_LIBSODIUM
   std::array<unsigned char, crypto_kx_SESSIONKEYBYTES> keyRx{};
   std::array<unsigned char, crypto_kx_SESSIONKEYBYTES> keyTx{};
 #else
-  std::array<unsigned char, 32> keyRx{};
-  std::array<unsigned char, 32> keyTx{};
+  [[maybe_unused]] std::array<unsigned char, 32> keyRx{};
+  [[maybe_unused]] std::array<unsigned char, 32> keyTx{};
 #endif
-  NonceGenerator txNonce{};
-  NonceGenerator rxNonce{}; // reserved for future (e.g., verifying remote nonce space)
+  [[maybe_unused]] NonceGenerator txNonce{};
+  [[maybe_unused]] NonceGenerator rxNonce{}; // reserved for future (e.g., verifying remote nonce space)
 
   static void encodeLE64(std::uint64_t v, unsigned char out[8])
   {
@@ -603,39 +614,13 @@ private:
 };
 
 // Implementations that depend on HandshakeState (declared earlier)
-
-inline CryptoContext HandshakeState::createClientCryptoContext() const
-{
-  return CryptoContext::fromClient(session);
-}
-
-inline CryptoContext HandshakeState::createServerCryptoContext() const
-{
-  return CryptoContext::fromServer(session);
-}
+// (defined in crypto.cpp)
 
 // Initialization
-inline Result initialize()
-{
-#if SOCKETWIRE_HAVE_LIBSODIUM
-  if (sodium_init() < 0)
-    return Result::failure(CryptoError::SodiumFailure);
-  return Result::success();
-#else
-  return Result::failure(CryptoError::NotInitialized);
-#endif
-}
+Result initialize();
 
 /* Helper: report suite availability */
-inline bool cipherSuiteSupported(CipherSuite s)
-{
-#if SOCKETWIRE_HAVE_LIBSODIUM
-  return s == CipherSuite::XChaCha20Poly1305;
-#else
-  (void)s;
-  return false;
-#endif
-}
+bool cipherSuiteSupported(CipherSuite s);
 
 // Optional Utility: Identity Signature
 // Placeholder: In future, we can use Ed25519 for identity signatures.
