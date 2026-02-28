@@ -3,6 +3,13 @@
 #include <cstring>
 #include <cassert>
 
+#ifdef __clangd__
+namespace socketwire
+{
+void register_windows_socket_factory() {}
+} // namespace socketwire
+#else
+
 #if !defined(_WIN32) && !defined(_WIN64)
   #error "windows_udp_socket.cpp is for Windows platforms only."
 #endif
@@ -427,3 +434,5 @@ void register_windows_socket_factory()
 }
 
 } // namespace socketwire
+
+#endif // __clangd__
