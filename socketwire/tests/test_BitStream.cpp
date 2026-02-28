@@ -416,3 +416,136 @@ TEST_F(BitStreamTest, Size)
   EXPECT_EQ(bs5.getSizeBytes(), orig_size_bytes)
     << "Reading should not change byte size";
 }
+
+// ========================= Safety & correctness tests =========================
+
+TEST_F(BitStreamTest, DataConstructorSetsSizeCorrectly)
+{
+  // Write some data, then construct a new stream from the raw buffer
+  socketwire::BitStream source;
+  source.write<uint32_t>(42);
+  source.write<uint16_t>(7);
+  source.write(std::string("hello"));
+
+  const uint8_t* data = source.getData();
+  size_t bytes = source.getSizeBytes();
+
+  // Construct from raw data — m_WritePose should be set
+  socketwire::BitStream fromData(data, bytes);
+  EXPECT_EQ(fromData.getSizeBytes(), bytes)
+    << "BitStream constructed from data should report correct size in bytes";
+  EXPECT_EQ(fromData.getSizeBits(), bytes * 8)
+    << "BitStream constructed from data should report correct size in bits";
+
+  // Verify we can read back correctly
+  uint32_t v1;
+  fromData.read<uint32_t>(v1);
+  EXPECT_EQ(v1, 42);
+  uint16_t v2;
+  fromData.read<uint16_t>(v2);
+  EXPECT_EQ(v2, 7);
+  std::string s;
+  fromData.read(s);
+  EXPECT_EQ(s, "hello");
+}
+
+TEST_F(BitStreamTest, ReadStringRejectsExcessiveLength)
+{
+  // Manually craft a BitStream with a huge length prefix
+  socketwire::BitStream craft;
+  craft.write<uint32_t>(0xFFFFFFFF); // 4 GB length — DoS vector
+
+  craft.resetRead();
+  std::string out;
+  EXPECT_THROW(craft.read(out), std::out_of_range)
+    << "Reading a string with length > kMaxBitStreamStringLength should throw";
+}
+
+TEST_F(BitStreamTest, ReadStringRejectsLengthExceedingBuffer)
+{
+  // Length is within the max limit, but exceeds actual buffer contents
+  socketwire::BitStream craft;
+  craft.write<uint32_t>(1000); // claim 1000 bytes, but buffer only has 4 bytes after the length
+  craft.writeBytes("AB", 2);   // only 2 bytes of actual payload
+
+  craft.resetRead();
+  std::string out;
+  EXPECT_THROW(craft.read(out), std::out_of_range)
+    << "Reading a string whose length exceeds remaining buffer should throw";
+}
+
+TEST_F(BitStreamTest, ReadStringLegitimateStringsStillWork)
+{
+  socketwire::BitStream stream;
+  stream.write(std::string(""));
+  stream.write(std::string("a"));
+  stream.write(std::string("hello world"));
+  stream.write(std::string(1000, 'x')); // 1000 chars — well within limit
+
+  stream.resetRead();
+
+  std::string s1, s2, s3, s4;
+  EXPECT_NO_THROW(stream.read(s1));
+  EXPECT_NO_THROW(stream.read(s2));
+  EXPECT_NO_THROW(stream.read(s3));
+  EXPECT_NO_THROW(stream.read(s4));
+
+  EXPECT_EQ(s1, "");
+  EXPECT_EQ(s2, "a");
+  EXPECT_EQ(s3, "hello world");
+  EXPECT_EQ(s4, std::string(1000, 'x'));
+}
+
+TEST_F(BitStreamTest, ReadBoolArrayRejectsExcessiveSize)
+{
+  socketwire::BitStream craft;
+  craft.write<uint32_t>(0xFFFFFFFF); // massive bool array size
+
+  craft.resetRead();
+  EXPECT_THROW(craft.readBoolArray(), std::out_of_range)
+    << "Reading a bool array with size > kMaxBitStreamBoolArraySize should throw";
+}
+
+TEST_F(BitStreamTest, ReadBoolArrayRejectsSizeExceedingBuffer)
+{
+  // Claim 500 bools but only have a few bits
+  socketwire::BitStream craft;
+  craft.write<uint32_t>(500);
+  craft.writeBit(true);
+  craft.writeBit(false);
+
+  craft.resetRead();
+  EXPECT_THROW(craft.readBoolArray(), std::out_of_range)
+    << "Reading a bool array whose size exceeds remaining bits should throw";
+}
+
+TEST_F(BitStreamTest, ReadBoolArrayLegitimateArraysStillWork)
+{
+  std::vector<bool> original = {true, false, true, true, false, false, true};
+
+  socketwire::BitStream stream;
+  stream.writeBoolArray(original);
+
+  stream.resetRead();
+  std::vector<bool> result;
+  EXPECT_NO_THROW(result = stream.readBoolArray());
+  EXPECT_EQ(result, original);
+}
+
+TEST_F(BitStreamTest, GetRemainingBytes)
+{
+  socketwire::BitStream stream;
+  stream.write<uint32_t>(42);   // 4 bytes
+  stream.write<uint16_t>(7);    // 2 bytes = 6 total
+
+  stream.resetRead();
+  EXPECT_EQ(stream.getRemainingBytes(), 6);
+
+  uint32_t v;
+  stream.read<uint32_t>(v);
+  EXPECT_EQ(stream.getRemainingBytes(), 2);
+
+  uint16_t v2;
+  stream.read<uint16_t>(v2);
+  EXPECT_EQ(stream.getRemainingBytes(), 0);
+}

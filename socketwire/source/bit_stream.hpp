@@ -8,6 +8,10 @@
 namespace socketwire
 {
 
+// Configurable safety limits for deserialization
+constexpr std::uint32_t kMaxBitStreamStringLength = 65536;
+constexpr std::uint32_t kMaxBitStreamBoolArraySize = 65536;
+
 class BitStream
 {
 private:
@@ -83,6 +87,8 @@ public:
   size_t getSizeBytes() const;
   // Returns the size of the data in the stream in bits
   size_t getSizeBits() const;
+  // Returns the number of bytes remaining to be read
+  size_t getRemainingBytes() const;
   // Resets the write pointer to the beginning of the stream
   void resetWrite();
   // Resets the read pointer to the beginning of the stream

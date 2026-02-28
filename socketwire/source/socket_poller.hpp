@@ -310,6 +310,8 @@ inline bool SocketPoller::backendAdd(ISocket* socket, bool watchWritable)
 #endif
 
   if (backend == PollBackend::Select) {
+    // Guard against FD_SETSIZE overflow — select() is undefined for fd >= FD_SETSIZE
+    if (fd >= FD_SETSIZE) return false;
     if (fd > selectMaxFd) selectMaxFd = fd;
     FD_SET(fd, &readSet);
     FD_SET(fd, &errorSet);

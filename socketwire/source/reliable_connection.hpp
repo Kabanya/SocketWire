@@ -19,6 +19,9 @@
 #include <unordered_map>
 #include <functional>
 #include <chrono>
+#include <memory>
+#include <cstring>
+#include <string>
 
 namespace socketwire
 {
@@ -201,7 +204,7 @@ public:
   {
     SocketAddress address;
     std::uint16_t port;
-    ReliableConnection* connection;
+    std::unique_ptr<ReliableConnection> connection;
     void* userData = nullptr; // For game-specific data (e.g., entity ID)
   };
 
@@ -235,19 +238,35 @@ private:
   ReliableConnectionConfig config;
   IReliableConnectionHandler* eventHandler = nullptr;
 
-  std::vector<RemoteClient*> clients;
+  std::vector<std::unique_ptr<RemoteClient>> clients;
 
   RemoteClient* findOrCreateClient(const SocketAddress& addr, std::uint16_t port);
   void removeClient(RemoteClient* client);
 
-  std::uint64_t makeAddressKey(const SocketAddress& addr, std::uint16_t port);
-  std::unordered_map<std::uint64_t, RemoteClient*> clientMap;
+  std::string makeAddressKey(const SocketAddress& addr, std::uint16_t port);
+  std::unordered_map<std::string, RemoteClient*> clientMap;
 };
 
-// Helper function to create connection key
-inline std::uint64_t makeConnectionKey(std::uint32_t address, std::uint16_t port)
+// Helper function to create connection key from IPv4 address and port
+inline std::string makeConnectionKey(const SocketAddress& addr, std::uint16_t port)
 {
-  return (static_cast<std::uint64_t>(address) << 16) | port;
+  std::string key;
+  if (addr.isIPv6)
+  {
+    // 16 bytes IPv6 + 4 bytes scopeId + 2 bytes port
+    key.resize(22);
+    std::memcpy(key.data(), addr.ipv6.bytes.data(), 16);
+    std::memcpy(key.data() + 16, &addr.ipv6.scopeId, 4);
+    std::memcpy(key.data() + 20, &port, 2);
+  }
+  else
+  {
+    // 4 bytes IPv4 + 2 bytes port
+    key.resize(6);
+    std::memcpy(key.data(), &addr.ipv4.hostOrderAddress, 4);
+    std::memcpy(key.data() + 4, &port, 2);
+  }
+  return key;
 }
 
 } // namespace socketwire

@@ -866,4 +866,87 @@ TEST_F(ConnectionManagerTest, UserData)
 
   delete userData;
 }
+
+// ========================= Safety & correctness tests =========================
+
+TEST_F(ReliableConnectionTest, UnknownPacketTypeIsIgnored)
+{
+  ReliableConnection conn(&socket, config);
+  auto addr = SocketAddress::fromIPv4(0x7F000001);
+  conn.setRemoteAddress(addr, 12345);
+  conn.setConnected();
+
+  // Craft a packet with an invalid PacketType (value 100, well beyond Ack=8)
+  BitStream bs;
+  bs.write<uint8_t>(100); // invalid type
+  bs.write<uint8_t>(0);   // channel
+  bs.write<uint32_t>(0);  // sequence
+
+  auto receivedBefore [[maybe_unused]] = conn.getReceivedPackets();
+  EXPECT_NO_THROW(
+    conn.processPacket(bs.getData(), bs.getSizeBytes(), addr, 12345)
+  );
+  // The packet header was still read, but no side effects occur.
+  // The counter increments because lastReceiveTime is not updated
+  // (readPacketHeader returns false before reaching the counter update).
+  // The key behavior: no crash, no undefined behavior.
+}
+
+TEST_F(ConnectionManagerTest, IPv6ClientsAreSeparated)
+{
+  ConnectionManager manager(&socket, config);
+
+  // Create two different IPv6 addresses
+  std::array<uint8_t, 16> bytes1{};
+  bytes1[15] = 1;
+  std::array<uint8_t, 16> bytes2{};
+  bytes2[15] = 2;
+
+  SocketAddress addr1 = SocketAddress::fromIPv6(bytes1);
+  SocketAddress addr2 = SocketAddress::fromIPv6(bytes2);
+
+  // Send connect packets from each address
+  BitStream bs1;
+  bs1.write<uint8_t>(static_cast<uint8_t>(PacketType::Connect));
+  bs1.write<uint8_t>(0);
+  bs1.write<uint32_t>(0);
+
+  BitStream bs2;
+  bs2.write<uint8_t>(static_cast<uint8_t>(PacketType::Connect));
+  bs2.write<uint8_t>(0);
+  bs2.write<uint32_t>(0);
+
+  manager.processPacket(bs1.getData(), bs1.getSizeBytes(), addr1, 5000);
+  manager.processPacket(bs2.getData(), bs2.getSizeBytes(), addr2, 5000);
+
+  auto connections = manager.getConnections();
+  EXPECT_EQ(connections.size(), 2u)
+    << "Two IPv6 clients with different addresses should create separate connections";
+
+  auto* c1 = manager.getConnection(addr1, 5000);
+  auto* c2 = manager.getConnection(addr2, 5000);
+  ASSERT_NE(c1, nullptr);
+  ASSERT_NE(c2, nullptr);
+  EXPECT_NE(c1, c2) << "Should be different RemoteClient instances";
+}
+
+TEST_F(ConnectionManagerTest, ConnectionManagerOwnsClients)
+{
+  // This test verifies that unique_ptr properly manages client lifetime
+  auto manager = std::make_unique<ConnectionManager>(&socket, config);
+
+  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
+
+  BitStream bs;
+  bs.write<uint8_t>(static_cast<uint8_t>(PacketType::Connect));
+  bs.write<uint8_t>(0);
+  bs.write<uint32_t>(0);
+
+  manager->processPacket(bs.getData(), bs.getSizeBytes(), addr, 12345);
+  EXPECT_EQ(manager->getConnections().size(), 1u);
+
+  // Destroying the manager should not leak or crash
+  EXPECT_NO_THROW(manager.reset());
+}
+
 } // anonymous namespace

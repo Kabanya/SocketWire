@@ -11,6 +11,7 @@ BitStream::BitStream() = default;
 BitStream::BitStream(const std::uint8_t* data, size_t size)
 {
   buffer.assign(data, data + size);
+  m_WritePose = size * 8;
 }
 
 void BitStream::writeBit(bool value)
@@ -123,6 +124,22 @@ void BitStream::read(std::string& value)
 {
   uint32_t length;
   read<uint32_t>(length);
+
+  if (length > kMaxBitStreamStringLength)
+  {
+    throw std::out_of_range("String length " + std::to_string(length) +
+                            " exceeds maximum allowed (" +
+                            std::to_string(kMaxBitStreamStringLength) + ")");
+  }
+
+  size_t remaining = getRemainingBytes();
+  if (length > remaining)
+  {
+    throw std::out_of_range("String length " + std::to_string(length) +
+                            " exceeds remaining buffer (" +
+                            std::to_string(remaining) + " bytes)");
+  }
+
   if (length > 0)
   {
     value.resize(length);
@@ -147,6 +164,23 @@ std::vector<bool> BitStream::readBoolArray()
 {
   uint32_t size;
   read<uint32_t>(size);
+
+  if (size > kMaxBitStreamBoolArraySize)
+  {
+    throw std::out_of_range("Bool array size " + std::to_string(size) +
+                            " exceeds maximum allowed (" +
+                            std::to_string(kMaxBitStreamBoolArraySize) + ")");
+  }
+
+  // Each bool needs 1 bit; check remaining bits in the buffer
+  size_t remainingBits = (buffer.size() * 8) - m_ReadPose;
+  if (size > remainingBits)
+  {
+    throw std::out_of_range("Bool array size " + std::to_string(size) +
+                            " exceeds remaining bits (" +
+                            std::to_string(remainingBits) + ")");
+  }
+
   std::vector<bool> bools(size);
   for (uint32_t i = 0; i < size; ++i)
   {
@@ -169,6 +203,12 @@ size_t BitStream::getSizeBytes() const
 size_t BitStream::getSizeBits() const
 {
   return m_WritePose;
+}
+
+size_t BitStream::getRemainingBytes() const
+{
+  size_t readByte = (m_ReadPose + 7) / 8; // current read position, rounded up to byte
+  return (readByte < buffer.size()) ? (buffer.size() - readByte) : 0;
 }
 
 void BitStream::resetWrite()
