@@ -1,5 +1,6 @@
 #include "i_socket.hpp"
 #include "bit_stream.hpp"
+#include <atomic>
 
 namespace socketwire
 {
@@ -21,16 +22,16 @@ std::size_t bitstream_access_size(const BitStream& bs)
 }
 
 // SocketFactoryRegistry
-static ISocketFactory* g_FactoryInstance = nullptr;
+static std::atomic<ISocketFactory*> g_FactoryInstance{nullptr};
 
 void SocketFactoryRegistry::setFactory(ISocketFactory* factory)
 {
-  g_FactoryInstance = factory;
+  g_FactoryInstance.store(factory, std::memory_order_release);
 }
 
 ISocketFactory* SocketFactoryRegistry::getFactory()
 {
-  return g_FactoryInstance;
+  return g_FactoryInstance.load(std::memory_order_acquire);
 }
 
 } // namespace socketwire

@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <memory>
 #include <array>
+#include <functional>
 
 #if defined(_WIN32) || defined(_WIN64)
   #define SOCKETWIRE_PLATFORM_WINDOWS 1
@@ -96,6 +97,16 @@ struct SocketAddress
     a.ipv6.scopeId = scopeId;
     return a;
   }
+
+  bool operator==(const SocketAddress& other) const noexcept
+  {
+    if (isIPv6 != other.isIPv6) return false;
+    if (isIPv6)
+      return ipv6.bytes == other.ipv6.bytes && ipv6.scopeId == other.ipv6.scopeId;
+    return ipv4.hostOrderAddress == other.ipv4.hostOrderAddress;
+  }
+
+  bool operator!=(const SocketAddress& other) const noexcept { return !(*this == other); }
 };
 
 /* Socket configuration on creation */
@@ -264,3 +275,29 @@ void register_posix_socket_factory();
 void register_windows_socket_factory();
 
 } // namespace socketwire
+
+// std::hash specialization so SocketAddress can be used as unordered_map key
+namespace std
+{
+  template<>
+  struct hash<socketwire::SocketAddress>
+  {
+    std::size_t operator()(const socketwire::SocketAddress& a) const noexcept
+    {
+      if (a.isIPv6)
+      {
+        std::size_t seed = 0x9e3779b9u;
+        for (auto b : a.ipv6.bytes)
+          seed ^= static_cast<std::size_t>(b) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+        seed ^= static_cast<std::size_t>(a.ipv6.scopeId) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+        return seed;
+      }
+      // IPv4: mix address bits
+      std::size_t v = static_cast<std::size_t>(a.ipv4.hostOrderAddress);
+      v ^= v >> 16;
+      v *= 0x45d9f3bu;
+      v ^= v >> 16;
+      return v;
+    }
+  };
+} // namespace std

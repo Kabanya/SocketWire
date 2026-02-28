@@ -64,7 +64,8 @@ void ReliableConnection::disconnect()
 
   state = ConnectionState::Disconnected;
   pendingPackets.clear();
-  receivedSequences.clear();
+  seqWindowHigh = 0;
+  seqWindowBits.reset();
   pendingReceived.clear();
 }
 
@@ -169,8 +170,6 @@ void ReliableConnection::update()
   checkTimeout();
 
   processPendingReliable();
-
-  cleanupOldSequences();
 }
 
 
@@ -279,10 +278,10 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
       sendAck(sequence);
 
       // Check for duplicate
-      if (receivedSequences.find(sequence) != receivedSequences.end())
+      if (isDuplicateSequence(sequence))
         return; // Already processed
 
-      receivedSequences[sequence] = true;
+      markSequenceReceived(sequence);
 
       // Read payload
       std::size_t payloadSize = size - 6; // subtract header
@@ -305,10 +304,10 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
       sendAck(sequence);
 
       // Check for duplicate
-      if (receivedSequences.find(sequence) != receivedSequences.end())
+      if (isDuplicateSequence(sequence))
         return;
 
-      receivedSequences[sequence] = true;
+      markSequenceReceived(sequence);
 
       // Process immediately (no ordering required)
       std::size_t payloadSize = size - 6;
@@ -455,25 +454,37 @@ void ReliableConnection::checkTimeout()
   }
 }
 
-void ReliableConnection::cleanupOldSequences()
+bool ReliableConnection::isDuplicateSequence(std::uint32_t seq) const
 {
-  // Keep only recent sequences (prevent unbounded growth)
-  const std::uint32_t MAX_SEQUENCES = 1024;
+  // Sequence before the window base (too old) — treat as duplicate
+  const std::uint32_t windowBase = seqWindowHigh - kSeqWindowSize;
+  if (isSequenceNewer(windowBase, seq))
+    return true;
+  // Sequence newer than the highest seen — definitely not a duplicate
+  if (isSequenceNewer(seq, seqWindowHigh))
+    return false;
+  // Within the window — check the bit
+  return seqWindowBits[seq % kSeqWindowSize];
+}
 
-  if (receivedSequences.size() > MAX_SEQUENCES)
+void ReliableConnection::markSequenceReceived(std::uint32_t seq)
+{
+  if (isSequenceNewer(seq, seqWindowHigh))
   {
-    // Remove oldest half
-    std::vector<std::uint32_t> seqs;
-    seqs.reserve(receivedSequences.size());
-
-    for (const auto& pair : receivedSequences)
-      seqs.push_back(pair.first);
-
-    std::sort(seqs.begin(), seqs.end());
-
-    for (std::size_t i = 0; i < seqs.size() / 2; i++)
-      receivedSequences.erase(seqs[i]);
+    // Advance the window, clearing the newly exposed slots
+    const std::uint32_t advance = seq + 1 - seqWindowHigh;
+    if (advance >= kSeqWindowSize)
+    {
+      seqWindowBits.reset();
+    }
+    else
+    {
+      for (std::uint32_t i = 0; i < advance; ++i)
+        seqWindowBits[(seqWindowHigh + i) % kSeqWindowSize] = false;
+    }
+    seqWindowHigh = seq + 1;
   }
+  seqWindowBits[seq % kSeqWindowSize] = true;
 }
 
 /*static*/ bool ReliableConnection::isSequenceNewer(std::uint32_t s1, std::uint32_t s2)
@@ -488,7 +499,8 @@ ReliableConnection::~ReliableConnection()
   // Just clean up resources directly
   state = ConnectionState::Disconnected;
   pendingPackets.clear();
-  receivedSequences.clear();
+  seqWindowHigh = 0;
+  seqWindowBits.reset();
   pendingReceived.clear();
 }
 

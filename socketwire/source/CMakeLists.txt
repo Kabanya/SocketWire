@@ -4,13 +4,15 @@ add_library(SocketWire STATIC
   i_socket.hpp
   i_socket.cpp
   socket_poller.hpp
+  socket_poller.cpp
   crypto.hpp
+  crypto.cpp
   reliable_connection.hpp
   reliable_connection.cpp
   socket_init.hpp
-  socket_poller.hpp
   socket_constants.hpp
   socket_constants.cpp
+  socket_address_utils.hpp
 )
 
 if(WIN32)

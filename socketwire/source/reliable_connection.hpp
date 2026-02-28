@@ -22,6 +22,7 @@
 #include <memory>
 #include <cstring>
 #include <string>
+#include <bitset>
 
 namespace socketwire
 {
@@ -160,8 +161,10 @@ private:
   // Pending packets waiting for ACK
   std::deque<PendingPacket> pendingPackets;
 
-  // Received sequences (for duplicate detection)
-  std::unordered_map<std::uint32_t, bool> receivedSequences;
+  // Sliding window for duplicate sequence detection (O(1) lookup, bounded memory)
+  static constexpr std::uint32_t kSeqWindowSize = 1024;
+  std::uint32_t seqWindowHigh = 0;      // highest_seen_sequence + 1
+  std::bitset<1024> seqWindowBits{};    // bit[seq % 1024] = was this seq received?
 
   // Reliable packets pending processing (out of order)
   std::unordered_map<std::uint32_t, ReceivedPacket> pendingReceived;
@@ -188,7 +191,9 @@ private:
   void processPendingReliable();
   void retryPendingPackets();
   void checkTimeout();
-  void cleanupOldSequences();
+
+  bool isDuplicateSequence(std::uint32_t seq) const;
+  void markSequenceReceived(std::uint32_t seq);
 
   std::uint32_t getNextSequence() { return sendSequence++; }
   static bool isSequenceNewer(std::uint32_t s1, std::uint32_t s2);
