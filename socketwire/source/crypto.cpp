@@ -34,4 +34,23 @@ bool cipherSuiteSupported(CipherSuite s)
 #endif
 }
 
+const char* to_string(CryptoError error) noexcept
+{
+  switch (error)
+  {
+    case CryptoError::None: return "None";
+    case CryptoError::NotInitialized: return "NotInitialized";
+    case CryptoError::UnsupportedSuite: return "UnsupportedSuite";
+    case CryptoError::InvalidState: return "InvalidState";
+    case CryptoError::DecodeError: return "DecodeError";
+    case CryptoError::KeyExchangeFailed: return "KeyExchangeFailed";
+    case CryptoError::SodiumFailure: return "SodiumFailure";
+    case CryptoError::BufferTooSmall: return "BufferTooSmall";
+    case CryptoError::SequenceExpired: return "SequenceExpired";
+    case CryptoError::DecryptFailed: return "DecryptFailed";
+    case CryptoError::NotReady: return "NotReady";
+    default: return "Unknown";
+  }
+}
+
 } // namespace socketwire::crypto

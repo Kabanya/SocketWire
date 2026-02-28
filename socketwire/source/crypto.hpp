@@ -76,6 +76,9 @@ enum class CryptoError : std::uint8_t
   NotReady
 };
 
+// Convert CryptoError to human-readable string
+[[nodiscard]] const char* to_string(CryptoError error) noexcept;
+
 // Simple result wrapper
 struct Result
 {
