@@ -21,7 +21,7 @@ static bool readPacketHeader(BitStream& bs, PacketType& type, std::uint8_t& chan
   bs.read<std::uint8_t>(typeVal);
 
   // Validate packet type range
-  if (typeVal > static_cast<std::uint8_t>(PacketType::Ack))
+  if (typeVal > static_cast<std::uint8_t>(PacketType::Fragment))
     return false;
 
   type = static_cast<PacketType>(typeVal);
@@ -36,6 +36,19 @@ ReliableConnection::ReliableConnection(ISocket* socket, const ReliableConnection
   : socket(socket)
   , config(cfg)
 {
+  const auto n = static_cast<std::size_t>(cfg.numChannels);
+  sendSequence.assign(n, 0);
+  receiveSequence.assign(n, 0);
+  seqWindowHigh.assign(n, 0);
+  seqWindowBits.resize(n);
+  pendingReceived.resize(n);
+  nextFragmentGroupId.assign(n, 0);
+  fragmentGroups.resize(n);
+
+  // Initialise congestion control window
+  currentSendWindow = (config.sendWindowSize > 0) ? config.sendWindowSize : 0;
+  ssthresh = (config.sendWindowSize > 0) ? std::max(1u, config.sendWindowSize / 2) : 32;
+
   lastSendTime = std::chrono::steady_clock::now();
   lastReceiveTime = std::chrono::steady_clock::now();
   lastPingTime = std::chrono::steady_clock::now();
@@ -64,9 +77,10 @@ void ReliableConnection::disconnect()
 
   state = ConnectionState::Disconnected;
   pendingPackets.clear();
-  seqWindowHigh = 0;
-  seqWindowBits.reset();
-  pendingReceived.clear();
+  for (auto& h : seqWindowHigh) h = 0;
+  for (auto& b : seqWindowBits) b.reset();
+  for (auto& pr : pendingReceived) pr.clear();
+  for (auto& fg : fragmentGroups) fg.clear();
 }
 
 void ReliableConnection::setRemoteAddress(const SocketAddress& addr, std::uint16_t port)
@@ -78,12 +92,24 @@ void ReliableConnection::setRemoteAddress(const SocketAddress& addr, std::uint16
 bool ReliableConnection::sendReliable(const std::uint8_t channel, const void* data, std::size_t size)
 {
   if (state != ConnectionState::Connected)
-  return false;
+    return false;
 
-  if (size > config.maxPacketSize)
-  return false;
+  // Congestion window check (only when send-window limiting is enabled)
+  if (currentSendWindow > 0 && pendingPackets.size() >= currentSendWindow)
+    return false; // window full — caller must retry later
 
-  std::uint32_t seq = getNextSequence();
+  // Maximum payload for a single Reliable packet (subtract base 6-byte header)
+  const std::size_t maxPayload = (config.maxPacketSize > 6) ? (config.maxPacketSize - 6) : 512;
+
+  if (size > maxPayload)
+  {
+    // Too large for one packet — split into Fragment packets
+    if (channel < nextFragmentGroupId.size())
+      sendFragmented(channel, data, size);
+    return true;
+  }
+
+  std::uint32_t seq = getNextSequence(channel);
   sendPacket(PacketType::Reliable, channel, data, size, seq);
 
   // Store for retransmission
@@ -93,6 +119,7 @@ bool ReliableConnection::sendReliable(const std::uint8_t channel, const void* da
   static_cast<const std::uint8_t*>(data) + size);
   pending.sendTime = std::chrono::steady_clock::now();
   pending.channel = channel;
+  pending.type = PacketType::Reliable;
   pendingPackets.push_back(pending);
 
   return true;
@@ -118,7 +145,7 @@ bool ReliableConnection::sendUnsequenced(const std::uint8_t channel, const void*
   if (size > config.maxPacketSize)
     return false;
 
-  std::uint32_t seq = getNextSequence();
+  std::uint32_t seq = getNextSequence(channel);
   sendPacket(PacketType::Unsequenced, channel, data, size, seq);
 
   // Store for retransmission but don't require ordering
@@ -128,6 +155,7 @@ bool ReliableConnection::sendUnsequenced(const std::uint8_t channel, const void*
                      static_cast<const std::uint8_t*>(data) + size);
   pending.sendTime = std::chrono::steady_clock::now();
   pending.channel = channel;
+  pending.type = PacketType::Unsequenced;
   pendingPackets.push_back(pending);
 
   return true;
@@ -170,6 +198,8 @@ void ReliableConnection::update()
   checkTimeout();
 
   processPendingReliable();
+
+  cleanupFragments();
 }
 
 
@@ -278,10 +308,10 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
       sendAck(sequence);
 
       // Check for duplicate
-      if (isDuplicateSequence(sequence))
+      if (isDuplicateSequence(channel, sequence))
         return; // Already processed
 
-      markSequenceReceived(sequence);
+      markSequenceReceived(channel, sequence);
 
       // Read payload
       std::size_t payloadSize = size - 6; // subtract header
@@ -293,7 +323,8 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
       received.sequence = sequence;
       received.data = std::move(payload);
       received.channel = channel;
-      pendingReceived[sequence] = std::move(received);
+      if (channel < pendingReceived.size())
+        pendingReceived[channel][sequence] = std::move(received);
 
       break;
     }
@@ -304,10 +335,10 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
       sendAck(sequence);
 
       // Check for duplicate
-      if (isDuplicateSequence(sequence))
+      if (isDuplicateSequence(channel, sequence))
         return;
 
-      markSequenceReceived(sequence);
+      markSequenceReceived(channel, sequence);
 
       // Process immediately (no ordering required)
       std::size_t payloadSize = size - 6;
@@ -330,6 +361,70 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
       if (eventHandler != nullptr)
         eventHandler->onUnreliableReceived(channel, payload.data(), payload.size());
 
+      break;
+    }
+
+    case PacketType::Fragment:
+    {
+      // ACK each fragment individually so it can be retried if lost
+      sendAck(sequence);
+
+      if (isDuplicateSequence(channel, sequence))
+        break;
+      markSequenceReceived(channel, sequence);
+
+      // Fragment metadata is embedded in the payload after the base header:
+      // [groupId:2][fragIndex:2][fragTotal:2][data...]
+      static constexpr std::size_t kFragMeta = 6;
+      if (size < 6 + kFragMeta)
+        break;
+
+      std::uint16_t groupId = 0, fragIndex = 0, fragTotal = 0;
+      bs.readBytes(&groupId, 2);
+      bs.readBytes(&fragIndex, 2);
+      bs.readBytes(&fragTotal, 2);
+
+      const std::size_t payloadSize = size - 6 - kFragMeta;
+      std::vector<std::uint8_t> payload(payloadSize);
+      if (payloadSize > 0)
+        bs.readBytes(payload.data(), payloadSize);
+
+      if (channel >= fragmentGroups.size() || fragTotal == 0 || fragIndex >= fragTotal)
+        break;
+
+      auto& groups = fragmentGroups[channel];
+      auto it = groups.find(groupId);
+      if (it == groups.end())
+      {
+        FragmentGroup fg;
+        fg.total = fragTotal;
+        fg.pieces.resize(fragTotal);
+        fg.firstReceived = std::chrono::steady_clock::now();
+        fg.channel = channel;
+        it = groups.emplace(groupId, std::move(fg)).first;
+      }
+
+      FragmentGroup& fg = it->second;
+      if (fragIndex < fg.pieces.size() && !fg.pieces[fragIndex].has_value())
+      {
+        fg.pieces[fragIndex] = std::move(payload);
+        ++fg.receivedCount;
+      }
+
+      if (fg.receivedCount == fg.total)
+      {
+        // All fragments received — reassemble and deliver
+        std::vector<std::uint8_t> full;
+        full.reserve(fg.total * payloadSize + payloadSize);
+        for (auto& piece : fg.pieces)
+          if (piece.has_value())
+            full.insert(full.end(), piece->begin(), piece->end());
+
+        if (eventHandler != nullptr)
+          eventHandler->onReliableReceived(channel, full.data(), full.size());
+
+        groups.erase(it);
+      }
       break;
     }
 
@@ -356,6 +451,54 @@ void ReliableConnection::sendPacket(PacketType type, std::uint8_t channel,
   statsSentPackets++;
 }
 
+void ReliableConnection::sendFragmented(std::uint8_t channel, const void* data, std::size_t size)
+{
+  // Max payload per fragment: maxPacketSize − base header (6) − frag metadata (6)
+  const std::size_t maxFragPayload = (config.maxPacketSize > 12) ? (config.maxPacketSize - 12) : 64;
+  const std::uint16_t fragTotal = static_cast<std::uint16_t>((size + maxFragPayload - 1) / maxFragPayload);
+  const std::uint16_t groupId = nextFragmentGroupId[channel]++;
+  const auto* src = static_cast<const std::uint8_t*>(data);
+
+  for (std::uint16_t i = 0; i < fragTotal; ++i)
+  {
+    const std::size_t offset = i * maxFragPayload;
+    const std::size_t fragSize = std::min(maxFragPayload, size - offset);
+
+    // Layout: [groupId:2][fragIndex:2][fragTotal:2][payload...]
+    std::vector<std::uint8_t> fragPayload(6 + fragSize);
+    std::memcpy(fragPayload.data() + 0, &groupId, 2);
+    std::memcpy(fragPayload.data() + 2, &i, 2);
+    std::memcpy(fragPayload.data() + 4, &fragTotal, 2);
+    std::memcpy(fragPayload.data() + 6, src + offset, fragSize);
+
+    const std::uint32_t seq = getNextSequence(channel);
+    sendPacket(PacketType::Fragment, channel, fragPayload.data(), fragPayload.size(), seq);
+
+    // Store for retransmission
+    PendingPacket pending;
+    pending.sequence = seq;
+    pending.data = std::move(fragPayload);
+    pending.sendTime = std::chrono::steady_clock::now();
+    pending.channel = channel;
+    pending.type = PacketType::Fragment;
+    pendingPackets.push_back(std::move(pending));
+  }
+}
+
+void ReliableConnection::cleanupFragments()
+{
+  auto now = std::chrono::steady_clock::now();
+  for (auto& chGroups : fragmentGroups)
+  {
+    std::erase_if(chGroups, [&](const auto& kv)
+    {
+      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             now - kv.second.firstReceived).count();
+      return elapsed > static_cast<long long>(config.fragmentTimeoutMs);
+    });
+  }
+}
+
 void ReliableConnection::sendAck(std::uint32_t sequence)
 {
   sendPacket(PacketType::Ack, 0, nullptr, 0, sequence);
@@ -363,35 +506,39 @@ void ReliableConnection::sendAck(std::uint32_t sequence)
 
 void ReliableConnection::sendPing()
 {
-  std::uint32_t seq = getNextSequence();
+  std::uint32_t seq = getNextSequence(0);
   sendPacket(PacketType::Ping, 0, nullptr, 0, seq);
 
   // Store as pending to measure RTT
   PendingPacket pending;
   pending.sequence = seq;
   pending.sendTime = std::chrono::steady_clock::now();
+  pending.type = PacketType::Ping;
   pendingPackets.push_back(pending);
 }
 
 
 void ReliableConnection::processPendingReliable()
 {
-  // Process packets in order
-  while (true)
+  // Process packets in order for each channel independently
+  for (std::uint8_t ch = 0; ch < static_cast<std::uint8_t>(receiveSequence.size()); ++ch)
   {
-    auto it = pendingReceived.find(receiveSequence);
-    if (it == pendingReceived.end())
-      break; // Next expected packet not yet received
-
-    if (eventHandler != nullptr)
+    while (true)
     {
-      eventHandler->onReliableReceived(it->second.channel,
-                                      it->second.data.data(),
-                                      it->second.data.size());
-    }
+      auto it = pendingReceived[ch].find(receiveSequence[ch]);
+      if (it == pendingReceived[ch].end())
+        break; // Next expected packet not yet received
 
-    pendingReceived.erase(it);
-    receiveSequence++;
+      if (eventHandler != nullptr)
+      {
+        eventHandler->onReliableReceived(it->second.channel,
+                                        it->second.data.data(),
+                                        it->second.data.size());
+      }
+
+      pendingReceived[ch].erase(it);
+      receiveSequence[ch]++;
+    }
   }
 }
 
@@ -415,8 +562,7 @@ void ReliableConnection::retryPendingPackets()
 
       // Resend
       BitStream bs;
-      PacketType type = pending.data.empty() ? PacketType::Ping : PacketType::Reliable;
-      writePacketHeader(bs, type, pending.channel, pending.sequence);
+      writePacketHeader(bs, pending.type, pending.channel, pending.sequence);
 
       if (!pending.data.empty())
         bs.writeBytes(pending.data.data(), pending.data.size());
@@ -454,37 +600,39 @@ void ReliableConnection::checkTimeout()
   }
 }
 
-bool ReliableConnection::isDuplicateSequence(std::uint32_t seq) const
+bool ReliableConnection::isDuplicateSequence(std::uint8_t channel, std::uint32_t seq) const
 {
+  if (channel >= seqWindowHigh.size()) return false;
   // Sequence before the window base (too old) — treat as duplicate
-  const std::uint32_t windowBase = seqWindowHigh - kSeqWindowSize;
+  const std::uint32_t windowBase = seqWindowHigh[channel] - kSeqWindowSize;
   if (isSequenceNewer(windowBase, seq))
     return true;
   // Sequence newer than the highest seen — definitely not a duplicate
-  if (isSequenceNewer(seq, seqWindowHigh))
+  if (isSequenceNewer(seq, seqWindowHigh[channel]))
     return false;
   // Within the window — check the bit
-  return seqWindowBits[seq % kSeqWindowSize];
+  return seqWindowBits[channel][seq % kSeqWindowSize];
 }
 
-void ReliableConnection::markSequenceReceived(std::uint32_t seq)
+void ReliableConnection::markSequenceReceived(std::uint8_t channel, std::uint32_t seq)
 {
-  if (isSequenceNewer(seq, seqWindowHigh))
+  if (channel >= seqWindowHigh.size()) return;
+  if (isSequenceNewer(seq, seqWindowHigh[channel]))
   {
     // Advance the window, clearing the newly exposed slots
-    const std::uint32_t advance = seq + 1 - seqWindowHigh;
+    const std::uint32_t advance = seq + 1 - seqWindowHigh[channel];
     if (advance >= kSeqWindowSize)
     {
-      seqWindowBits.reset();
+      seqWindowBits[channel].reset();
     }
     else
     {
       for (std::uint32_t i = 0; i < advance; ++i)
-        seqWindowBits[(seqWindowHigh + i) % kSeqWindowSize] = false;
+        seqWindowBits[channel][(seqWindowHigh[channel] + i) % kSeqWindowSize] = false;
     }
-    seqWindowHigh = seq + 1;
+    seqWindowHigh[channel] = seq + 1;
   }
-  seqWindowBits[seq % kSeqWindowSize] = true;
+  seqWindowBits[channel][seq % kSeqWindowSize] = true;
 }
 
 /*static*/ bool ReliableConnection::isSequenceNewer(std::uint32_t s1, std::uint32_t s2)
@@ -499,9 +647,10 @@ ReliableConnection::~ReliableConnection()
   // Just clean up resources directly
   state = ConnectionState::Disconnected;
   pendingPackets.clear();
-  seqWindowHigh = 0;
-  seqWindowBits.reset();
-  pendingReceived.clear();
+  for (auto& h : seqWindowHigh) h = 0;
+  for (auto& b : seqWindowBits) b.reset();
+  for (auto& pr : pendingReceived) pr.clear();
+  for (auto& fg : fragmentGroups) fg.clear();
 }
 
 // ---------------------------------- ConnectionManager ----------------------------------
@@ -547,11 +696,47 @@ void ConnectionManager::update()
 void ConnectionManager::processPacket(const void* data, std::size_t size,
                                      const SocketAddress& from, std::uint16_t fromPort)
 {
+  // Check whether the sender is already a known client
+  const bool isKnown = (clientMap.find(makeAddressKey(from, fromPort)) != clientMap.end());
+
+  if (!isKnown)
+  {
+    // Peek at the packet type (byte 0). Only accept Connect packets from new senders,
+    // and only at the configured maximum rate.
+    if (size < 1)
+      return;
+    const auto typeVal = static_cast<const std::uint8_t*>(data)[0];
+    if (typeVal != static_cast<std::uint8_t>(PacketType::Connect))
+      return; // Ignore non-Connect packets from unknown senders
+    if (!handshakeAllowed())
+      return; // Rate limit exceeded — silently drop
+  }
+
   RemoteClient* client = findOrCreateClient(from, fromPort);
   if (client != nullptr && client->connection != nullptr)
-  {
     client->connection->processPacket(data, size, from, fromPort);
+}
+
+bool ConnectionManager::handshakeAllowed()
+{
+  if (config.maxHandshakesPerSecond == 0)
+    return true; // unlimited
+
+  auto now = std::chrono::steady_clock::now();
+  auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - connectWindowStart).count();
+
+  if (elapsed >= 1000)
+  {
+    // Start a fresh 1-second window
+    connectWindowStart = now;
+    connectWindowCount = 0;
   }
+
+  if (connectWindowCount >= config.maxHandshakesPerSecond)
+    return false;
+
+  ++connectWindowCount;
+  return true;
 }
 
 void ConnectionManager::broadcastReliable(std::uint8_t channel, const void* data, std::size_t size)
@@ -625,6 +810,42 @@ void ConnectionManager::removeClient(RemoteClient* client)
 std::string ConnectionManager::makeAddressKey(const SocketAddress& addr, std::uint16_t port)
 {
   return makeConnectionKey(addr, port);
+}
+
+void ReliableConnection::tick()
+{
+  std::vector<std::uint8_t> buf(config.maxPacketSize);
+  SocketAddress fromAddr{};
+  std::uint16_t fromPort = 0;
+
+  while (true)
+  {
+    SocketResult res = socket->receive(buf.data(), buf.size(), fromAddr, fromPort);
+    if (res.failed())
+      break; // WouldBlock or error — no more packets
+    if (res.bytes > 0)
+      processPacket(buf.data(), static_cast<std::size_t>(res.bytes), fromAddr, fromPort);
+  }
+
+  update();
+}
+
+void ConnectionManager::tick()
+{
+  std::vector<std::uint8_t> buf(config.maxPacketSize);
+  SocketAddress fromAddr{};
+  std::uint16_t fromPort = 0;
+
+  while (true)
+  {
+    SocketResult res = socket->receive(buf.data(), buf.size(), fromAddr, fromPort);
+    if (res.failed())
+      break; // WouldBlock or error — no more packets
+    if (res.bytes > 0)
+      processPacket(buf.data(), static_cast<std::size_t>(res.bytes), fromAddr, fromPort);
+  }
+
+  update();
 }
 
 } // namespace socketwire

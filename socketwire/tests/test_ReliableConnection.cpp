@@ -658,12 +658,16 @@ TEST_F(ReliableConnectionTest, MaxPacketSizeLimit)
   conn.setRemoteAddress(addr, 12345);
   conn.setConnected();
 
-  // Try to send packet larger than max size
-  std::vector<uint8_t> largeData(config.maxPacketSize + 1, 0xFF);
+  // A payload larger than maxPacketSize should be transparently fragmented, not rejected
+  const std::size_t bigSize = config.maxPacketSize * 3; // definitely needs fragmentation
+  std::vector<uint8_t> largeData(bigSize, 0xFF);
 
+  socket.clearSent();
   bool result = conn.sendReliable(0, largeData.data(), largeData.size());
 
-  EXPECT_FALSE(result) << "Should fail to send packet exceeding max size";
+  EXPECT_TRUE(result) << "Large payloads should succeed via fragmentation";
+  // The payload must have been split into multiple Fragment packets
+  EXPECT_GT(socket.getSentCount(), 1u) << "Oversized payload should produce multiple Fragment packets";
 }
 
 TEST_F(ReliableConnectionTest, MultipleChannels)

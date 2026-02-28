@@ -23,6 +23,7 @@
 #include <cstring>
 #include <string>
 #include <bitset>
+#include <optional>
 
 namespace socketwire
 {
@@ -38,7 +39,8 @@ enum class PacketType : std::uint8_t
   Disconnect = 5,      // Graceful disconnect
   Ping = 6,            // Keep-alive
   Pong = 7,            // Keep-alive response
-  Ack = 8              // Acknowledgment
+  Ack = 8,             // Acknowledgment
+  Fragment = 9         // Fragment of a large message
 };
 
 // Connection states
@@ -59,6 +61,14 @@ struct ReliableConnectionConfig
   std::uint32_t disconnectTimeoutMs = 5000;
   std::uint32_t maxPacketSize = 1400;
   std::uint8_t numChannels = 2;
+  /// Maximum new-connection handshakes accepted per second (0 = unlimited).
+  std::uint32_t maxHandshakesPerSecond = 20;
+  /// How long (ms) to wait for all fragments before discarding an incomplete group.
+  std::uint32_t fragmentTimeoutMs = 5000;
+  /// Maximum simultaneous unACKed reliable packets (send-window size). 0 = unlimited.
+  /// When > 0, enables AIMD congestion avoidance: window halves on packet loss,
+  /// grows by 1 per ACK up to this maximum.
+  std::uint32_t sendWindowSize = 0;
 };
 
 // Pending packet waiting for acknowledgment
@@ -69,6 +79,7 @@ struct PendingPacket
   std::chrono::steady_clock::time_point sendTime;
   std::uint32_t retries = 0;
   std::uint8_t channel = 0;
+  PacketType type = PacketType::Reliable; ///< Original type for retransmission
 };
 
 // Received packet info
@@ -76,6 +87,16 @@ struct ReceivedPacket
 {
   std::uint32_t sequence;
   std::vector<std::uint8_t> data;
+  std::uint8_t channel = 0;
+};
+
+/// State for accumulating fragments of a single fragmented message.
+struct FragmentGroup
+{
+  std::uint16_t total = 0;     ///< Total number of fragments
+  std::vector<std::optional<std::vector<std::uint8_t>>> pieces; ///< Indexed by fragmentIndex
+  std::uint16_t receivedCount = 0;
+  std::chrono::steady_clock::time_point firstReceived;
   std::uint8_t channel = 0;
 };
 
@@ -132,6 +153,10 @@ public:
   // Update - call regularly (e.g., every frame)
   void update();
 
+  // Convenience: drain all pending packets from socket, then call update().
+  // Requires the socket to be in non-blocking mode.
+  void tick();
+
   // Process incoming packet
   void processPacket(const void* data, std::size_t size,
                     const SocketAddress& from, std::uint16_t fromPort);
@@ -144,6 +169,10 @@ public:
   std::uint32_t getReceivedPackets() const { return statsReceivedPackets; }
   std::uint32_t getLostPackets() const { return statsLostPackets; }
   float getRTT() const { return rtt; }
+  /// Current adaptive send window (0 = unlimited).
+  std::uint32_t getSendWindow() const { return currentSendWindow; }
+  /// Number of reliable packets currently awaiting acknowledgment.
+  std::uint32_t getInflightCount() const { return static_cast<std::uint32_t>(pendingPackets.size()); }
 
 private:
   ISocket* socket;
@@ -154,20 +183,20 @@ private:
   SocketAddress remoteAddr;
   std::uint16_t remotePort = 0;
 
-  // Sequence numbers
-  std::uint32_t sendSequence = 0;
-  std::uint32_t receiveSequence = 0;
+  // Sequence numbers — per channel
+  std::vector<std::uint32_t> sendSequence;
+  std::vector<std::uint32_t> receiveSequence;
 
   // Pending packets waiting for ACK
   std::deque<PendingPacket> pendingPackets;
 
-  // Sliding window for duplicate sequence detection (O(1) lookup, bounded memory)
+  // Sliding window for duplicate sequence detection — per channel (O(1) lookup, bounded memory)
   static constexpr std::uint32_t kSeqWindowSize = 1024;
-  std::uint32_t seqWindowHigh = 0;      // highest_seen_sequence + 1
-  std::bitset<1024> seqWindowBits{};    // bit[seq % 1024] = was this seq received?
+  std::vector<std::uint32_t> seqWindowHigh;             // per-channel highest_seen_sequence + 1
+  std::vector<std::bitset<1024>> seqWindowBits;         // per-channel bit[seq % 1024]
 
-  // Reliable packets pending processing (out of order)
-  std::unordered_map<std::uint32_t, ReceivedPacket> pendingReceived;
+  // Reliable packets pending ordered processing — per channel
+  std::vector<std::unordered_map<std::uint32_t, ReceivedPacket>> pendingReceived;
 
   // Timing
   std::chrono::steady_clock::time_point lastSendTime;
@@ -182,20 +211,38 @@ private:
   std::uint32_t statsReceivedPackets = 0;
   std::uint32_t statsLostPackets = 0;
 
+  // Congestion control (AIMD)
+  std::uint32_t currentSendWindow = 0;  ///< Adaptive send window; 0 = unlimited
+  std::uint32_t ssthresh = 32;          ///< Slow-start threshold
+
+  // Fragment state — per channel
+  static constexpr std::size_t kFragmentHeaderExtra = 6; ///< groupId(2) + fragIdx(2) + fragTotal(2)
+  std::vector<std::uint16_t> nextFragmentGroupId; ///< Rolling group-ID counter, per channel
+  /// Incomplete fragment groups indexed by [channel][groupId]
+  std::vector<std::unordered_map<std::uint16_t, FragmentGroup>> fragmentGroups;
+
   // Internal methods
   void sendPacket(PacketType type, std::uint8_t channel,
                  const void* data, std::size_t size,
                  std::uint32_t sequence = 0);
+  /// Split a large payload into Fragment packets and enqueue each for reliable delivery.
+  void sendFragmented(std::uint8_t channel, const void* data, std::size_t size);
   void sendAck(std::uint32_t sequence);
   void sendPing();
   void processPendingReliable();
   void retryPendingPackets();
   void checkTimeout();
+  /// Discard fragment groups that have been waiting longer than fragmentTimeoutMs.
+  void cleanupFragments();
 
-  bool isDuplicateSequence(std::uint32_t seq) const;
-  void markSequenceReceived(std::uint32_t seq);
+  bool isDuplicateSequence(std::uint8_t channel, std::uint32_t seq) const;
+  void markSequenceReceived(std::uint8_t channel, std::uint32_t seq);
 
-  std::uint32_t getNextSequence() { return sendSequence++; }
+  std::uint32_t getNextSequence(std::uint8_t channel)
+  {
+    if (channel >= sendSequence.size()) return 0;
+    return sendSequence[channel]++;
+  }
   static bool isSequenceNewer(std::uint32_t s1, std::uint32_t s2);
 };
 
@@ -218,6 +265,10 @@ public:
 
   // Update all connections
   void update();
+
+  // Convenience: drain all pending packets from socket, then update all connections.
+  // Requires the socket to be in non-blocking mode.
+  void tick();
 
   // Process incoming packet - automatically routes to correct connection
   void processPacket(const void* data, std::size_t size,
@@ -250,6 +301,11 @@ private:
 
   std::string makeAddressKey(const SocketAddress& addr, std::uint16_t port);
   std::unordered_map<std::string, RemoteClient*> clientMap;
+
+  // Handshake rate-limiting state
+  std::uint32_t connectWindowCount = 0;
+  std::chrono::steady_clock::time_point connectWindowStart{};
+  bool handshakeAllowed();  ///< Returns true if a new connection may be accepted right now.
 };
 
 // Helper function to create connection key from IPv4 address and port

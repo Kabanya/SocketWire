@@ -34,4 +34,20 @@ ISocketFactory* SocketFactoryRegistry::getFactory()
   return g_FactoryInstance.load(std::memory_order_acquire);
 }
 
+const char* to_string(SocketError error) noexcept
+{
+  switch (error)
+  {
+    case SocketError::None: return "None";
+    case SocketError::WouldBlock: return "WouldBlock";
+    case SocketError::Closed: return "Closed";
+    case SocketError::System: return "System";
+    case SocketError::InvalidParam: return "InvalidParam";
+    case SocketError::NotBound: return "NotBound";
+    case SocketError::Unsupported: return "Unsupported";
+    case SocketError::Unknown: return "Unknown";
+    default: return "Unknown";
+  }
+}
+
 } // namespace socketwire

@@ -14,6 +14,7 @@
 #include <memory>
 #include <array>
 #include <functional>
+#include <span>
 
 #if defined(_WIN32) || defined(_WIN64)
   #define SOCKETWIRE_PLATFORM_WINDOWS 1
@@ -45,6 +46,9 @@ enum class SocketError : std::uint8_t
   Unsupported,     // Unsupported operation / option
   Unknown          // Unclassified error
 };
+
+// Convert SocketError to human-readable string
+[[nodiscard]] const char* to_string(SocketError error) noexcept;
 
 /* Result of send/receive operation */
 struct SocketResult
@@ -175,6 +179,14 @@ public:
                               const SocketAddress& toAddr,
                               std::uint16_t toPort) = 0;
 
+  // Span overload — preferred in C++23 code.
+  SocketResult sendTo(std::span<const std::uint8_t> data,
+                      const SocketAddress& toAddr,
+                      std::uint16_t toPort)
+  {
+    return sendTo(data.data(), data.size(), toAddr, toPort);
+  }
+
   // Simplified BitStream send (can be overridden for zero-copy)
   virtual SocketResult sendBitStream(BitStream& stream,
                                      const SocketAddress& toAddr,
@@ -185,6 +197,14 @@ public:
                                std::size_t capacity,
                                SocketAddress& fromAddr,
                                std::uint16_t& fromPort) = 0;
+
+  // Span overload — preferred in C++23 code.
+  SocketResult receive(std::span<std::uint8_t> buffer,
+                       SocketAddress& fromAddr,
+                       std::uint16_t& fromPort)
+  {
+    return receive(buffer.data(), buffer.size(), fromAddr, fromPort);
+  }
 
   // Poll: non-blocking socket poll + generate events for handler (if registered).
   virtual void poll(ISocketEventHandler* handler) = 0;
