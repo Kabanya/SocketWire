@@ -11,13 +11,13 @@ BitStream::BitStream() = default;
 BitStream::BitStream(const std::uint8_t* data, size_t size)
 {
   buffer.assign(data, data + size);
-  m_WritePose = size * 8;
+  m_WritePos = size * 8;
 }
 
 void BitStream::writeBit(bool value)
 {
-  size_t byteIndex = m_WritePose / 8;
-  size_t bitIndex = m_WritePose % 8;
+  size_t byteIndex = m_WritePos / 8;
+  size_t bitIndex = m_WritePos % 8;
 
   if (byteIndex >= buffer.size())
   {
@@ -29,13 +29,13 @@ void BitStream::writeBit(bool value)
     buffer[byteIndex] |= (1 << bitIndex);
   }
 
-  m_WritePose++;
+  m_WritePos++;
 }
 
 bool BitStream::readBit()
 {
-  size_t byteIndex = m_ReadPose / 8;
-  size_t bitIndex = m_ReadPose % 8;
+  size_t byteIndex = m_ReadPos / 8;
+  size_t bitIndex = m_ReadPos % 8;
 
   if (byteIndex >= buffer.size())
   {
@@ -43,7 +43,7 @@ bool BitStream::readBit()
   }
 
   bool value = (buffer[byteIndex] & (1 << bitIndex)) != 0;
-  m_ReadPose++;
+  m_ReadPos++;
 
   return value;
 }
@@ -70,20 +70,20 @@ uint32_t BitStream::readBits(uint8_t bit_count)
 void BitStream::writeBytes(const void* data, size_t size)
 {
   alignWrite();
-  size_t byteIndex = m_WritePose / 8;
+  size_t byteIndex = m_WritePos / 8;
 
   if (byteIndex + size > buffer.size())
   {
     buffer.resize(byteIndex + size);
   }
   std::memcpy(buffer.data() + byteIndex, data, size);
-  m_WritePose += size * 8;
+  m_WritePos += size * 8;
 }
 
 void BitStream::readBytes(void* data, size_t size)
 {
   alignRead();
-  size_t byteIndex = m_ReadPose / 8;
+  size_t byteIndex = m_ReadPos / 8;
 
   if (byteIndex + size > buffer.size())
   {
@@ -91,22 +91,22 @@ void BitStream::readBytes(void* data, size_t size)
   }
 
   std::memcpy(data, buffer.data() + byteIndex, size);
-  m_ReadPose += size * 8;
+  m_ReadPos += size * 8;
 }
 
 void BitStream::alignWrite()
 {
-  if (m_WritePose % 8 != 0)
+  if (m_WritePos % 8 != 0)
   {
-    m_WritePose = (m_WritePose + 7) & ~7; // Round up to next byte
+    m_WritePos = (m_WritePos + 7) & ~7; // Round up to next byte
   }
 }
 
 void BitStream::alignRead()
 {
-  if (m_ReadPose % 8 != 0)
+  if (m_ReadPos % 8 != 0)
   {
-    m_ReadPose = (m_ReadPose + 7) & ~7; // Round up to next byte
+    m_ReadPos = (m_ReadPos + 7) & ~7; // Round up to next byte
   }
 }
 
@@ -173,7 +173,7 @@ std::vector<bool> BitStream::readBoolArray()
   }
 
   // Each bool needs 1 bit; check remaining bits in the buffer
-  size_t remainingBits = (buffer.size() * 8) - m_ReadPose;
+  size_t remainingBits = (buffer.size() * 8) - m_ReadPos;
   if (size > remainingBits)
   {
     throw std::out_of_range("Bool array size " + std::to_string(size) +
@@ -197,35 +197,35 @@ const std::uint8_t* BitStream::getData() const
 
 size_t BitStream::getSizeBytes() const
 {
-  return (m_WritePose + 7) / 8; // Round up to nearest byte
+  return (m_WritePos + 7) / 8; // Round up to nearest byte
 }
 
 size_t BitStream::getSizeBits() const
 {
-  return m_WritePose;
+  return m_WritePos;
 }
 
 size_t BitStream::getRemainingBytes() const
 {
-  size_t readByte = (m_ReadPose + 7) / 8; // current read position, rounded up to byte
+  size_t readByte = (m_ReadPos + 7) / 8; // current read position, rounded up to byte
   return (readByte < buffer.size()) ? (buffer.size() - readByte) : 0;
 }
 
 void BitStream::resetWrite()
 {
-  m_WritePose = 0;
+  m_WritePos = 0;
 }
 
 void BitStream::resetRead()
 {
-  m_ReadPose = 0;
+  m_ReadPos = 0;
 }
 
 void BitStream::clear()
 {
   buffer.clear();
-  m_WritePose = 0;
-  m_ReadPose = 0;
+  m_WritePos = 0;
+  m_ReadPos = 0;
 }
 
 

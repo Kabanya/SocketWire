@@ -16,8 +16,8 @@ class BitStream
 {
 private:
   std::vector<std::uint8_t> buffer;
-  size_t m_WritePose = 0;
-  size_t m_ReadPose = 0;
+  size_t m_WritePos = 0;
+  size_t m_ReadPos = 0;
 
 public:
   BitStream();
