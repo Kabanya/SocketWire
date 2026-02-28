@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <type_traits>
 #include <string>
+#include <expected>
 
 namespace socketwire
 {
@@ -11,6 +12,16 @@ namespace socketwire
 // Configurable safety limits for deserialization
 constexpr std::uint32_t kMaxBitStreamStringLength = 65536;
 constexpr std::uint32_t kMaxBitStreamBoolArraySize = 65536;
+
+/** Error codes for non-throwing BitStream read operations. */
+enum class BitStreamError : std::uint8_t
+{
+  EndOfStream,  ///< Not enough data remaining in the stream
+  InvalidData,  ///< Data violates format/bounds constraints
+};
+
+// Convert BitStreamError to human-readable string
+[[nodiscard]] const char* to_string(BitStreamError error) noexcept;
 
 class BitStream
 {
@@ -78,6 +89,40 @@ public:
   void writeBoolArray(const std::vector<bool>& bools);
   // Reads an array of boolean values from the stream
   std::vector<bool> readBoolArray();
+
+  // -----------------Non-throwing (C++23 std::expected) read variants-----------
+
+  // Returns the read bit, or BitStreamError::EndOfStream if exhausted.
+  [[nodiscard]] std::expected<bool, BitStreamError> try_readBit() noexcept;
+
+  // Returns the read bits, or BitStreamError::EndOfStream if exhausted.
+  [[nodiscard]] std::expected<std::uint32_t, BitStreamError>
+    try_readBits(std::uint8_t bit_count) noexcept;
+
+  // Returns the read string, or an error if the stream is exhausted / data invalid.
+  [[nodiscard]] std::expected<std::string, BitStreamError>
+    try_readString() noexcept;
+
+  // Returns the read bool array, or an error if the stream is exhausted / data invalid.
+  [[nodiscard]] std::expected<std::vector<bool>, BitStreamError>
+    try_readBoolArray() noexcept;
+
+  // Non-throwing read for any trivially-copyable type.
+  template<typename T>
+  [[nodiscard]] std::expected<T, BitStreamError> try_read() noexcept
+  {
+    static_assert(std::is_trivially_copyable_v<T>, "Type must be trivially copyable");
+    try
+    {
+      T value{};
+      read(value);
+      return value;
+    }
+    catch (...)
+    {
+      return std::unexpected(BitStreamError::EndOfStream);
+    }
+  }
 
   // -----------------Utility methods-----------------
 

@@ -6,6 +6,50 @@
 namespace socketwire
 {
 
+const char* to_string(BitStreamError error) noexcept
+{
+  switch (error)
+  {
+    case BitStreamError::EndOfStream: return "EndOfStream";
+    case BitStreamError::InvalidData: return "InvalidData";
+    default: return "Unknown";
+  }
+}
+
+std::expected<bool, BitStreamError> BitStream::try_readBit() noexcept
+{
+  try { return readBit(); }
+  catch (...) { return std::unexpected(BitStreamError::EndOfStream); }
+}
+
+std::expected<std::uint32_t, BitStreamError> BitStream::try_readBits(std::uint8_t bit_count) noexcept
+{
+  try { return readBits(bit_count); }
+  catch (...) { return std::unexpected(BitStreamError::EndOfStream); }
+}
+
+std::expected<std::string, BitStreamError> BitStream::try_readString() noexcept
+{
+  try
+  {
+    std::string value;
+    read(value);
+    return value;
+  }
+  catch (const std::out_of_range&) { return std::unexpected(BitStreamError::InvalidData); }
+  catch (...) { return std::unexpected(BitStreamError::EndOfStream); }
+}
+
+std::expected<std::vector<bool>, BitStreamError> BitStream::try_readBoolArray() noexcept
+{
+  try
+  {
+    return readBoolArray();
+  }
+  catch (const std::out_of_range&) { return std::unexpected(BitStreamError::InvalidData); }
+  catch (...) { return std::unexpected(BitStreamError::EndOfStream); }
+}
+
 BitStream::BitStream() = default;
 
 BitStream::BitStream(const std::uint8_t* data, size_t size)
