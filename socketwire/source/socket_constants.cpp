@@ -1,5 +1,6 @@
 #include "socket_constants.hpp"
 #include "i_socket.hpp"
+#include <optional>
 
 // Platform-specific includes are isolated here, not exposed to users
 #if defined(_WIN32)
@@ -145,6 +146,40 @@ SocketAddress SocketConstants::fromOctets(std::uint8_t a, std::uint8_t b,
                           static_cast<std::uint32_t>(d);
 
   return SocketAddress::fromIPv4(address);
+}
+
+std::optional<SocketAddress> SocketConstants::tryFromString(const char* ipString)
+{
+  if (ipString == nullptr)
+    return std::nullopt;
+
+  std::uint32_t addr = 0;
+  if (parseIPv4(ipString, addr))
+    return SocketAddress::fromIPv4(addr);
+
+  std::array<std::uint8_t, 16> addr6{};
+  std::uint32_t scopeId = 0;
+  if (parseIPv6(ipString, addr6, scopeId))
+    return SocketAddress::fromIPv6(addr6, scopeId);
+
+  return std::nullopt;
+}
+
+std::string SocketConstants::formatIPv4String(std::uint32_t address)
+{
+  char buf[16];
+  if (!formatIPv4(address, buf, sizeof(buf)))
+    return {};
+  return std::string(buf);
+}
+
+std::string SocketConstants::formatIPv6String(const std::array<std::uint8_t, 16>& address,
+                                              std::uint32_t scopeId)
+{
+  char buf[46];
+  if (!formatIPv6(address, scopeId, buf, sizeof(buf)))
+    return {};
+  return std::string(buf);
 }
 
 } // namespace socketwire

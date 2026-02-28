@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <cstddef>
 #include <array>
+#include <optional>
+#include <string>
 
 namespace socketwire
 {
@@ -53,7 +55,18 @@ public:
                          char* buffer, size_t bufferSize);
 
   // Helper to create SocketAddress from string (IPv4 or IPv6)
+  // Returns the address, or 0.0.0.0 on failure (prefer tryFromString for error handling)
   static SocketAddress fromString(const char* ipString);
+
+  // Returns std::nullopt if the string is not a valid IPv4 or IPv6 address
+  static std::optional<SocketAddress> tryFromString(const char* ipString);
+
+  // Format IPv4 as std::string
+  static std::string formatIPv4String(std::uint32_t address);
+
+  // Format IPv6 as std::string
+  static std::string formatIPv6String(const std::array<std::uint8_t, 16>& address,
+                                      std::uint32_t scopeId = 0);
 
   // Helper to create SocketAddress from individual octets
   static SocketAddress fromOctets(std::uint8_t a, std::uint8_t b,

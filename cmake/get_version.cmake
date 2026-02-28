@@ -11,10 +11,10 @@ if(GIT_EXECUTABLE)
 
   set(VERSION_REGEX "^v([0-9]+)\.([0-9]+)\.([0-9]+)$")
   if (${GIT_TAG} MATCHES ${VERSION_REGEX})
-    string(REGEX REPLACE ${VERSION_REGEX} "\\1, \\2, \\3" ETNA_GIT_VERSION "${GIT_TAG}")
+    string(REGEX REPLACE ${VERSION_REGEX} "\\1, \\2, \\3" SOCKETWIRE_GIT_VERSION "${GIT_TAG}")
     return()
   endif()
 endif()
 
-set(ETNA_GIT_VERSION "0, 1, 0")
+set(SOCKETWIRE_GIT_VERSION "0, 1, 0")
 message("Failed to determine version from Git tags. Using default version 0.1.0")
