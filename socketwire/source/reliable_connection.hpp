@@ -226,7 +226,7 @@ private:
                  const void* data, std::size_t size,
                  std::uint32_t sequence = 0);
   /// Split a large payload into Fragment packets and enqueue each for reliable delivery.
-  void sendFragmented(std::uint8_t channel, const void* data, std::size_t size);
+  bool sendFragmented(std::uint8_t channel, const void* data, std::size_t size);
   void sendAck(std::uint32_t sequence);
   void sendPing();
   void processPendingReliable();

@@ -1,6 +1,8 @@
 #include "reliable_connection.hpp"
+#include <cstdint>
 #include <cstring>
 #include <algorithm>
+#include <limits>
 
 
 namespace socketwire
@@ -104,9 +106,9 @@ bool ReliableConnection::sendReliable(const std::uint8_t channel, const void* da
   if (size > maxPayload)
   {
     // Too large for one packet — split into Fragment packets
-    if (channel < nextFragmentGroupId.size())
-      sendFragmented(channel, data, size);
-    return true;
+    if (channel >= nextFragmentGroupId.size())
+      return false;
+    return sendFragmented(channel, data, size);
   }
 
   std::uint32_t seq = getNextSequence(channel);
@@ -278,7 +280,7 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
         if (pending.sequence == sequence)
         {
           auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - pending.sendTime).count();
-          rtt = rtt * 0.9f + elapsed * 0.1f; // Exponential moving average
+          rtt = rtt * 0.9f + static_cast<float>(elapsed) * 0.1f; // Exponential moving average
           break;
         }
       }
@@ -295,7 +297,7 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
       {
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->sendTime).count();
-        rtt = rtt * 0.9f + elapsed * 0.1f;
+        rtt = rtt * 0.9f + static_cast<float>(elapsed) * 0.1f;
 
         pendingPackets.erase(it);
       }
@@ -451,11 +453,18 @@ void ReliableConnection::sendPacket(PacketType type, std::uint8_t channel,
   statsSentPackets++;
 }
 
-void ReliableConnection::sendFragmented(std::uint8_t channel, const void* data, std::size_t size)
+bool ReliableConnection::sendFragmented(std::uint8_t channel, const void* data, std::size_t size)
 {
+  if (channel >= nextFragmentGroupId.size())
+    return false;
+
   // Max payload per fragment: maxPacketSize − base header (6) − frag metadata (6)
   const std::size_t maxFragPayload = (config.maxPacketSize > 12) ? (config.maxPacketSize - 12) : 64;
-  const std::uint16_t fragTotal = static_cast<std::uint16_t>((size + maxFragPayload - 1) / maxFragPayload);
+  const std::size_t fragTotalSize = (size + maxFragPayload - 1) / maxFragPayload;
+  if (fragTotalSize > std::numeric_limits<std::uint16_t>::max())
+    return false;
+
+  const std::uint16_t fragTotal = static_cast<std::uint16_t>(fragTotalSize);
   const std::uint16_t groupId = nextFragmentGroupId[channel]++;
   const auto* src = static_cast<const std::uint8_t*>(data);
 
@@ -483,6 +492,8 @@ void ReliableConnection::sendFragmented(std::uint8_t channel, const void* data, 
     pending.type = PacketType::Fragment;
     pendingPackets.push_back(std::move(pending));
   }
+
+  return true;
 }
 
 void ReliableConnection::cleanupFragments()
@@ -494,7 +505,7 @@ void ReliableConnection::cleanupFragments()
     {
       const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                              now - kv.second.firstReceived).count();
-      return elapsed > static_cast<long long>(config.fragmentTimeoutMs);
+      return elapsed > static_cast<std::int64_t>(config.fragmentTimeoutMs);
     });
   }
 }

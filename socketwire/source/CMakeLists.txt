@@ -22,6 +22,7 @@ else()
 endif()
 
 target_include_directories(SocketWire PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(SocketWire PUBLIC cxx_std_23)
 
 if (TARGET socketwire_crypto)
   target_link_libraries(SocketWire PUBLIC socketwire_crypto)

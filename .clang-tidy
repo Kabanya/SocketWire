@@ -83,25 +83,25 @@ CheckOptions: # inspire by C++ Core Guidelines
 
   # Functions and methods
   - key: readability-identifier-naming.GlobalFunctionCase
-    value: snake_case
+    value: lower_case
   - key: readability-identifier-naming.MethodCase
-    value: snake_case
+    value: lower_case
 
   # Variables, parameters, class members
   - key: readability-identifier-naming.ParameterCase
-    value: snake_case
+    value: lower_case
   - key: readability-identifier-naming.VariableCase
-    value: snake_case
+    value: lower_case
   - key: readability-identifier-naming.ClassMemberCase
-    value: snake_case
+    value: lower_case
 
   # Constants
   - key: readability-identifier-naming.GlobalConstantCase
-    value: snake_case
+    value: lower_case
   - key: readability-identifier-naming.StaticConstantCase
-    value: snake_case
+    value: lower_case
   - key: readability-identifier-naming.ConstexprVariableCase
-    value: snake_case
+    value: lower_case
 
   # # Const-correctness check - warn if local variables can be declared const
   # - key: misc-const-correctness.AnalyzeValues

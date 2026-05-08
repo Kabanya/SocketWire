@@ -2,6 +2,7 @@
 #include <cstring>
 #include <algorithm>
 #include <stdexcept>
+#include <limits>
 
 namespace socketwire
 {
@@ -70,7 +71,7 @@ void BitStream::writeBit(bool value)
 
   if (value)
   {
-    buffer[byteIndex] |= (1 << bitIndex);
+    buffer[byteIndex] |= static_cast<std::uint8_t>(std::uint32_t{1} << bitIndex);
   }
 
   m_WritePos++;
@@ -86,7 +87,7 @@ bool BitStream::readBit()
     throw std::out_of_range("Attempting to read beyond buffer");
   }
 
-  bool value = (buffer[byteIndex] & (1 << bitIndex)) != 0;
+  bool value = (buffer[byteIndex] & static_cast<std::uint8_t>(std::uint32_t{1} << bitIndex)) != 0;
   m_ReadPos++;
 
   return value;
@@ -94,19 +95,25 @@ bool BitStream::readBit()
 
 void BitStream::writeBits(uint32_t value, uint8_t bit_count)
 {
+  if (bit_count > 32)
+    throw std::out_of_range("bit_count must be <= 32");
+
   for (uint8_t i = 0; i < bit_count; ++i)
   {
-    writeBit((value & (1 << i)) != 0);
+    writeBit((value & (std::uint32_t{1} << i)) != 0);
   }
 }
 
 uint32_t BitStream::readBits(uint8_t bit_count)
 {
+  if (bit_count > 32)
+    throw std::out_of_range("bit_count must be <= 32");
+
   uint32_t value = 0;
   for (uint8_t i = 0; i < bit_count; ++i)
   {
     if (readBit())
-      value |= (1 << i);
+      value |= (std::uint32_t{1} << i);
   }
   return value;
 }
@@ -142,7 +149,7 @@ void BitStream::alignWrite()
 {
   if (m_WritePos % 8 != 0)
   {
-    m_WritePos = (m_WritePos + 7) & ~7; // Round up to next byte
+    m_WritePos = ((m_WritePos + 7) / 8) * 8; // Round up to next byte
   }
 }
 
@@ -150,7 +157,7 @@ void BitStream::alignRead()
 {
   if (m_ReadPos % 8 != 0)
   {
-    m_ReadPos = (m_ReadPos + 7) & ~7; // Round up to next byte
+    m_ReadPos = ((m_ReadPos + 7) / 8) * 8; // Round up to next byte
   }
 }
 
@@ -275,17 +282,25 @@ void BitStream::clear()
 
 void BitStream::writeQuantizedFloat(float value, float min, float max, uint8_t bits)
 {
+  if (bits == 0 || bits > 32)
+    throw std::out_of_range("bits must be in range [1, 32]");
+
   value = std::clamp(value, min, max);
 
-  uint32_t range = (1 << bits) - 1;
-  uint32_t quantized = static_cast<uint32_t>(range * ((value - min) / (max - min)));
+  uint32_t range = (bits == 32) ? std::numeric_limits<std::uint32_t>::max()
+                                : ((std::uint32_t{1} << bits) - 1);
+  uint32_t quantized = static_cast<uint32_t>(static_cast<float>(range) * ((value - min) / (max - min)));
 
   writeBits(quantized, bits);
 }
 
 float BitStream::readQuantizedFloat(float min, float max, uint8_t bits)
 {
-  uint32_t range = (1 << bits) - 1;
+  if (bits == 0 || bits > 32)
+    throw std::out_of_range("bits must be in range [1, 32]");
+
+  uint32_t range = (bits == 32) ? std::numeric_limits<std::uint32_t>::max()
+                                : ((std::uint32_t{1} << bits) - 1);
   uint32_t quantized = readBits(bits);
   return min + (float(quantized) / float(range)) * (max - min);
 }

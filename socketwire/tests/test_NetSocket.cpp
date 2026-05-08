@@ -150,7 +150,7 @@ TEST_F(NetSocketTest, SendAndReceive)
   SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
   EXPECT_EQ(sender->bind(addr, 0), SocketError::None)
     << "Sender should bind successfully";
-  int senderPort = sender->localPort();
+  std::uint16_t senderPort = sender->localPort();
   EXPECT_GT(senderPort, 0) << "Sender should have valid port";
 
   // Create receiver socket
@@ -158,7 +158,7 @@ TEST_F(NetSocketTest, SendAndReceive)
   ASSERT_NE(receiver, nullptr) << "Receiver socket creation should succeed";
   EXPECT_EQ(receiver->bind(addr, 0), SocketError::None)
     << "Receiver should bind successfully";
-  int receiverPort = receiver->localPort();
+  std::uint16_t receiverPort = receiver->localPort();
   EXPECT_GT(receiverPort, 0) << "Receiver should have valid port";
 
   // Ensure they have different ports
@@ -189,7 +189,7 @@ TEST_F(NetSocketTest, SendAndReceive)
   EXPECT_EQ(received.error, SocketError::None) << "Receive should succeed";
   EXPECT_EQ(received.bytes, static_cast<std::ptrdiff_t>(messageLen))
     << "Should receive " << messageLen << " bytes";
-  EXPECT_EQ(std::string(buffer, received.bytes), std::string(message))
+  EXPECT_EQ(std::string(buffer, static_cast<std::size_t>(received.bytes)), std::string(message))
     << "Received data should match sent data";
   EXPECT_EQ(fromPort, senderPort) << "Should know sender's port";
 }
@@ -205,7 +205,7 @@ TEST_F(NetSocketTest, SendAndReceiveWithMock)
   SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
   EXPECT_EQ(sender->bind(addr, 0), SocketError::None)
     << "Sender should bind successfully";
-  int senderPort = sender->localPort();
+  std::uint16_t senderPort = sender->localPort();
   EXPECT_GT(senderPort, 0) << "Sender port should be valid";
 
   // Create receiver socket
@@ -213,7 +213,7 @@ TEST_F(NetSocketTest, SendAndReceiveWithMock)
   ASSERT_NE(receiver, nullptr);
   EXPECT_EQ(receiver->bind(addr, 0), SocketError::None)
     << "Receiver should bind successfully";
-  int receiverPort = receiver->localPort();
+  std::uint16_t receiverPort = receiver->localPort();
   EXPECT_GT(receiverPort, 0) << "Receiver port should be valid";
 
   // Setup mock event handler
@@ -302,7 +302,7 @@ TEST_F(NetSocketTest, MultipleMessagesSequential)
 
   SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
   ASSERT_EQ(receiver->bind(addr, 0), SocketError::None);
-  int receiverPort = receiver->localPort();
+  std::uint16_t receiverPort = receiver->localPort();
 
   // Send and receive multiple messages
   const int numMessages = 5;
@@ -311,7 +311,7 @@ TEST_F(NetSocketTest, MultipleMessagesSequential)
     std::string message = "Message " + std::to_string(i);
 
     // Send
-    SocketResult sendResult = sender->sendTo(message.c_str(), message.length(), 
+    SocketResult sendResult = sender->sendTo(message.c_str(), message.length(),
                                               addr, receiverPort);
     EXPECT_EQ(sendResult.error, SocketError::None);
     EXPECT_EQ(sendResult.bytes, static_cast<std::ptrdiff_t>(message.length()));
@@ -329,7 +329,7 @@ TEST_F(NetSocketTest, MultipleMessagesSequential)
     EXPECT_EQ(recvResult.error, SocketError::None);
     EXPECT_EQ(recvResult.bytes, static_cast<std::ptrdiff_t>(message.length()));
 
-    std::string received(buffer, recvResult.bytes);
+    std::string received(buffer, static_cast<std::size_t>(recvResult.bytes));
     EXPECT_EQ(received, message) << "Message " << i << " should match";
   }
 }
@@ -369,7 +369,7 @@ TEST_F(NetSocketTest, SendAndReceiveIPv6Loopback)
   SocketResult received = receiver->receive(buffer, sizeof(buffer), fromAddr, fromPort);
   EXPECT_TRUE(received.succeeded());
   EXPECT_EQ(received.bytes, static_cast<std::ptrdiff_t>(msgLen));
-  EXPECT_EQ(std::string(buffer, received.bytes), std::string(msg));
+  EXPECT_EQ(std::string(buffer, static_cast<std::size_t>(received.bytes)), std::string(msg));
   EXPECT_EQ(fromPort, senderPort);
   EXPECT_TRUE(fromAddr.isIPv6);
 }

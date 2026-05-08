@@ -486,7 +486,7 @@ public:
   bool encrypt(std::uint64_t seq,
                const unsigned char* plain,
                std::size_t plainLen,
-               BitStream& out) const
+               BitStream& out)
   {
 #if SOCKETWIRE_HAVE_LIBSODIUM
     if (!isReady()) return false;
@@ -494,9 +494,7 @@ public:
     encodeLE64(seq, ad);
 
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
-    // We mutate txNonceGenerator copy; logically encryption should be non-const.
-    // Cast away const for internal counter update (safe controlled mutation).
-    const_cast<NonceGenerator&>(txNonce).nextNonce(nonce); //NOLINT
+    txNonce.nextNonce(nonce);
 
     std::vector<unsigned char> cipher(plainLen + crypto_aead_xchacha20poly1305_ietf_ABYTES);
     unsigned long long outLen = 0; //NOLINT

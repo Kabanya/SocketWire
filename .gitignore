@@ -10,3 +10,5 @@ compile_commands.json
 /temp_examples
 scripts
 *.exe
+combine_repository_code.py
+repository_code.txt

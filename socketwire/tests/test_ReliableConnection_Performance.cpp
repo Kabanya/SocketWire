@@ -126,7 +126,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_SmallPacketThroughput)
         auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          serverManager->processPacket(buffer, result.bytes, from, fromPort);
+          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       while (true)
@@ -134,7 +134,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_SmallPacketThroughput)
         auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          clientConn->processPacket(buffer, result.bytes, from, fromPort);
+          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       serverManager->update();
@@ -174,8 +174,8 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_SmallPacketThroughput)
   EXPECT_EQ(serverHandler.reliableCount, PACKET_COUNT) 
     << "All packets should be received";
 
-  double packetsPerSec = (PACKET_COUNT * 1000.0) / duration;
-  double bytesPerSec = (PACKET_COUNT * PACKET_SIZE * 1000.0) / duration;
+  double packetsPerSec = (PACKET_COUNT * 1000.0) / static_cast<double>(duration);
+  double bytesPerSec = (PACKET_COUNT * PACKET_SIZE * 1000.0) / static_cast<double>(duration);
 
   std::cout << "\n=== Small Packet Throughput ===" << std::endl;
   std::cout << "Packets: " << PACKET_COUNT << std::endl;
@@ -228,7 +228,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_MediumPacketThroughput)
         auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          serverManager->processPacket(buffer, result.bytes, from, fromPort);
+          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       while (true)
@@ -236,7 +236,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_MediumPacketThroughput)
         auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          clientConn->processPacket(buffer, result.bytes, from, fromPort);
+          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       serverManager->update();
@@ -270,8 +270,8 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_MediumPacketThroughput)
 
   EXPECT_EQ(serverHandler.reliableCount, PACKET_COUNT);
 
-  double packetsPerSec = (PACKET_COUNT * 1000.0) / duration;
-  double bytesPerSec = (PACKET_COUNT * PACKET_SIZE * 1000.0) / duration;
+  double packetsPerSec = (PACKET_COUNT * 1000.0) / static_cast<double>(duration);
+  double bytesPerSec = (PACKET_COUNT * PACKET_SIZE * 1000.0) / static_cast<double>(duration);
 
   std::cout << "\n=== Large Packet Throughput ===" << std::endl;
   std::cout << "Packets: " << PACKET_COUNT << std::endl;
@@ -324,7 +324,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_LargePacketThroughput)
         auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          serverManager->processPacket(buffer, result.bytes, from, fromPort);
+          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       while (true)
@@ -332,7 +332,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_LargePacketThroughput)
         auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          clientConn->processPacket(buffer, result.bytes, from, fromPort);
+          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       serverManager->update();
@@ -378,8 +378,8 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_LargePacketThroughput)
 
   uint32_t received = serverHandler.unreliableCount;
   double deliveryRate = (received * 100.0) / PACKET_COUNT;
-  double packetsPerSec = (received * 1000.0) / duration;
-  double bytesPerSec = (received * PACKET_SIZE * 1000.0) / duration;
+  double packetsPerSec = (received * 1000.0) / static_cast<double>(duration);
+  double bytesPerSec = (received * PACKET_SIZE * 1000.0) / static_cast<double>(duration);
 
   std::cout << "\n=== Unreliable Packet Throughput ===" << std::endl;
   std::cout << "Packets sent: " << PACKET_COUNT << std::endl;
@@ -447,7 +447,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_ConnectionScalability)
         auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          serverManager->processPacket(buffer, result.bytes, from, fromPort);
+          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       for (size_t i = 0; i < clientSockets.size(); i++)
@@ -457,7 +457,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_ConnectionScalability)
           auto result = clientSockets[i]->receive(buffer, sizeof(buffer), from, fromPort);
           if (!result.succeeded()) break;
           if (result.bytes > 0)
-            clientConns[i]->processPacket(buffer, result.bytes, from, fromPort);
+            clientConns[i]->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
         }
         clientConns[i]->update();
       }
@@ -545,7 +545,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_BitStreamSerializationPerform
 
   std::cout << "Write operations: " << ITERATIONS << std::endl;
   std::cout << "Write time: " << writeDuration << " μs" << std::endl;
-  std::cout << "Writes per second: " << (ITERATIONS * 1000000.0 / writeDuration) << std::endl;
+  std::cout << "Writes per second: " << (ITERATIONS * 1000000.0 / static_cast<double>(writeDuration)) << std::endl;
 
   // Read performance
   BitStream bs;
@@ -581,5 +581,5 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_BitStreamSerializationPerform
 
   std::cout << "Read operations: " << ITERATIONS << std::endl;
   std::cout << "Read time: " << readDuration << " μs" << std::endl;
-  std::cout << "Reads per second: " << (ITERATIONS * 1000000.0 / readDuration) << std::endl;
+  std::cout << "Reads per second: " << (ITERATIONS * 1000000.0 / static_cast<double>(readDuration)) << std::endl;
 }

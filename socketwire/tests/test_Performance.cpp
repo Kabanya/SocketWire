@@ -44,19 +44,20 @@ protected:
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = duration_cast<std::chrono::microseconds>(end - start).count();
-    double ms = duration / 1000.0;
-    double ops_per_sec = (iterations * 1000000.0) / duration;
+    const auto durationValue = static_cast<double>(duration);
+    double ms = durationValue / 1000.0;
+    double ops_per_sec = (static_cast<double>(iterations) * 1000000.0) / durationValue;
 
     std::cout << "  " << operation_name << ":\n"
               << "    Iterations: " << iterations << "\n"
               << "    Total time: " << ms << " ms\n"
-              << "    Avg time: " << (duration / static_cast<double>(iterations)) << " μs/op\n"
+              << "    Avg time: " << (durationValue / static_cast<double>(iterations)) << " μs/op\n"
               << "    Throughput: " << static_cast<int>(ops_per_sec) << " ops/sec\n";
 
     return ms;
   }
 
-  static constexpr double multiplier = 1;
+  static constexpr int multiplier = 1;
 };
 
 TEST_F(PerformanceTest, BitStreamWriteReadBit) {

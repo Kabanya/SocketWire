@@ -190,7 +190,7 @@ TEST_F(UDPSocketTest, SendAndReceive)
 
   EXPECT_TRUE(recvResult.succeeded()) << "Receive should succeed";
   EXPECT_EQ(recvResult.bytes, static_cast<std::ptrdiff_t>(messageLen));
-  EXPECT_EQ(std::string(buffer, recvResult.bytes), std::string(message));
+  EXPECT_EQ(std::string(buffer, static_cast<std::size_t>(recvResult.bytes)), std::string(message));
 }
 
 TEST_F(UDPSocketTest, SendWithoutBind)

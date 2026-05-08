@@ -177,7 +177,7 @@ TEST_F(IntegrationTest, ClientServerConnect)
           break;
 
         if (result.bytes > 0)
-          serverManager->processPacket(buffer, result.bytes, from, fromPort);
+          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       // Client receive
@@ -190,7 +190,7 @@ TEST_F(IntegrationTest, ClientServerConnect)
           break;
 
         if (result.bytes > 0)
-          clientConn->processPacket(buffer, result.bytes, from, fromPort);
+          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       serverManager->update();
@@ -264,7 +264,7 @@ TEST_F(IntegrationTest, ClientServerReliableMessage)
         auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          serverManager->processPacket(buffer, result.bytes, from, fromPort);
+          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       while (true)
@@ -274,7 +274,7 @@ TEST_F(IntegrationTest, ClientServerReliableMessage)
         auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          clientConn->processPacket(buffer, result.bytes, from, fromPort);
+          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       serverManager->update();
@@ -354,7 +354,7 @@ TEST_F(IntegrationTest, ClientServerMultipleMessages)
         auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          serverManager->processPacket(buffer, result.bytes, from, fromPort);
+          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       while (true)
@@ -362,7 +362,7 @@ TEST_F(IntegrationTest, ClientServerMultipleMessages)
         auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          clientConn->processPacket(buffer, result.bytes, from, fromPort);
+          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       serverManager->update();
@@ -439,7 +439,7 @@ TEST_F(IntegrationTest, ClientServerUnreliableMessages)
         auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          serverManager->processPacket(buffer, result.bytes, from, fromPort);
+          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       while (true)
@@ -447,7 +447,7 @@ TEST_F(IntegrationTest, ClientServerUnreliableMessages)
         auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          clientConn->processPacket(buffer, result.bytes, from, fromPort);
+          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       serverManager->update();
@@ -536,7 +536,7 @@ TEST_F(IntegrationTest, MultipleClients)
         auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          serverManager->processPacket(buffer, result.bytes, from, fromPort);
+          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       for (size_t i = 0; i < clientSockets.size(); i++)
@@ -546,7 +546,7 @@ TEST_F(IntegrationTest, MultipleClients)
           auto result = clientSockets[i]->receive(buffer, sizeof(buffer), from, fromPort);
           if (!result.succeeded()) break;
           if (result.bytes > 0)
-            clientConns[i]->processPacket(buffer, result.bytes, from, fromPort);
+            clientConns[i]->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
         }
         clientConns[i]->update();
       }
@@ -637,7 +637,7 @@ TEST_F(IntegrationTest, ClientDisconnect)
         auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          serverManager->processPacket(buffer, result.bytes, from, fromPort);
+          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       while (true)
@@ -645,7 +645,7 @@ TEST_F(IntegrationTest, ClientDisconnect)
         auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
         if (!result.succeeded()) break;
         if (result.bytes > 0)
-          clientConn->processPacket(buffer, result.bytes, from, fromPort);
+          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
       }
 
       serverManager->update();

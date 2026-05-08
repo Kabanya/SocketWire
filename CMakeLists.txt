@@ -42,4 +42,6 @@ SET(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_library(project_options INTERFACE)
 add_library(project_warnings INTERFACE)
 
+enable_testing()
+
 add_subdirectory(socketwire)
