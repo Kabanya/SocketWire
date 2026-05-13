@@ -1,37 +1,8 @@
 #pragma once
-/*
-  SocketPoller — event system / I/O multiplexing for cross-platform network
-  layer.
-
-  Goals:
-  - Poll multiple sockets with minimal system calls.
-  - Provide unified events: Readable / Writable / Error / Closed.
-  - Integration with ISocket and ISocketEventHandler (from i_socket.hpp).
-
-  Backend implementations:
-  - Linux: epoll
-  - macOS / BSD: kqueue
-  - Fallback (any POSIX): select (less efficient, but works)
-  - Windows: stubs only for now (can add WSAPoll / IOCP later).
-
-  Usage (example):
-
-    socketwire::SocketPoller poller;
-    poller.addSocket(mySocketPtr);
-    auto events = poller.poll(10); // wait up to 10 ms
-    for (auto& e : events) {
-      if (e.readable) {
-        // Can call socket->receive(...) or poller.dispatch(e, handler);
-      }
-    }
-
-  For convenience, there is a dispatch method that calls onDataReceived inside
-  ISocketEventHandler. It performs non-blocking reads until the buffer is
-  drained (similar to poll() in PosixUDPSocket).
-
-  IMPORTANT: The class does not own sockets — you are responsible for their
-  lifetime.
-*/
+/// Cross-platform socket I/O multiplexer.
+///
+/// Uses epoll on Linux, kqueue on macOS/BSD, select as a POSIX fallback, and
+/// WSAPoll on Windows. SocketPoller does not own the sockets it watches.
 
 #include <cstdint>
 #include <unordered_map>
@@ -72,7 +43,7 @@
 
 namespace socketwire {
 
-// Event structure for a single socket.
+/// Readiness event for a single socket.
 struct SocketEvent {
   ISocket* socket = nullptr;
   bool readable = false;
@@ -81,7 +52,7 @@ struct SocketEvent {
   bool closed = false;
 };
 
-// Backend type
+/// Active polling backend.
 enum class PollBackend : std::uint8_t {
   kEpoll,
   kKqueue,
@@ -90,15 +61,12 @@ enum class PollBackend : std::uint8_t {
   kStub
 };
 
-/*
-  Poller configuration.
-  reserveHint — estimated number of sockets (to minimize reallocations).
-*/
+/// Poller configuration.
 struct SocketPollerConfig {
   std::size_t reserveHint = 64;
 };
 
-// SocketPoller — abstraction over epoll/kqueue/select.
+/// Abstraction over epoll, kqueue, select, and WSAPoll.
 class SocketPoller {
  public:
   explicit SocketPoller(const SocketPollerConfig& cfg = {});
@@ -107,55 +75,49 @@ class SocketPoller {
   SocketPoller(const SocketPoller&) = delete;
   SocketPoller& operator=(const SocketPoller&) = delete;
 
-  // Add socket to monitoring. watchWritable=true — also monitor write
-  // readiness.
+  /// Adds a socket to monitoring.
   bool AddSocket(ISocket* socket, bool watch_writable = false);
 
-  // Remove socket
+  /// Removes a socket from monitoring.
   void RemoveSocket(ISocket* socket);
 
-  /* Poll for events.
-    timeoutMs < 0 => wait indefinitely (blocking mode).
-    timeoutMs == 0 => immediate poll (non-block).
-    timeoutMs > 0 => wait that many milliseconds.
-  */
+  /// Polls for events.
+  ///
+  /// timeout_ms < 0 waits indefinitely, 0 returns immediately, and positive
+  /// values wait that many milliseconds.
   std::vector<SocketEvent> Poll(int timeout_ms);
 
-  /* Fast dispatch of readable events to handler:
-    - performs receive() in a loop while socket yields data
-    - calls onDataReceived
-    - errors -> onSocketError
-  */
+  /// Dispatches a readable event to an ISocketEventHandler.
   void DispatchReadable(const SocketEvent& ev, ISocketEventHandler* handler);
 
-  // Utility: for all events at once.
+  /// Dispatches all events to an ISocketEventHandler.
   void DispatchAll(const std::vector<SocketEvent>& events,
                    ISocketEventHandler* handler);
 
   [[nodiscard]] PollBackend BackendType() const;
 
  private:
-  PollBackend backend = PollBackend::kStub;
+  PollBackend backend_ = PollBackend::kStub;
 
   struct Watched {
     ISocket* socket = nullptr;
-    bool watchWritable = false;
+    bool watch_writable = false;
   };
 
-  std::unordered_map<int, Watched> fdMap;  // nativeHandle -> Watched
+  std::unordered_map<int, Watched> fd_map_;  // nativeHandle -> Watched
 
 #if SOCKETWIRE_PLATFORM_WINDOWS
-  std::vector<WSAPOLLFD> pollFds;  // Windows WSAPoll
+  std::vector<WSAPOLLFD> poll_fds_;  // Windows WSAPoll
 #else
-  fd_set readSet{};  // Select fallback (available on all POSIX)
-  fd_set writeSet{};
-  fd_set errorSet{};
-  int selectMaxFd = -1;
+  fd_set read_set_{};  // Select fallback (available on all POSIX)
+  fd_set write_set_{};
+  fd_set error_set_{};
+  int select_max_fd_ = -1;
 
 #if SOCKETWIRE_PLATFORM_LINUX
-  int epollFd = -1;  // Linux
+  int epoll_fd_ = -1;  // Linux
 #elif SOCKETWIRE_PLATFORM_APPLE
-  int kqueueFd = -1;  // macOS/BSD
+  int kqueue_fd_ = -1;  // macOS/BSD
 #endif
 #endif
 
@@ -167,7 +129,6 @@ class SocketPoller {
 
   std::vector<SocketEvent> BackendPoll(int timeout_ms);
 
-  // Helpers
   static SocketEvent MakeEvent(ISocket* sock, bool r, bool w, bool e, bool c) {
     SocketEvent ev;
     ev.socket = sock;

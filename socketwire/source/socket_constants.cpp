@@ -4,7 +4,6 @@
 
 #include "i_socket.hpp"
 
-// Platform-specific includes are isolated here, not exposed to users
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -44,19 +43,15 @@ bool SocketConstants::ParseIPv4(const char* str, std::uint32_t& out_address) {
   if (str == nullptr) return false;
 
 #if defined(_WIN32)
-  // Windows: use inet_pton
   struct in_addr addr{};
   if (inet_pton(AF_INET, str, &addr) != 1) return false;
 
-  // Convert from network byte order to host byte order
   out_address = ntohl(addr.s_addr);
   return true;
 #else
-  // POSIX: use inet_pton
   struct in_addr addr{};
   if (inet_pton(AF_INET, str, &addr) != 1) return false;
 
-  // Convert from network byte order to host byte order
   out_address = ntohl(addr.s_addr);
   return true;
 #endif
@@ -76,13 +71,13 @@ bool SocketConstants::ParseIPv6(const char* str,
   if (inet_pton(AF_INET6, str, &addr) != 1) return false;
 
   std::memcpy(out_address.data(), &addr, out_address.size());
-  scope_id = 0;  // inet_pton does not encode scope id
+  scope_id = 0;
   return true;
 }
 
 bool SocketConstants::FormatIPv4(std::uint32_t address, char* buffer,
-                                 size_t buffer_size) {
-  if (buffer == nullptr || buffer_size < 16) {  // INET_ADDRSTRLEN = 16
+                                 std::size_t buffer_size) {
+  if (buffer == nullptr || buffer_size < 16) {
     return false;
   }
 
@@ -103,14 +98,14 @@ bool SocketConstants::FormatIPv4(std::uint32_t address, char* buffer,
 
 bool SocketConstants::FormatIPv6(const std::array<std::uint8_t, 16>& address,
                                  std::uint32_t scope_id, char* buffer,
-                                 size_t buffer_size) {
-  if (buffer == nullptr || buffer_size < 46) {  // INET6_ADDRSTRLEN = 46
+                                 std::size_t buffer_size) {
+  if (buffer == nullptr || buffer_size < 46) {
     return false;
   }
 
   struct in6_addr addr{};
   std::memcpy(&addr, address.data(), address.size());
-  (void)scope_id;  // Scope not encoded by inet_ntop
+  (void)scope_id;
   return inet_ntop(AF_INET6, &addr, buffer,
                    static_cast<socklen_t>(buffer_size)) != nullptr;
 }
@@ -126,7 +121,7 @@ SocketAddress SocketConstants::FromString(const char* ip_string) {
   if (ParseIPv6(ip_string, addr6, scope_id)) {
     return SocketAddress::FromIPv6(addr6, scope_id);
   }
-  // Return 0.0.0.0 on parse failure
+
   return SocketAddress::FromIPv4(kIpV4Any);
 }
 

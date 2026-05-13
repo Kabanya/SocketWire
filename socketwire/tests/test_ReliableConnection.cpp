@@ -30,13 +30,13 @@ namespace {
 class MockSocket : public ISocket {
  public:
   struct SentPacket {
-    std::vector<uint8_t> data;
+    std::vector<std::uint8_t> data;
     SocketAddress address;
     uint16_t port = 0;
   };
 
   std::vector<SentPacket> sentPackets;
-  std::vector<std::vector<uint8_t>> receiveQueue;
+  std::vector<std::vector<std::uint8_t>> receiveQueue;
   bool shouldBlock = false;
   SocketError receiveError = SocketError::kNone;
 
@@ -46,11 +46,11 @@ class MockSocket : public ISocket {
     return SocketError::kNone;
   }
 
-  SocketResult SendTo(const void* data, size_t length,
+  SocketResult SendTo(const void* data, std::size_t length,
                       const SocketAddress& to_addr, uint16_t to_port) override {
     SentPacket packet;
-    packet.data.assign(static_cast<const uint8_t*>(data),
-                       static_cast<const uint8_t*>(data) + length);
+    packet.data.assign(static_cast<const std::uint8_t*>(data),
+                       static_cast<const std::uint8_t*>(data) + length);
     packet.address = to_addr;
     packet.port = to_port;
     sentPackets.push_back(packet);
@@ -63,7 +63,7 @@ class MockSocket : public ISocket {
     return SendTo(stream.GetData(), stream.GetSizeBytes(), to_addr, to_port);
   }
 
-  SocketResult Receive(void* buffer, size_t capacity, SocketAddress& from_addr,
+  SocketResult Receive(void* buffer, std::size_t capacity, SocketAddress& from_addr,
                        uint16_t& from_port) override {
     if (shouldBlock || receiveQueue.empty()) {
       if (receiveError != SocketError::kNone) {
@@ -73,7 +73,7 @@ class MockSocket : public ISocket {
     }
 
     auto& packet = receiveQueue.front();
-    const size_t copy_size = std::min(capacity, packet.size());
+    const std::size_t copy_size = std::min(capacity, packet.size());
     std::memcpy(buffer, packet.data(), copy_size);
 
     from_addr = SocketAddress::FromIPv4(0x7F000001);
@@ -97,15 +97,15 @@ class MockSocket : public ISocket {
   [[nodiscard]] int NativeHandle() const override { return 42; }
   void Close() override {}
 
-  void QueueReceive(const void* data, size_t size) {
-    const std::vector<uint8_t> packet(static_cast<const uint8_t*>(data),
-                                static_cast<const uint8_t*>(data) + size);
+  void QueueReceive(const void* data, std::size_t size) {
+    const std::vector<std::uint8_t> packet(static_cast<const std::uint8_t*>(data),
+                                      static_cast<const std::uint8_t*>(data) + size);
     receiveQueue.push_back(packet);
   }
 
   void ClearSent() { sentPackets.clear(); }
 
-  [[nodiscard]] size_t GetSentCount() const { return sentPackets.size(); }
+  [[nodiscard]] std::size_t GetSentCount() const { return sentPackets.size(); }
 };
 
 // Mock event handler
@@ -114,8 +114,8 @@ class MockEventHandler : public IReliableConnectionHandler {
   bool connected = false;
   bool disconnected = false;
   bool timedOut = false;
-  std::vector<std::vector<uint8_t>> reliablePackets;
-  std::vector<std::vector<uint8_t>> unreliablePackets;
+  std::vector<std::vector<std::uint8_t>> reliablePackets;
+  std::vector<std::vector<std::uint8_t>> unreliablePackets;
 
   void OnConnected() override { connected = true; }
 
@@ -123,19 +123,19 @@ class MockEventHandler : public IReliableConnectionHandler {
 
   void OnTimeout() override { timedOut = true; }
 
-  void OnReliableReceived(uint8_t channel, const void* data,
-                          size_t size) override {
+  void OnReliableReceived(std::uint8_t channel, const void* data,
+                          std::size_t size) override {
     (void)channel;
-    const std::vector<uint8_t> packet(static_cast<const uint8_t*>(data),
-                                static_cast<const uint8_t*>(data) + size);
+    const std::vector<std::uint8_t> packet(static_cast<const std::uint8_t*>(data),
+                                      static_cast<const std::uint8_t*>(data) + size);
     reliablePackets.push_back(packet);
   }
 
-  void OnUnreliableReceived(uint8_t channel, const void* data,
-                            size_t size) override {
+  void OnUnreliableReceived(std::uint8_t channel, const void* data,
+                            std::size_t size) override {
     (void)channel;
-    const std::vector<uint8_t> packet(static_cast<const uint8_t*>(data),
-                                static_cast<const uint8_t*>(data) + size);
+    const std::vector<std::uint8_t> packet(static_cast<const std::uint8_t*>(data),
+                                      static_cast<const std::uint8_t*>(data) + size);
     unreliablePackets.push_back(packet);
   }
 
@@ -196,9 +196,9 @@ TEST_F(ReliableConnectionTest, ServerAcceptConnection) {
 
   // Simulate receiving connect packet
   BitStream bs;
-  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
-  bs.Write<uint8_t>(0);   // channel
-  bs.Write<uint32_t>(0);  // sequence
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kConnect));
+  bs.Write<std::uint8_t>(0);   // channel
+  bs.Write<std::uint32_t>(0);  // sequence
 
   conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), client_addr, 12345);
 
@@ -218,9 +218,9 @@ TEST_F(ReliableConnectionTest, ClientReceiveAccept) {
 
   // Simulate receiving accept packet
   BitStream bs;
-  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kAccept));
-  bs.Write<uint8_t>(0);   // channel
-  bs.Write<uint32_t>(0);  // sequence
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kAccept));
+  bs.Write<std::uint8_t>(0);   // channel
+  bs.Write<std::uint32_t>(0);  // sequence
 
   conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
@@ -283,9 +283,9 @@ TEST_F(ReliableConnectionTest, SendWithBitStream) {
 
   // Create BitStream with data
   BitStream bs;
-  bs.Write<uint8_t>(42);
+  bs.Write<std::uint8_t>(42);
   bs.Write<float>(3.14f);
-  bs.Write<uint32_t>(12345);
+  bs.Write<std::uint32_t>(12345);
 
   const bool result = conn.SendReliable(0, bs);
 
@@ -303,9 +303,9 @@ TEST_F(ReliableConnectionTest, ReceiveReliablePacket) {
 
   // Create reliable packet
   BitStream bs;
-  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kReliable));
-  bs.Write<uint8_t>(0);   // channel
-  bs.Write<uint32_t>(0);  // sequence
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kReliable));
+  bs.Write<std::uint8_t>(0);   // channel
+  bs.Write<std::uint32_t>(0);  // sequence
   const char* payload = "Test payload";
   bs.WriteBytes(payload, strlen(payload));
 
@@ -337,9 +337,9 @@ TEST_F(ReliableConnectionTest, ReceiveUnreliablePacket) {
 
   // Create unreliable packet
   BitStream bs;
-  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kUnreliable));
-  bs.Write<uint8_t>(0);   // channel
-  bs.Write<uint32_t>(0);  // sequence
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kUnreliable));
+  bs.Write<std::uint8_t>(0);   // channel
+  bs.Write<std::uint32_t>(0);  // sequence
   const char* payload = "Unreliable payload";
   bs.WriteBytes(payload, strlen(payload));
 
@@ -363,12 +363,12 @@ TEST_F(ReliableConnectionTest, PacketSequencing) {
   conn.SetConnected();
 
   // Send packets out of order
-  auto create_packet = [](uint32_t seq,
-                          const char* payload) -> std::vector<uint8_t> {
+  auto create_packet = [](std::uint32_t seq,
+                          const char* payload) -> std::vector<std::uint8_t> {
     BitStream bs;
-    bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kReliable));
-    bs.Write<uint8_t>(0);  // channel
-    bs.Write<uint32_t>(seq);
+    bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kReliable));
+    bs.Write<std::uint8_t>(0);  // channel
+    bs.Write<std::uint32_t>(seq);
     bs.WriteBytes(payload, strlen(payload));
     return {bs.GetData(), bs.GetData() + bs.GetSizeBytes()};
   };
@@ -395,11 +395,11 @@ TEST_F(ReliableConnectionTest, PacketSequencing) {
       << "Should receive all three packets";
 
   const std::string first(handler.reliablePackets.at(0).begin(),
-                    handler.reliablePackets.at(0).end());
+                          handler.reliablePackets.at(0).end());
   const std::string second(handler.reliablePackets.at(1).begin(),
-                     handler.reliablePackets.at(1).end());
+                           handler.reliablePackets.at(1).end());
   const std::string third(handler.reliablePackets.at(2).begin(),
-                    handler.reliablePackets.at(2).end());
+                          handler.reliablePackets.at(2).end());
 
   EXPECT_EQ(first, "Zero");
   EXPECT_EQ(second, "First");
@@ -416,16 +416,16 @@ TEST_F(ReliableConnectionTest, DuplicateDetection) {
 
   // Create reliable packet
   BitStream bs;
-  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kReliable));
-  bs.Write<uint8_t>(0);   // channel
-  bs.Write<uint32_t>(0);  // sequence
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kReliable));
+  bs.Write<std::uint8_t>(0);   // channel
+  bs.Write<std::uint32_t>(0);  // sequence
   bs.WriteBytes("Test", 4);
 
   // Send same packet twice
   conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
   conn.Update();
 
-  const size_t first_count = handler.reliablePackets.size();
+  const std::size_t first_count = handler.reliablePackets.size();
 
   conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
   conn.Update();
@@ -450,24 +450,24 @@ TEST_F(ReliableConnectionTest, AcknowledgmentReceived) {
   // Send reliable packet
   conn.SendReliable(0, "Test", 4);
 
-  const size_t sent_before = socket.GetSentCount();
-  const uint32_t lost_before = conn.GetLostPackets();
+  const std::size_t sent_before = socket.GetSentCount();
+  const std::uint32_t lost_before = conn.GetLostPackets();
 
   // Extract sequence from sent packet
   ASSERT_FALSE(socket.sentPackets.empty());
   const auto& sent_packet = socket.sentPackets.back();
   BitStream sent_bs(sent_packet.data.data(), sent_packet.data.size());
-  uint8_t type = 0, channel = 0;
-  uint32_t sequence = 0;
-  sent_bs.Read<uint8_t>(type);
-  sent_bs.Read<uint8_t>(channel);
-  sent_bs.Read<uint32_t>(sequence);
+  std::uint8_t type = 0, channel = 0;
+  std::uint32_t sequence = 0;
+  sent_bs.Read<std::uint8_t>(type);
+  sent_bs.Read<std::uint8_t>(channel);
+  sent_bs.Read<std::uint32_t>(sequence);
 
   // Send ACK
   BitStream ack_bs;
-  ack_bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kAck));
-  ack_bs.Write<uint8_t>(0);
-  ack_bs.Write<uint32_t>(sequence);
+  ack_bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kAck));
+  ack_bs.Write<std::uint8_t>(0);
+  ack_bs.Write<std::uint32_t>(sequence);
 
   conn.ProcessPacket(ack_bs.GetData(), ack_bs.GetSizeBytes(), addr, 12345);
   conn.Update();
@@ -514,9 +514,9 @@ TEST_F(ReliableConnectionTest, ReceiveDisconnect) {
 
   // Receive disconnect packet
   BitStream bs;
-  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kDisconnect));
-  bs.Write<uint8_t>(0);
-  bs.Write<uint32_t>(0);
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kDisconnect));
+  bs.Write<std::uint8_t>(0);
+  bs.Write<std::uint32_t>(0);
 
   conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
@@ -532,8 +532,8 @@ TEST_F(ReliableConnectionTest, Statistics) {
   conn.SetRemoteAddress(addr, 12345);
   conn.SetConnected();
 
-  const uint32_t initial_sent = conn.GetSentPackets();
-  const uint32_t initial_received = conn.GetReceivedPackets();
+  const std::uint32_t initial_sent = conn.GetSentPackets();
+  const std::uint32_t initial_received = conn.GetReceivedPackets();
 
   // Send packet
   conn.SendReliable(0, "Test", 4);
@@ -542,9 +542,9 @@ TEST_F(ReliableConnectionTest, Statistics) {
 
   // Receive packet
   BitStream bs;
-  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kUnreliable));
-  bs.Write<uint8_t>(0);
-  bs.Write<uint32_t>(0);
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kUnreliable));
+  bs.Write<std::uint8_t>(0);
+  bs.Write<std::uint32_t>(0);
   bs.WriteBytes("Data", 4);
 
   conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
@@ -565,9 +565,9 @@ TEST_F(ReliableConnectionTest, PingPong) {
 
   // Receive ping
   BitStream ping_bs;
-  ping_bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kPing));
-  ping_bs.Write<uint8_t>(0);
-  ping_bs.Write<uint32_t>(42);
+  ping_bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kPing));
+  ping_bs.Write<std::uint8_t>(0);
+  ping_bs.Write<std::uint32_t>(42);
 
   conn.ProcessPacket(ping_bs.GetData(), ping_bs.GetSizeBytes(), addr, 12345);
 
@@ -579,14 +579,14 @@ TEST_F(ReliableConnectionTest, PingPong) {
   const auto& pong_packet = socket.sentPackets.at(0);
   BitStream pong_bs(pong_packet.data.data(), pong_packet.data.size());
 
-  uint8_t type = 0;
-  uint8_t channel = 0;
-  uint32_t sequence = 0;
-  pong_bs.Read<uint8_t>(type);
-  pong_bs.Read<uint8_t>(channel);
-  pong_bs.Read<uint32_t>(sequence);
+  std::uint8_t type = 0;
+  std::uint8_t channel = 0;
+  std::uint32_t sequence = 0;
+  pong_bs.Read<std::uint8_t>(type);
+  pong_bs.Read<std::uint8_t>(channel);
+  pong_bs.Read<std::uint32_t>(sequence);
 
-  EXPECT_EQ(type, static_cast<uint8_t>(PacketType::kPong));
+  EXPECT_EQ(type, static_cast<std::uint8_t>(PacketType::kPong));
   EXPECT_EQ(sequence, 42) << "Pong should echo ping sequence";
 }
 
@@ -627,10 +627,11 @@ TEST_F(ReliableConnectionTest, MaxPacketSizeLimit) {
   // rejected
   const std::size_t big_size = static_cast<std::size_t>(config.maxPacketSize) *
                                3U;  // definitely needs fragmentation
-  std::vector<uint8_t> large_data(big_size, 0xFF);
+  std::vector<std::uint8_t> large_data(big_size, 0xFF);
 
   socket.ClearSent();
-  const bool result = conn.SendReliable(0, large_data.data(), large_data.size());
+  const bool result =
+      conn.SendReliable(0, large_data.data(), large_data.size());
 
   EXPECT_TRUE(result) << "Large payloads should succeed via fragmentation";
   // The payload must have been split into multiple Fragment packets
@@ -663,19 +664,19 @@ TEST_F(ReliableConnectionTest, MultipleChannels) {
   BitStream bs1(socket.sentPackets.at(1).data.data(),
                 socket.sentPackets.at(1).data.size());
 
-  uint8_t type0 = 0, channel0 = 0, type1 = 0, channel1 = 0;
-  uint32_t seq0 = 0, seq1 = 0;
+  std::uint8_t type0 = 0, channel0 = 0, type1 = 0, channel1 = 0;
+  std::uint32_t seq0 = 0, seq1 = 0;
 
-  bs0.Read<uint8_t>(type0);
-  bs0.Read<uint8_t>(channel0);
-  bs0.Read<uint32_t>(seq0);
+  bs0.Read<std::uint8_t>(type0);
+  bs0.Read<std::uint8_t>(channel0);
+  bs0.Read<std::uint32_t>(seq0);
 
-  bs1.Read<uint8_t>(type1);
-  bs1.Read<uint8_t>(channel1);
-  bs1.Read<uint32_t>(seq1);
+  bs1.Read<std::uint8_t>(type1);
+  bs1.Read<std::uint8_t>(channel1);
+  bs1.Read<std::uint32_t>(seq1);
 
-  EXPECT_EQ(type0, static_cast<uint8_t>(PacketType::kReliable));
-  EXPECT_EQ(type1, static_cast<uint8_t>(PacketType::kReliable));
+  EXPECT_EQ(type0, static_cast<std::uint8_t>(PacketType::kReliable));
+  EXPECT_EQ(type1, static_cast<std::uint8_t>(PacketType::kReliable));
   EXPECT_EQ(seq0, 0u);
   EXPECT_EQ(seq1, 0u);
   EXPECT_EQ(channel0, 0);
@@ -711,9 +712,9 @@ TEST_F(ConnectionManagerTest, AutoCreateConnection) {
 
   // Simulate receiving connect packet from new client
   BitStream bs;
-  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
-  bs.Write<uint8_t>(0);
-  bs.Write<uint32_t>(0);
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kConnect));
+  bs.Write<std::uint8_t>(0);
+  bs.Write<std::uint32_t>(0);
 
   manager.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), client_addr, 12345);
 
@@ -730,9 +731,9 @@ TEST_F(ConnectionManagerTest, GetConnection) {
 
   // Create connections
   BitStream bs;
-  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
-  bs.Write<uint8_t>(0);
-  bs.Write<uint32_t>(0);
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kConnect));
+  bs.Write<std::uint8_t>(0);
+  bs.Write<std::uint32_t>(0);
 
   manager.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr1, 12345);
   manager.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr2, 12346);
@@ -753,9 +754,9 @@ TEST_F(ConnectionManagerTest, BroadcastReliable) {
   SocketAddress addr2 = SocketAddress::FromIPv4(0x7F000002);
 
   BitStream connect_bs;
-  connect_bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
-  connect_bs.Write<uint8_t>(0);
-  connect_bs.Write<uint32_t>(0);
+  connect_bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kConnect));
+  connect_bs.Write<std::uint8_t>(0);
+  connect_bs.Write<std::uint32_t>(0);
 
   manager.ProcessPacket(connect_bs.GetData(), connect_bs.GetSizeBytes(), addr1,
                         12345);
@@ -778,9 +779,9 @@ TEST_F(ConnectionManagerTest, BroadcastUnreliable) {
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
 
   BitStream connect_bs;
-  connect_bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
-  connect_bs.Write<uint8_t>(0);
-  connect_bs.Write<uint32_t>(0);
+  connect_bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kConnect));
+  connect_bs.Write<std::uint8_t>(0);
+  connect_bs.Write<std::uint32_t>(0);
 
   manager.ProcessPacket(connect_bs.GetData(), connect_bs.GetSizeBytes(), addr,
                         12345);
@@ -798,9 +799,9 @@ TEST_F(ConnectionManagerTest, UpdateAllConnections) {
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
 
   BitStream bs;
-  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
-  bs.Write<uint8_t>(0);
-  bs.Write<uint32_t>(0);
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kConnect));
+  bs.Write<std::uint8_t>(0);
+  bs.Write<std::uint32_t>(0);
 
   manager.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
@@ -821,9 +822,9 @@ TEST_F(ConnectionManagerTest, UserData) {
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
 
   BitStream bs;
-  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
-  bs.Write<uint8_t>(0);
-  bs.Write<uint32_t>(0);
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kConnect));
+  bs.Write<std::uint8_t>(0);
+  bs.Write<std::uint32_t>(0);
 
   manager.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
@@ -837,8 +838,7 @@ TEST_F(ConnectionManagerTest, UserData) {
   EXPECT_EQ(*static_cast<const int*>(client->userData), 42);
 }
 
-// ========================= Safety & correctness tests
-// =========================
+// Safety and correctness tests.
 
 TEST_F(ReliableConnectionTest, UnknownPacketTypeIsIgnored) {
   ReliableConnection conn(&socket, config);
@@ -848,9 +848,9 @@ TEST_F(ReliableConnectionTest, UnknownPacketTypeIsIgnored) {
 
   // Craft a packet with an invalid PacketType (value 100, well beyond Ack=8)
   BitStream bs;
-  bs.Write<uint8_t>(100);  // invalid type
-  bs.Write<uint8_t>(0);    // channel
-  bs.Write<uint32_t>(0);   // sequence
+  bs.Write<std::uint8_t>(100);  // invalid type
+  bs.Write<std::uint8_t>(0);    // channel
+  bs.Write<std::uint32_t>(0);   // sequence
 
   auto received_before [[maybe_unused]] = conn.GetReceivedPackets();
   EXPECT_NO_THROW(
@@ -865,9 +865,9 @@ TEST_F(ConnectionManagerTest, IPv6ClientsAreSeparated) {
   ConnectionManager manager(&socket, config);
 
   // Create two different IPv6 addresses
-  std::array<uint8_t, 16> bytes1{};
+  std::array<std::uint8_t, 16> bytes1{};
   bytes1.at(15) = 1;
-  std::array<uint8_t, 16> bytes2{};
+  std::array<std::uint8_t, 16> bytes2{};
   bytes2.at(15) = 2;
 
   SocketAddress addr1 = SocketAddress::FromIPv6(bytes1);
@@ -875,14 +875,14 @@ TEST_F(ConnectionManagerTest, IPv6ClientsAreSeparated) {
 
   // Send connect packets from each address
   BitStream bs1;
-  bs1.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
-  bs1.Write<uint8_t>(0);
-  bs1.Write<uint32_t>(0);
+  bs1.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kConnect));
+  bs1.Write<std::uint8_t>(0);
+  bs1.Write<std::uint32_t>(0);
 
   BitStream bs2;
-  bs2.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
-  bs2.Write<uint8_t>(0);
-  bs2.Write<uint32_t>(0);
+  bs2.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kConnect));
+  bs2.Write<std::uint8_t>(0);
+  bs2.Write<std::uint32_t>(0);
 
   manager.ProcessPacket(bs1.GetData(), bs1.GetSizeBytes(), addr1, 5000);
   manager.ProcessPacket(bs2.GetData(), bs2.GetSizeBytes(), addr2, 5000);
@@ -906,9 +906,9 @@ TEST_F(ConnectionManagerTest, ConnectionManagerOwnsClients) {
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
 
   BitStream bs;
-  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
-  bs.Write<uint8_t>(0);
-  bs.Write<uint32_t>(0);
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kConnect));
+  bs.Write<std::uint8_t>(0);
+  bs.Write<std::uint32_t>(0);
 
   manager->ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
   EXPECT_EQ(manager->GetConnections().size(), 1u);
@@ -1057,9 +1057,9 @@ TEST_F(ReliableConnectionTest, SecureConnectionRejectsPlaintextAfterHandshake) {
   server_handler.Reset();
 
   BitStream plaintext;
-  plaintext.Write<uint8_t>(static_cast<uint8_t>(PacketType::kReliable));
-  plaintext.Write<uint8_t>(0);
-  plaintext.Write<uint32_t>(0);
+  plaintext.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kReliable));
+  plaintext.Write<std::uint8_t>(0);
+  plaintext.Write<std::uint32_t>(0);
   plaintext.WriteBytes("plain", 5);
 
   server.ProcessPacket(plaintext.GetData(), plaintext.GetSizeBytes(), addr,

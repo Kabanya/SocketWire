@@ -1,17 +1,4 @@
-/*
-  Test suite for SocketPoller implementation
-  This file contains comprehensive unit tests for the SocketPoller class,
-  which provides cross-platform I/O multiplexing for sockets.
-
-  Test Categories:
-  - Constructor and Configuration Tests: Poller creation and backend selection
-  - Add/Remove Socket Tests: Managing sockets in the poller
-  - Poll Tests: Event polling with different timeouts
-  - Dispatch Tests: Event dispatching to handlers
-  - Backend Tests: Verification of backend types
-
-  Note: These tests use Google Test and Google Mock frameworks.
-*/
+// Tests for SocketPoller construction, registration, polling, and dispatch.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -25,7 +12,6 @@
 
 using namespace socketwire;  // NOLINT
 
-// Mock event handler for testing
 class MockSocketEventHandler : public ISocketEventHandler {
  public:
   MOCK_METHOD(void, OnDataReceived,
@@ -58,13 +44,13 @@ class SocketPollerTest : public ::testing::Test {
 TEST_F(SocketPollerTest, ConstructorDefaultConfig) {
   const SocketPoller poller;
 #if defined(_WIN32) || defined(_WIN64)
-  EXPECT_EQ(poller.backendType(), PollBackend::WSAPoll);
+  EXPECT_EQ(poller.BackendType(), PollBackend::kWsaPoll);
 #elif defined(__linux__)
-  EXPECT_EQ(poller.backendType(), PollBackend::Epoll);
+  EXPECT_EQ(poller.BackendType(), PollBackend::kEpoll);
 #elif defined(__APPLE__)
   EXPECT_EQ(poller.BackendType(), PollBackend::kKqueue);
 #else
-  EXPECT_EQ(poller.backendType(), PollBackend::Select);
+  EXPECT_EQ(poller.BackendType(), PollBackend::kSelect);
 #endif
 }
 
@@ -72,13 +58,13 @@ TEST_F(SocketPollerTest, ConstructorCustomConfig) {
   const SocketPollerConfig cfg{128};
   const SocketPoller poller(cfg);
 #if defined(_WIN32) || defined(_WIN64)
-  EXPECT_EQ(poller.backendType(), PollBackend::WSAPoll);
+  EXPECT_EQ(poller.BackendType(), PollBackend::kWsaPoll);
 #elif defined(__linux__)
-  EXPECT_EQ(poller.backendType(), PollBackend::Epoll);
+  EXPECT_EQ(poller.BackendType(), PollBackend::kEpoll);
 #elif defined(__APPLE__)
   EXPECT_EQ(poller.BackendType(), PollBackend::kKqueue);
 #else
-  EXPECT_EQ(poller.backendType(), PollBackend::Select);
+  EXPECT_EQ(poller.BackendType(), PollBackend::kSelect);
 #endif
 }
 
@@ -172,13 +158,13 @@ TEST_F(SocketPollerTest, BackendType) {
   const SocketPoller poller;
   auto backend = poller.BackendType();
 #if defined(_WIN32) || defined(_WIN64)
-  EXPECT_EQ(backend, PollBackend::WSAPoll);
+  EXPECT_EQ(backend, PollBackend::kWsaPoll);
 #elif defined(__linux__)
-  EXPECT_EQ(backend, PollBackend::Epoll);
+  EXPECT_EQ(backend, PollBackend::kEpoll);
 #elif defined(__APPLE__)
   EXPECT_EQ(backend, PollBackend::kKqueue);
 #else
-  EXPECT_EQ(backend, PollBackend::Select);
+  EXPECT_EQ(backend, PollBackend::kSelect);
 #endif
 }
 
@@ -204,7 +190,7 @@ TEST_F(SocketPollerTest, IntegrationSendReceive) {
 
   // Send data from sender to receiver
   const char* test_data = "Hello, SocketPoller!";
-  const size_t data_size = strlen(test_data) + 1;
+  const std::size_t data_size = strlen(test_data) + 1;
   const SocketResult send_result =
       sender_socket->SendTo(test_data, data_size, addr, receiver_port);
   ASSERT_TRUE(send_result.Succeeded());

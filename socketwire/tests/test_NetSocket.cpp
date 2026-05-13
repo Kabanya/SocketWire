@@ -1,9 +1,4 @@
-/*
- Test suite for ISocket interface and implementations
-
- Migrated from legacy net_socket tests to use the new ISocket architecture
- with factory pattern and POSIX UDP socket implementation.
-*/
+// Tests for the ISocket interface and concrete socket implementations.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -18,11 +13,8 @@
 
 using namespace socketwire;  // NOLINT
 
-// Forward declaration of registration function
-
 namespace {
 
-// Mock event handler for testing
 class MockEventHandler : public ISocketEventHandler {
  public:
   MOCK_METHOD(void, OnDataReceived,
@@ -35,19 +27,14 @@ class MockEventHandler : public ISocketEventHandler {
 class NetSocketTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    // Initialize platform-specific socket factory
     const bool result = InitializeSockets();
     ASSERT_TRUE(result) << "Socket initialization should succeed";
 
-    // Get factory instance
     factory = SocketFactoryRegistry::GetFactory();
     ASSERT_NE(factory, nullptr) << "Socket factory should be registered";
   }
 
-  void TearDown() override {
-    // Cleanup
-    ShutdownSockets();
-  }
+  void TearDown() override { ShutdownSockets(); }
 
   ISocketFactory* factory = nullptr;
 };
@@ -59,7 +46,8 @@ TEST_F(NetSocketTest, CreateSocket) {
   ASSERT_NE(sock, nullptr) << "Socket creation should succeed";
 
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
-  const SocketError bind_result = sock->Bind(addr, 0);  // Bind to any available port
+  const SocketError bind_result =
+      sock->Bind(addr, 0);  // Bind to any available port
   EXPECT_EQ(bind_result, SocketError::kNone) << "Socket bind should succeed";
 
   // Verify port was assigned
@@ -97,7 +85,8 @@ TEST_F(NetSocketTest, GetLocalIPs) {
   ASSERT_NE(sock, nullptr);
 
   // Test binding to loopback
-  const SocketAddress loopback = SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
+  const SocketAddress loopback =
+      SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
   EXPECT_EQ(sock->Bind(loopback, 0), SocketError::kNone)
       << "Should be able to bind to loopback interface";
 
@@ -163,9 +152,10 @@ TEST_F(NetSocketTest, SendAndReceive) {
 
   // Send message
   const char* message = "Hello";
-  const size_t message_len = std::strlen(message);
+  const std::size_t message_len = std::strlen(message);
 
-  const SocketResult sent = sender->SendTo(message, message_len, addr, receiver_port);
+  const SocketResult sent =
+      sender->SendTo(message, message_len, addr, receiver_port);
   EXPECT_EQ(sent.error, SocketError::kNone) << "Should send successfully";
   EXPECT_EQ(sent.bytes, static_cast<std::ptrdiff_t>(message_len))
       << "Should send all " << message_len << " bytes";
@@ -219,7 +209,8 @@ TEST_F(NetSocketTest, SendAndReceiveWithMock) {
   const char* message = "Hello";
   const size_t message_len = std::strlen(message);
 
-  const SocketResult sent = sender->SendTo(message, message_len, addr, receiver_port);
+  const SocketResult sent =
+      sender->SendTo(message, message_len, addr, receiver_port);
   EXPECT_EQ(sent.error, SocketError::kNone)
       << "Should send exactly " << message_len << " bytes";
   EXPECT_EQ(sent.bytes, static_cast<std::ptrdiff_t>(message_len));
@@ -322,7 +313,8 @@ TEST_F(NetSocketTest, MultipleMessagesSequential) {
     EXPECT_EQ(recv_result.error, SocketError::kNone);
     EXPECT_EQ(recv_result.bytes, static_cast<std::ptrdiff_t>(message.length()));
 
-    const std::string received(buffer, static_cast<std::size_t>(recv_result.bytes));
+    const std::string received(buffer,
+                               static_cast<std::size_t>(recv_result.bytes));
     EXPECT_EQ(received, message) << "Message " << i << " should match";
   }
 }
@@ -349,7 +341,8 @@ TEST_F(NetSocketTest, SendAndReceiveIPv6Loopback) {
   const char* msg = "HiIPv6";
   const std::size_t msg_len = std::strlen(msg);
 
-  const SocketResult sent = sender->SendTo(msg, msg_len, v6_loop, receiver_port);
+  const SocketResult sent =
+      sender->SendTo(msg, msg_len, v6_loop, receiver_port);
   EXPECT_TRUE(sent.Succeeded());
 
   std::this_thread::sleep_for(std::chrono::milliseconds(10));

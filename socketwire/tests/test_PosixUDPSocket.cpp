@@ -1,22 +1,4 @@
-/*
-  Test suite for UDP Socket implementation (Cross-platform)
-  This file contains comprehensive unit tests for the UDP Socket implementation,
-  which provides UDP socket functionality on all supported platforms (Windows,
-  Linux, macOS, BSD).
-
-  Test Categories:
-  - Constructor and Factory Tests: Socket creation and configuration
-  - Bind Tests: Binding to addresses and ports
-  - Send/Receive Tests: Data transmission and reception
-  - Blocking Mode Tests: Blocking/non-blocking socket modes
-  - Poll Tests: Event-driven data reception with handlers
-  - Close Tests: Socket cleanup and resource management
-  - Native Handle Tests: Low-level socket descriptor access
-  - Large Data Tests: Testing with larger packet sizes
-  - Type Tests: Socket type verification
-
-  Note: These tests use Google Test and Google Mock frameworks.
-*/
+// Tests for UDP socket creation, binding, I/O, polling, and cleanup.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -30,7 +12,6 @@
 
 using namespace socketwire;  // NOLINT
 
-// Mock event handler for testing
 class MockSocketEventHandler : public ISocketEventHandler {
  public:
   MOCK_METHOD(void, OnDataReceived,
@@ -43,11 +24,9 @@ class MockSocketEventHandler : public ISocketEventHandler {
 class UDPSocketTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    // Initialize platform-specific socket factory
     const bool result = InitializeSockets();
     ASSERT_TRUE(result) << "Socket initialization should succeed";
 
-    // Get factory instance
     factory = SocketFactoryRegistry::GetFactory();
     ASSERT_NE(factory, nullptr) << "Socket factory should be registered";
   }
@@ -60,7 +39,7 @@ class UDPSocketTest : public ::testing::Test {
   ISocketFactory* factory = nullptr;
 };
 
-// ========== Constructor and Factory Tests ==========
+// Constructor and factory tests.
 
 TEST_F(UDPSocketTest, CreateUDPSocket) {
   const SocketConfig config;
@@ -162,7 +141,7 @@ TEST_F(UDPSocketTest, SendAndReceive) {
 
   // Send data
   const char* message = "Hello, UDP!";
-  const size_t message_len = std::strlen(message);
+  const std::size_t message_len = std::strlen(message);
 
   const SocketResult send_result =
       sender->SendTo(message, message_len, addr, receiver_port);
@@ -260,7 +239,8 @@ TEST_F(UDPSocketTest, ReceiveNullBufferReturnsError) {
   SocketAddress from_addr;
   std::uint16_t from_port = 0;
 
-  const SocketResult result = socket->Receive(nullptr, 1024, from_addr, from_port);
+  const SocketResult result =
+      socket->Receive(nullptr, 1024, from_addr, from_port);
 
   EXPECT_FALSE(result.Succeeded());
   EXPECT_EQ(result.error, SocketError::kInvalidParam);
@@ -302,7 +282,7 @@ TEST_F(UDPSocketTest, MultipleMessages) {
   }
 }
 
-// ========== Blocking Mode Tests ==========
+// Blocking mode tests.
 
 TEST_F(UDPSocketTest, DefaultNonBlocking) {
   SocketConfig config;
@@ -385,7 +365,7 @@ TEST_F(UDPSocketTest, PollWithHandler) {
 
   // Send message
   const char* message = "Poll test";
-  const size_t message_len = std::strlen(message);
+  const std::size_t message_len = std::strlen(message);
 
   ASSERT_TRUE(
       sender->SendTo(message, message_len, addr, receiver_port).Succeeded());
@@ -529,7 +509,7 @@ TEST_F(UDPSocketTest, NativeHandle) {
   EXPECT_GE(socket->NativeHandle(), 0) << "Should have valid file descriptor";
 }
 
-// ========== Large Data Tests ==========
+// Large data tests.
 
 TEST_F(UDPSocketTest, LargePacket) {
   const SocketConfig config;
@@ -545,7 +525,7 @@ TEST_F(UDPSocketTest, LargePacket) {
 
   // Create large buffer (but not too large for UDP - typical MTU is ~1500
   // bytes)
-  const size_t data_size = 1400;
+  const std::size_t data_size = 1400;
   std::vector<char> data(data_size);
   for (size_t i = 0; i < data_size; ++i) {
     data.at(i) = static_cast<char>(i % 256);

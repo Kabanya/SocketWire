@@ -66,82 +66,83 @@ class PosixUDPSocket final : public ISocket {
   void Close() override;
 
  private:
-  int fd = -1;
-  bool blocking = false;
-  std::uint16_t bound_port = 0;
-  SocketConfig config;
-  int family = AF_UNSPEC;
+  int fd_ = -1;
+  bool blocking_ = false;
+  std::uint16_t bound_port_ = 0;
+  SocketConfig config_;
+  int family_ = AF_UNSPEC;
 };
 
-PosixUDPSocket::PosixUDPSocket(const SocketConfig& cfg) : config(cfg) {}
+PosixUDPSocket::PosixUDPSocket(const SocketConfig& cfg) : config_(cfg) {}
 
 PosixUDPSocket::~PosixUDPSocket() { Close(); }
 
 SocketError PosixUDPSocket::Bind(const SocketAddress& address,
                                  std::uint16_t port) {
-  if (fd != -1) return SocketError::kInvalidParam;  // already open
+  if (fd_ != -1) return SocketError::kInvalidParam;  // already open
 
-  if (address.isIPv6 && !config.enableIPv6) return SocketError::kUnsupported;
+  if (address.isIPv6 && !config_.enableIPv6) return SocketError::kUnsupported;
 
-  family = address.isIPv6 ? AF_INET6 : AF_INET;
-  fd = ::socket(family, SOCK_DGRAM, IPPROTO_UDP);
-  if (fd == -1) return MapErrno(errno);
+  family_ = address.isIPv6 ? AF_INET6 : AF_INET;
+  fd_ = ::socket(family_, SOCK_DGRAM, IPPROTO_UDP);
+  if (fd_ == -1) return MapErrno(errno);
 
-  if (family == AF_INET6) {
-    int v6only = config.enableIPv6 ? 0 : 1;  // 0 allows dual-stack
-    ::setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only));
+  if (family_ == AF_INET6) {
+    int v6only = config_.enableIPv6 ? 0 : 1;  // 0 allows dual-stack
+    ::setsockopt(fd_, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only));
   }
 
-  if (config.reuseAddress) {
+  if (config_.reuseAddress) {
     int v = 1;
-    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(v));
+    ::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(v));
   }
-  if (config.sendBufferSize > 0) {
-    ::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &config.sendBufferSize,
+  if (config_.sendBufferSize > 0) {
+    ::setsockopt(fd_, SOL_SOCKET, SO_SNDBUF, &config_.sendBufferSize,
                  sizeof(int));
   }
-  if (config.recvBufferSize > 0) {
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &config.recvBufferSize,
+  if (config_.recvBufferSize > 0) {
+    ::setsockopt(fd_, SOL_SOCKET, SO_RCVBUF, &config_.recvBufferSize,
                  sizeof(int));
   }
 
-  if (config.nonBlocking) {
-    ::fcntl(fd, F_SETFL, O_NONBLOCK);
-    blocking = false;
+  if (config_.nonBlocking) {
+    ::fcntl(fd_, F_SETFL, O_NONBLOCK);
+    blocking_ = false;
   }
 
   sockaddr_storage addr{};
   socklen_t addr_len = 0;
   int target_family = AF_UNSPEC;
-  if (!FillSockaddrStorage(address, port, family == AF_INET6, addr,
+  if (!FillSockaddrStorage(address, port, family_ == AF_INET6, addr,
                            target_family, addr_len)) {
-    ::close(fd);
-    fd = -1;
-    family = AF_UNSPEC;
+    ::close(fd_);
+    fd_ = -1;
+    family_ = AF_UNSPEC;
     return SocketError::kInvalidParam;
   }
 
-  if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), addr_len) != 0) {
+  if (::bind(fd_, reinterpret_cast<sockaddr*>(&addr), addr_len) != 0) {
     const SocketError err = MapErrno(errno);
-    ::close(fd);
-    fd = -1;
-    family = AF_UNSPEC;
+    ::close(fd_);
+    fd_ = -1;
+    family_ = AF_UNSPEC;
     return err;
   }
 
   // Get the actual assigned port (important when port == 0)
   sockaddr_storage bound_addr{};
   socklen_t bound_len = sizeof(bound_addr);
-  if (::getsockname(fd, reinterpret_cast<sockaddr*>(&bound_addr), &bound_len) ==
-      0) {
+  if (::getsockname(fd_, reinterpret_cast<sockaddr*>(&bound_addr),
+                    &bound_len) == 0) {
     if (bound_addr.ss_family == AF_INET) {
-      bound_port = ntohs(reinterpret_cast<sockaddr_in*>(&bound_addr)->sin_port);
+      bound_port_ =
+          ntohs(reinterpret_cast<sockaddr_in*>(&bound_addr)->sin_port);
     } else if (bound_addr.ss_family == AF_INET6) {
-      bound_port =
+      bound_port_ =
           ntohs(reinterpret_cast<sockaddr_in6*>(&bound_addr)->sin6_port);
     }
   } else {
-    bound_port = port;  // fallback
+    bound_port_ = port;  // fallback
   }
 
   return SocketError::kNone;
@@ -154,48 +155,47 @@ SocketResult PosixUDPSocket::SendTo(const void* data, std::size_t length,
     return {.bytes = -1, .error = SocketError::kInvalidParam};
   }
 
-  if (fd != -1 && to_addr.isIPv6 && family == AF_INET) {
+  if (fd_ != -1 && to_addr.isIPv6 && family_ == AF_INET) {
     return {.bytes = -1, .error = SocketError::kUnsupported};
   }
 
-  if (to_addr.isIPv6 && !config.enableIPv6) {
+  if (to_addr.isIPv6 && !config_.enableIPv6) {
     return {.bytes = -1, .error = SocketError::kUnsupported};
   }
 
-  // Lazy open if socket is not created (could require bind — but UDP allows
-  // send without bind).
-  if (fd == -1) {
-    family = to_addr.isIPv6 ? AF_INET6 : AF_INET;
-    fd = ::socket(family, SOCK_DGRAM, IPPROTO_UDP);
-    if (fd == -1) return {.bytes = -1, .error = MapErrno(errno)};
+  // Open lazily because UDP sockets can send without an explicit bind().
+  if (fd_ == -1) {
+    family_ = to_addr.isIPv6 ? AF_INET6 : AF_INET;
+    fd_ = ::socket(family_, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd_ == -1) return {.bytes = -1, .error = MapErrno(errno)};
 
-    if (family == AF_INET6) {
-      int v6only = config.enableIPv6 ? 0 : 1;
-      ::setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only));
+    if (family_ == AF_INET6) {
+      int v6only = config_.enableIPv6 ? 0 : 1;
+      ::setsockopt(fd_, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only));
     }
 
-    if (config.nonBlocking) {
-      ::fcntl(fd, F_SETFL, O_NONBLOCK);
-      blocking = false;
+    if (config_.nonBlocking) {
+      ::fcntl(fd_, F_SETFL, O_NONBLOCK);
+      blocking_ = false;
     }
-    // reuseAddress for sender — optional
-    if (config.reuseAddress) {
+    if (config_.reuseAddress) {
       int v = 1;
-      ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(v));
+      ::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(v));
     }
   }
 
   sockaddr_storage addr{};
   socklen_t addr_len = 0;
   int target_family = AF_UNSPEC;
-  if (!FillSockaddrStorage(to_addr, to_port, family == AF_INET6, addr,
+  if (!FillSockaddrStorage(to_addr, to_port, family_ == AF_INET6, addr,
                            target_family, addr_len)) {
     return {.bytes = -1, .error = SocketError::kInvalidParam};
   }
 
-  const ssize_t sent = ::sendto(fd, reinterpret_cast<const char*>(data), length, 0,
-                      reinterpret_cast<sockaddr*>(&addr), addr_len);
-  if (std::cmp_equal(sent , -1)) return {.bytes = -1, .error = MapErrno(errno)};
+  const ssize_t sent =
+      ::sendto(fd_, reinterpret_cast<const char*>(data), length, 0,
+               reinterpret_cast<sockaddr*>(&addr), addr_len);
+  if (std::cmp_equal(sent, -1)) return {.bytes = -1, .error = MapErrno(errno)};
 
   return {.bytes = static_cast<ptrdiff_t>(sent), .error = SocketError::kNone};
 }
@@ -203,15 +203,15 @@ SocketResult PosixUDPSocket::SendTo(const void* data, std::size_t length,
 SocketResult PosixUDPSocket::Receive(void* buffer, std::size_t capacity,
                                      SocketAddress& from_addr,
                                      std::uint16_t& from_port) {
-  if (fd == -1) return {.bytes = -1, .error = SocketError::kNotBound};
+  if (fd_ == -1) return {.bytes = -1, .error = SocketError::kNotBound};
   if (buffer == nullptr || capacity == 0) {
     return {.bytes = -1, .error = SocketError::kInvalidParam};
   }
 
   sockaddr_storage addr{};
   socklen_t len = sizeof(addr);
-  const ssize_t got = ::recvfrom(fd, reinterpret_cast<char*>(buffer), capacity, 0,
-                           reinterpret_cast<sockaddr*>(&addr), &len);
+  const ssize_t got = ::recvfrom(fd_, reinterpret_cast<char*>(buffer), capacity,
+                                 0, reinterpret_cast<sockaddr*>(&addr), &len);
   if (std::cmp_equal(got, -1)) return {.bytes = -1, .error = MapErrno(errno)};
 
   from_addr = SocketaddressFromSockaddr(addr);
@@ -226,7 +226,7 @@ SocketResult PosixUDPSocket::Receive(void* buffer, std::size_t capacity,
 }
 
 void PosixUDPSocket::Poll(ISocketEventHandler* handler) {
-  if (handler == nullptr || fd == -1) return;
+  if (handler == nullptr || fd_ == -1) return;
 
   // Single read loop until WouldBlock.
   for (;;) {
@@ -242,15 +242,15 @@ void PosixUDPSocket::Poll(ISocketEventHandler* handler) {
     handler->OnDataReceived(from, port, temp,
                             static_cast<std::size_t>(r.bytes));
 
-    // Heuristic: if received less than full buffer — finish
+    // A short read means the socket buffer is likely drained.
     if (std::cmp_less(r.bytes, sizeof(temp))) break;
   }
 }
 
 SocketError PosixUDPSocket::SetBlocking(bool enable) {
-  if (fd == -1) return SocketError::kNotBound;
+  if (fd_ == -1) return SocketError::kNotBound;
 
-  int flags = ::fcntl(fd, F_GETFL, 0);
+  int flags = ::fcntl(fd_, F_GETFL, 0);
   if (flags == -1) return MapErrno(errno);
 
   if (enable) {
@@ -259,26 +259,26 @@ SocketError PosixUDPSocket::SetBlocking(bool enable) {
     flags |= O_NONBLOCK;
   }
 
-  if (::fcntl(fd, F_SETFL, flags) == -1) return MapErrno(errno);
+  if (::fcntl(fd_, F_SETFL, flags) == -1) return MapErrno(errno);
 
-  blocking = enable;
+  blocking_ = enable;
   return SocketError::kNone;
 }
 
-bool PosixUDPSocket::IsBlocking() const { return blocking; }
+bool PosixUDPSocket::IsBlocking() const { return blocking_; }
 
-std::uint16_t PosixUDPSocket::LocalPort() const { return bound_port; }
+std::uint16_t PosixUDPSocket::LocalPort() const { return bound_port_; }
 
 SocketType PosixUDPSocket::Type() const { return SocketType::kUdp; }
 
-int PosixUDPSocket::NativeHandle() const { return fd; }
+int PosixUDPSocket::NativeHandle() const { return fd_; }
 
 void PosixUDPSocket::Close() {
-  if (fd != -1) {
-    ::close(fd);
-    fd = -1;
-    bound_port = 0;
-    family = AF_UNSPEC;
+  if (fd_ != -1) {
+    ::close(fd_);
+    fd_ = -1;
+    bound_port_ = 0;
+    family_ = AF_UNSPEC;
   }
 }
 

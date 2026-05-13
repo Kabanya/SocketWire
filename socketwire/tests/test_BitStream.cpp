@@ -62,7 +62,7 @@ TEST_F(BitStreamTest, WriteAndReadBits) {
 TEST_F(BitStreamTest, WriteAndReadBytes) {
   // Test basic byte array writing/reading
   const char* data = "Hello";
-  const size_t data_len = strlen(data);
+  const std::size_t data_len = strlen(data);
   bs.WriteBytes(data, data_len);
 
   EXPECT_EQ(bs.GetSizeBytes(), data_len)
@@ -149,8 +149,9 @@ TEST_F(BitStreamTest, WriteAndReadBoolArray) {
       << "Array sizes should match. Expected: " << original.size()
       << ", Got: " << result.size();
 
-  for (size_t i = 0; i < original.size(); ++i) {
-    EXPECT_EQ(original.at(i), result.at(i)) << "Bool array mismatch at index " << i;
+  for (std::size_t i = 0; i < original.size(); ++i) {
+    EXPECT_EQ(original.at(i), result.at(i))
+        << "Bool array mismatch at index " << i;
   }
 
   // Test empty array
@@ -165,15 +166,16 @@ TEST_F(BitStreamTest, WriteAndReadBoolArray) {
   // Test large array
   socketwire::BitStream bs3;
   std::vector<bool> large(100);
-  for (size_t i = 0; i < 100; ++i) {
-    large.at(i) = (i % 3 == 0);  // Pattern: true, false, false, true, false, false...
+  for (std::size_t i = 0; i < 100; ++i) {
+    large.at(i) =
+        (i % 3 == 0);  // Pattern: true, false, false, true, false, false...
   }
   bs3.WriteBoolArray(large);
   bs3.ResetRead();
   auto large_result = bs3.ReadBoolArray();
   ASSERT_EQ(large.size(), large_result.size())
       << "Large array size should match";
-  for (size_t i = 0; i < large.size(); ++i) {
+  for (std::size_t i = 0; i < large.size(); ++i) {
     EXPECT_EQ(large.at(i), large_result.at(i))
         << "Large array mismatch at index " << i;
   }
@@ -234,7 +236,7 @@ TEST_F(BitStreamTest, WriteAndReadInt) {
     bs6.Write(val);
   }
   bs6.ResetRead();
-  for (size_t i = 0; i < values.size(); ++i) {
+  for (std::size_t i = 0; i < values.size(); ++i) {
     int read_val = 0;
     bs6.Read(read_val);
     EXPECT_EQ(values.at(i), read_val)
@@ -303,7 +305,7 @@ TEST_F(BitStreamTest, QuantizedFloat) {
     bs7.WriteQuantizedFloat(val, 0.0f, 10.0f, 16);
   }
   bs7.ResetRead();
-  for (size_t i = 0; i < values.size(); ++i) {
+  for (std::size_t i = 0; i < values.size(); ++i) {
     const float read_val = bs7.ReadQuantizedFloat(0.0f, 10.0f, 16);
     EXPECT_NEAR(values.at(i), read_val, 0.01f)
         << "Sequential quantized float mismatch at index " << i;
@@ -394,7 +396,7 @@ TEST_F(BitStreamTest, Size) {
   EXPECT_EQ(bs4.GetSizeBytes(), 2) << "9 bits should occupy 2 bytes";
 
   bs4.AlignWrite();  // Align to byte boundary (add 7 padding bits to reach 16)
-  const size_t aligned_bits = bs4.GetSizeBits();
+  const std::size_t aligned_bits = bs4.GetSizeBits();
   EXPECT_EQ(aligned_bits % 8, 0)
       << "After alignment, bit count should be multiple of 8";
 
@@ -405,8 +407,8 @@ TEST_F(BitStreamTest, Size) {
   // Verify that reading doesn't change size
   socketwire::BitStream bs5;
   bs5.WriteBits(0xABCD, 16);
-  size_t const orig_size_bits = bs5.GetSizeBits();
-  size_t const orig_size_bytes = bs5.GetSizeBytes();
+  std::size_t const orig_size_bits = bs5.GetSizeBits();
+  std::size_t const orig_size_bytes = bs5.GetSizeBytes();
 
   bs5.ResetRead();
   bs5.ReadBits(8);  // Read half
@@ -417,8 +419,7 @@ TEST_F(BitStreamTest, Size) {
       << "Reading should not change byte size";
 }
 
-// ========================= Safety & correctness tests
-// =========================
+// Safety and correctness tests.
 
 TEST_F(BitStreamTest, DataConstructorSetsSizeCorrectly) {
   // Write some data, then construct a new stream from the raw buffer
@@ -428,9 +429,9 @@ TEST_F(BitStreamTest, DataConstructorSetsSizeCorrectly) {
   source.Write(std::string("hello"));
 
   const uint8_t* data = source.GetData();
-  const size_t bytes = source.GetSizeBytes();
+  const std::size_t bytes = source.GetSizeBytes();
 
-  // Construct from raw data — m_WritePose should be set
+  // Construct from raw data; write position should be set.
   socketwire::BitStream from_data(data, bytes);
   EXPECT_EQ(from_data.GetSizeBytes(), bytes)
       << "BitStream constructed from data should report correct size in bytes";
@@ -452,7 +453,7 @@ TEST_F(BitStreamTest, DataConstructorSetsSizeCorrectly) {
 TEST_F(BitStreamTest, ReadStringRejectsExcessiveLength) {
   // Manually craft a BitStream with a huge length prefix
   socketwire::BitStream craft;
-  craft.Write<uint32_t>(0xFFFFFFFF);  // 4 GB length — DoS vector
+  craft.Write<uint32_t>(0xFFFFFFFF);  // 4 GB length; DoS vector.
 
   craft.ResetRead();
   std::string out;
@@ -479,7 +480,7 @@ TEST_F(BitStreamTest, ReadStringLegitimateStringsStillWork) {
   stream.Write(std::string(""));
   stream.Write(std::string("a"));
   stream.Write(std::string("hello world"));
-  stream.Write(std::string(1000, 'x'));  // 1000 chars — well within limit
+  stream.Write(std::string(1000, 'x'));  // 1000 chars; within limit.
 
   stream.ResetRead();
 
@@ -518,7 +519,8 @@ TEST_F(BitStreamTest, ReadBoolArrayRejectsSizeExceedingBuffer) {
 }
 
 TEST_F(BitStreamTest, ReadBoolArrayLegitimateArraysStillWork) {
-  const std::vector<bool> original = {true, false, true, true, false, false, true};
+  const std::vector<bool> original = {true,  false, true, true,
+                                      false, false, true};
 
   socketwire::BitStream stream;
   stream.WriteBoolArray(original);

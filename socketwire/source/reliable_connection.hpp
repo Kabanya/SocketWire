@@ -1,15 +1,9 @@
 #pragma once
 
-/*
-  ReliableConnection — reliable UDP protocol implementation for SocketWire
-
-  Provides:
-  - Reliable packet delivery with acknowledgments
-  - Packet sequencing and ordering
-  - Connection state management
-  - Keep-alive mechanism
-  - Multiple channels (reliable/unreliable)
-*/
+/// Reliable UDP protocol implementation for SocketWire.
+///
+/// Provides reliable packet delivery, packet sequencing, connection state
+/// management, keep-alives, and separate reliable/unreliable channels.
 
 #include <bitset>
 #include <chrono>
@@ -29,21 +23,19 @@
 
 namespace socketwire {
 
-// Packet types for internal protocol
 enum class PacketType : std::uint8_t {
-  kUnreliable = 0,   // No guarantees
-  kReliable = 1,     // Guaranteed delivery, ordered
-  kUnsequenced = 2,  // Guaranteed delivery, unordered
-  kConnect = 3,      // Connection request
-  kAccept = 4,       // Connection accepted
-  kDisconnect = 5,   // Graceful disconnect
-  kPing = 6,         // Keep-alive
-  kPong = 7,         // Keep-alive response
-  kAck = 8,          // Acknowledgment
-  kFragment = 9      // Fragment of a large message
+  kUnreliable = 0,   ///< No delivery guarantees.
+  kReliable = 1,     ///< Guaranteed delivery, ordered.
+  kUnsequenced = 2,  ///< Guaranteed delivery, unordered.
+  kConnect = 3,      ///< Connection request.
+  kAccept = 4,       ///< Connection accepted.
+  kDisconnect = 5,   ///< Graceful disconnect.
+  kPing = 6,         ///< Keep-alive request.
+  kPong = 7,         ///< Keep-alive response.
+  kAck = 8,          ///< Acknowledgment.
+  kFragment = 9      ///< Fragment of a large message.
 };
 
-// Connection states
 enum class ConnectionState : std::uint8_t {
   kDisconnected = 0,
   kDisconnecting = 1,
@@ -51,7 +43,7 @@ enum class ConnectionState : std::uint8_t {
   kConnecting = 3
 };
 
-// Configuration for reliable connection
+/// Configuration for reliable connections.
 struct ReliableConnectionConfig {
   struct CryptoConfig {
     bool enabled = false;
@@ -77,7 +69,7 @@ struct ReliableConnectionConfig {
   CryptoConfig crypto{};
 };
 
-// Pending packet waiting for acknowledgment
+/// Packet waiting for acknowledgment.
 struct PendingPacket {
   std::uint32_t sequence = 0;
   std::vector<std::uint8_t> data;
@@ -88,7 +80,7 @@ struct PendingPacket {
       PacketType::kReliable;  ///< Original type for retransmission
 };
 
-// Received packet info
+/// Received packet queued for ordered delivery.
 struct ReceivedPacket {
   std::uint32_t sequence = 0;
   std::vector<std::uint8_t> data;
@@ -105,50 +97,50 @@ struct FragmentGroup {
   std::uint8_t channel = 0;
 };
 
-// Event callbacks
+/// Event callbacks for reliable connection state and payload delivery.
 class IReliableConnectionHandler {
  public:
-  virtual ~IReliableConnectionHandler() = default;  // disconect();
+  virtual ~IReliableConnectionHandler() = default;
 
-  // Called when connection is established
+  /// Called when the connection is established.
   virtual void OnConnected() {}
 
-  // Called when connection is closed
+  /// Called when the connection is closed.
   virtual void OnDisconnected() {}
 
-  // Called when reliable packet is received (in order)
+  /// Called when a reliable packet is received in order.
   virtual void OnReliableReceived(std::uint8_t channel, const void* data,
                                   std::size_t size) = 0;
 
-  // Called when unreliable packet is received
+  /// Called when an unreliable packet is received.
   virtual void OnUnreliableReceived(std::uint8_t channel, const void* data,
                                     std::size_t size) = 0;
 
-  // Called on connection timeout
+  /// Called when the connection times out.
   virtual void OnTimeout() {}
 };
 
-// Manages a single reliable connection over UDP
+/// Manages a single reliable connection over UDP.
 class ReliableConnection {
  public:
   explicit ReliableConnection(ISocket* socket,
                               const ReliableConnectionConfig& cfg = {});
   ~ReliableConnection();
 
-  // Connection management
+  /// Starts a client-side connection attempt.
   bool Connect(const SocketAddress& addr, std::uint16_t port);
+  /// Sends a disconnect packet and clears local connection state.
   void Disconnect();
   [[nodiscard]] bool IsConnected() const {
-    return state == ConnectionState::kConnected;
+    return state_ == ConnectionState::kConnected;
   }
-  [[nodiscard]] ConnectionState GetState() const { return state; }
-  [[nodiscard]] bool IsCryptoReady() const { return cryptoReady; }
+  [[nodiscard]] ConnectionState GetState() const { return state_; }
+  [[nodiscard]] bool IsCryptoReady() const { return crypto_ready_; }
 
-  // Set remote address (for server-side connections that start connected)
+  /// Sets the remote address for server-side connections that start connected.
   void SetRemoteAddress(const SocketAddress& addr, std::uint16_t port);
-  void SetConnected() { state = ConnectionState::kConnected; }
+  void SetConnected() { state_ = ConnectionState::kConnected; }
 
-  // Send packets
   bool SendReliable(const std::uint8_t channel, const void* data,
                     std::size_t size);
   bool SendUnreliable(const std::uint8_t channel, const void* data,
@@ -156,103 +148,103 @@ class ReliableConnection {
   bool SendUnsequenced(const std::uint8_t channel, const void* data,
                        std::size_t size);
 
-  // BitStream convenience methods
   bool SendReliable(const std::uint8_t channel, const BitStream& stream);
   bool SendUnreliable(const std::uint8_t channel, const BitStream& stream);
   bool SendUnsequenced(const std::uint8_t channel, const BitStream& stream);
 
-  // Update - call regularly (e.g., every frame)
+  /// Processes retransmits, pings, timeouts, and pending ordered packets.
   void Update();
 
-  // Convenience: drain all pending packets from socket, then call update().
-  // Requires the socket to be in non-blocking mode.
+  /// Drains pending socket packets, then calls Update().
+  ///
+  /// Requires the socket to be in non-blocking mode.
   void Tick();
 
-  // Process incoming packet
   void ProcessPacket(const void* data, std::size_t size,
                      const SocketAddress& from, std::uint16_t from_port);
 
-  // Set event handler
   void SetHandler(IReliableConnectionHandler* handler) {
-    eventHandler = handler;
+    event_handler_ = handler;
   }
 
   // Statistics
   [[nodiscard]] std::uint32_t GetSentPackets() const {
-    return statsSentPackets;
+    return stats_sent_packets_;
   }
   [[nodiscard]] std::uint32_t GetReceivedPackets() const {
-    return statsReceivedPackets;
+    return stats_received_packets_;
   }
   [[nodiscard]] std::uint32_t GetLostPackets() const {
-    return statsLostPackets;
+    return stats_lost_packets_;
   }
-  [[nodiscard]] float GetRtt() const { return rtt; }
+  [[nodiscard]] float GetRtt() const { return rtt_; }
   /// Current adaptive send window (0 = unlimited).
   [[nodiscard]] std::uint32_t GetSendWindow() const {
-    return currentSendWindow;
+    return current_send_window_;
   }
   /// Number of reliable packets currently awaiting acknowledgment.
   [[nodiscard]] std::uint32_t GetInflightCount() const {
-    return static_cast<std::uint32_t>(pendingPackets.size());
+    return static_cast<std::uint32_t>(pending_packets_.size());
   }
 
  private:
-  ISocket* socket;
-  ReliableConnectionConfig config;
-  IReliableConnectionHandler* eventHandler = nullptr;
+  ISocket* socket_ = nullptr;
+  ReliableConnectionConfig config_;
+  IReliableConnectionHandler* event_handler_ = nullptr;
 
-  ConnectionState state = ConnectionState::kDisconnected;
-  SocketAddress remoteAddr;
-  std::uint16_t remotePort = 0;
+  ConnectionState state_ = ConnectionState::kDisconnected;
+  SocketAddress remote_addr_;
+  std::uint16_t remote_port_ = 0;
 
-  // Sequence numbers — per channel
-  std::vector<std::uint32_t> sendSequence;
-  std::vector<std::uint32_t> receiveSequence;
+  // Sequence numbers per channel.
+  std::vector<std::uint32_t> send_sequence_;
+  std::vector<std::uint32_t> receive_sequence_;
 
-  // Pending packets waiting for ACK
-  std::deque<PendingPacket> pendingPackets;
+  // Pending packets waiting for ACK.
+  std::deque<PendingPacket> pending_packets_;
 
-  // Sliding window for duplicate sequence detection — per channel (O(1) lookup,
-  // bounded memory)
+  // Per-channel duplicate detection window with bounded memory.
   static constexpr std::uint32_t kSeqWindowSize = 1024;
   std::vector<std::uint32_t>
-      seqWindowHigh;  // per-channel highest_seen_sequence + 1
-  std::vector<std::bitset<1024>> seqWindowBits;  // per-channel bit[seq % 1024]
+      seq_window_high_;  // per-channel highest_seen_sequence + 1
+  std::vector<std::bitset<1024>>
+      seq_window_bits_;  // per-channel bit[seq % 1024]
 
-  // Reliable packets pending ordered processing — per channel
+  // Reliable packets pending ordered processing per channel.
   std::vector<std::unordered_map<std::uint32_t, ReceivedPacket>>
-      pendingReceived;
+      pending_received_;
 
   // Timing
-  std::chrono::steady_clock::time_point lastSendTime;
-  std::chrono::steady_clock::time_point lastReceiveTime;
-  std::chrono::steady_clock::time_point lastPingTime;
+  std::chrono::steady_clock::time_point last_send_time_;
+  std::chrono::steady_clock::time_point last_receive_time_;
+  std::chrono::steady_clock::time_point last_ping_time_;
 
   // Round-trip time estimation
-  float rtt = 100.0f;  // milliseconds
+  float rtt_ = 100.0f;  // milliseconds
 
   // Statistics
-  std::uint32_t statsSentPackets = 0;
-  std::uint32_t statsReceivedPackets = 0;
-  std::uint32_t statsLostPackets = 0;
+  std::uint32_t stats_sent_packets_ = 0;
+  std::uint32_t stats_received_packets_ = 0;
+  std::uint32_t stats_lost_packets_ = 0;
 
   // Congestion control (AIMD)
-  std::uint32_t currentSendWindow = 0;  ///< Adaptive send window; 0 = unlimited
-  std::uint32_t ssthresh = 32;          ///< Slow-start threshold
+  std::uint32_t current_send_window_ =
+      0;                         ///< Adaptive send window; 0 = unlimited
+  std::uint32_t ssthresh_ = 32;  ///< Slow-start threshold
 
-  // Fragment state — per channel
+  // Fragment state per channel.
   static constexpr std::size_t kFragmentHeaderExtra =
       6;  ///< groupId(2) + fragIdx(2) + fragTotal(2)
   std::vector<std::uint16_t>
-      nextFragmentGroupId;  ///< Rolling group-ID counter, per channel
+      next_fragment_group_id_;  ///< Rolling group-ID counter, per channel
   /// Incomplete fragment groups indexed by [channel][groupId]
-  std::vector<std::unordered_map<std::uint16_t, FragmentGroup>> fragmentGroups;
+  std::vector<std::unordered_map<std::uint16_t, FragmentGroup>>
+      fragment_groups_;
 
-  // Optional secure transport state
-  crypto::HandshakeState cryptoHandshake{};
-  crypto::CryptoContext cryptoContext{};
-  bool cryptoReady = false;
+  // Optional secure transport state.
+  crypto::HandshakeState crypto_handshake_{};
+  crypto::CryptoContext crypto_context_{};
+  bool crypto_ready_ = false;
 
   // Internal methods
   bool SendPacket(PacketType type, std::uint8_t channel, const void* data,
@@ -268,7 +260,7 @@ class ReliableConnection {
   /// Discard fragment groups that have been waiting longer than
   /// fragmentTimeoutMs.
   void CleanupFragments();
-  [[nodiscard]] bool SecureMode() const { return config.crypto.enabled; }
+  [[nodiscard]] bool SecureMode() const { return config_.crypto.enabled; }
   [[nodiscard]] bool CanUseCrypto() const;
   [[nodiscard]] bool ShouldEncryptPacket(PacketType type) const;
   [[nodiscard]] std::size_t CryptoEnvelopeOverhead() const;
@@ -280,15 +272,13 @@ class ReliableConnection {
   void MarkSequenceReceived(std::uint8_t channel, std::uint32_t seq);
 
   std::uint32_t GetNextSequence(std::uint8_t channel) {
-    if (channel >= sendSequence.size()) return 0;
-    return sendSequence.at(channel)++;
+    if (channel >= send_sequence_.size()) return 0;
+    return send_sequence_.at(channel)++;
   }
   static bool IsSequenceNewer(std::uint32_t s1, std::uint32_t s2);
 };
 
-/*
-  ConnectionManager - manages multiple connections (for server)
-*/
+/// Manages multiple server-side reliable connections.
 class ConnectionManager {
  public:
   struct RemoteClient {
@@ -302,53 +292,49 @@ class ConnectionManager {
                              const ReliableConnectionConfig& cfg = {});
   ~ConnectionManager();
 
-  // Update all connections
   void Update();
 
-  // Convenience: drain all pending packets from socket, then update all
-  // connections. Requires the socket to be in non-blocking mode.
+  /// Drains pending socket packets, then updates all connections.
+  ///
+  /// Requires the socket to be in non-blocking mode.
   void Tick();
 
-  // Process incoming packet - automatically routes to correct connection
   void ProcessPacket(const void* data, std::size_t size,
                      const SocketAddress& from, std::uint16_t from_port);
 
-  // Broadcast to all connections
   void BroadcastReliable(std::uint8_t channel, const void* data,
                          std::size_t size);
   void BroadcastUnreliable(std::uint8_t channel, const void* data,
                            std::size_t size);
 
-  // Get connections
   std::vector<RemoteClient*> GetConnections();
   RemoteClient* GetConnection(const SocketAddress& addr, std::uint16_t port);
 
-  // Set handler for all connections
   void SetHandler(IReliableConnectionHandler* handler) {
-    eventHandler = handler;
+    event_handler_ = handler;
   }
 
-  // Connection events (can be overridden)
+  /// Optional server-side connection callbacks.
   std::function<void(RemoteClient*)> onClientConnected;
   std::function<void(RemoteClient*)> onClientDisconnected;
 
  private:
-  ISocket* socket;
-  ReliableConnectionConfig config;
-  IReliableConnectionHandler* eventHandler = nullptr;
+  ISocket* socket_ = nullptr;
+  ReliableConnectionConfig config_;
+  IReliableConnectionHandler* event_handler_ = nullptr;
 
-  std::vector<std::unique_ptr<RemoteClient>> clients;
+  std::vector<std::unique_ptr<RemoteClient>> clients_;
 
   RemoteClient* FindOrCreateClient(const SocketAddress& addr,
                                    std::uint16_t port);
   void RemoveClient(RemoteClient* client);
 
   std::string MakeAddressKey(const SocketAddress& addr, std::uint16_t port);
-  std::unordered_map<std::string, RemoteClient*> clientMap;
+  std::unordered_map<std::string, RemoteClient*> client_map_;
 
-  // Handshake rate-limiting state
-  std::uint32_t connectWindowCount = 0;
-  std::chrono::steady_clock::time_point connectWindowStart{};
+  // Handshake rate-limiting state.
+  std::uint32_t connect_window_count_ = 0;
+  std::chrono::steady_clock::time_point connect_window_start_{};
   bool HandshakeAllowed();  ///< Returns true if a new connection may be
                             ///< accepted right now.
 };

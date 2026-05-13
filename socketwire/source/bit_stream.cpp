@@ -60,106 +60,107 @@ BitStream::TryReadBoolArray() noexcept {
 
 BitStream::BitStream() = default;
 
-BitStream::BitStream(const std::uint8_t* data, size_t size)
-    : m_WritePos(size * 8) {
-  buffer.assign(data, data + size);
+BitStream::BitStream(const std::uint8_t* data, std::size_t size)
+    : write_pos_(size * 8) {
+  buffer_.assign(data, data + size);
 }
 
 void BitStream::WriteBit(bool value) {
-  const size_t byte_index = m_WritePos / 8;
-  const size_t bit_index = m_WritePos % 8;
+  const std::size_t byte_index = write_pos_ / 8;
+  const std::size_t bit_index = write_pos_ % 8;
 
-  if (byte_index >= buffer.size()) {
-    buffer.push_back(0);
+  if (byte_index >= buffer_.size()) {
+    buffer_.push_back(0);
   }
 
   if (value) {
-    buffer.at(byte_index) |=
+    buffer_.at(byte_index) |=
         static_cast<std::uint8_t>(std::uint32_t{1} << bit_index);
   }
 
-  m_WritePos++;
+  write_pos_++;
 }
 
 bool BitStream::ReadBit() {
-  const size_t byte_index = m_ReadPos / 8;
-  const size_t bit_index = m_ReadPos % 8;
+  const std::size_t byte_index = read_pos_ / 8;
+  const std::size_t bit_index = read_pos_ % 8;
 
-  if (byte_index >= buffer.size()) {
+  if (byte_index >= buffer_.size()) {
     throw std::out_of_range("Attempting to read beyond buffer");
   }
 
-  const bool value = (buffer.at(byte_index) &
-                static_cast<std::uint8_t>(std::uint32_t{1} << bit_index)) != 0;
-  m_ReadPos++;
+  const bool value =
+      (buffer_.at(byte_index) &
+       static_cast<std::uint8_t>(std::uint32_t{1} << bit_index)) != 0;
+  read_pos_++;
 
   return value;
 }
 
-void BitStream::WriteBits(uint32_t value, uint8_t bit_count) {
+void BitStream::WriteBits(std::uint32_t value, std::uint8_t bit_count) {
   if (bit_count > 32) throw std::out_of_range("bit_count must be <= 32");
 
-  for (uint8_t i = 0; i < bit_count; ++i) {
+  for (std::uint8_t i = 0; i < bit_count; ++i) {
     WriteBit((value & (std::uint32_t{1} << i)) != 0);
   }
 }
 
-uint32_t BitStream::ReadBits(uint8_t bit_count) {
+std::uint32_t BitStream::ReadBits(std::uint8_t bit_count) {
   if (bit_count > 32) throw std::out_of_range("bit_count must be <= 32");
 
-  uint32_t value = 0;
-  for (uint8_t i = 0; i < bit_count; ++i) {
+  std::uint32_t value = 0;
+  for (std::uint8_t i = 0; i < bit_count; ++i) {
     if (ReadBit()) value |= (std::uint32_t{1} << i);
   }
   return value;
 }
 
-void BitStream::WriteBytes(const void* data, size_t size) {
+void BitStream::WriteBytes(const void* data, std::size_t size) {
   AlignWrite();
-  const size_t byte_index = m_WritePos / 8;
+  const std::size_t byte_index = write_pos_ / 8;
 
-  if (byte_index + size > buffer.size()) {
-    buffer.resize(byte_index + size);
+  if (byte_index + size > buffer_.size()) {
+    buffer_.resize(byte_index + size);
   }
-  std::memcpy(buffer.data() + byte_index, data, size);
-  m_WritePos += size * 8;
+  std::memcpy(buffer_.data() + byte_index, data, size);
+  write_pos_ += size * 8;
 }
 
-void BitStream::ReadBytes(void* data, size_t size) {
+void BitStream::ReadBytes(void* data, std::size_t size) {
   AlignRead();
-  const size_t byte_index = m_ReadPos / 8;
+  const std::size_t byte_index = read_pos_ / 8;
 
-  if (byte_index + size > buffer.size()) {
+  if (byte_index + size > buffer_.size()) {
     throw std::out_of_range("Attempting to read beyond buffer");
   }
 
-  std::memcpy(data, buffer.data() + byte_index, size);
-  m_ReadPos += size * 8;
+  std::memcpy(data, buffer_.data() + byte_index, size);
+  read_pos_ += size * 8;
 }
 
 void BitStream::AlignWrite() {
-  if (m_WritePos % 8 != 0) {
-    m_WritePos = ((m_WritePos + 7) / 8) * 8;  // Round up to next byte
+  if (write_pos_ % 8 != 0) {
+    write_pos_ = ((write_pos_ + 7) / 8) * 8;  // Round up to next byte
   }
 }
 
 void BitStream::AlignRead() {
-  if (m_ReadPos % 8 != 0) {
-    m_ReadPos = ((m_ReadPos + 7) / 8) * 8;  // Round up to next byte
+  if (read_pos_ % 8 != 0) {
+    read_pos_ = ((read_pos_ + 7) / 8) * 8;  // Round up to next byte
   }
 }
 
 void BitStream::Write(const std::string& value) {
-  auto length = static_cast<uint32_t>(value.length());
-  Write<uint32_t>(length);
+  auto length = static_cast<std::uint32_t>(value.length());
+  Write<std::uint32_t>(length);
   if (length > 0) {
     WriteBytes(value.data(), length);
   }
 }
 
 void BitStream::Read(std::string& value) {
-  uint32_t length = 0;
-  Read<uint32_t>(length);
+  std::uint32_t length = 0;
+  Read<std::uint32_t>(length);
 
   if (length > kMaxBitStreamStringLength) {
     throw std::out_of_range("String length " + std::to_string(length) +
@@ -167,7 +168,7 @@ void BitStream::Read(std::string& value) {
                             std::to_string(kMaxBitStreamStringLength) + ")");
   }
 
-  const size_t remaining = GetRemainingBytes();
+  const std::size_t remaining = GetRemainingBytes();
   if (length > remaining) {
     throw std::out_of_range("String length " + std::to_string(length) +
                             " exceeds remaining buffer (" +
@@ -183,15 +184,15 @@ void BitStream::Read(std::string& value) {
 }
 
 void BitStream::WriteBoolArray(const std::vector<bool>& bools) {
-  Write<uint32_t>(static_cast<uint32_t>(bools.size()));
+  Write<std::uint32_t>(static_cast<std::uint32_t>(bools.size()));
   for (const bool b : bools) {
     WriteBit(b);
   }
 }
 
 std::vector<bool> BitStream::ReadBoolArray() {
-  uint32_t size = 0;
-  Read<uint32_t>(size);
+  std::uint32_t size = 0;
+  Read<std::uint32_t>(size);
 
   if (size > kMaxBitStreamBoolArraySize) {
     throw std::out_of_range("Bool array size " + std::to_string(size) +
@@ -200,7 +201,7 @@ std::vector<bool> BitStream::ReadBoolArray() {
   }
 
   // Each bool needs 1 bit; check remaining bits in the buffer
-  const size_t remaining_bits = (buffer.size() * 8) - m_ReadPos;
+  const std::size_t remaining_bits = (buffer_.size() * 8) - read_pos_;
   if (size > remaining_bits) {
     throw std::out_of_range("Bool array size " + std::to_string(size) +
                             " exceeds remaining bits (" +
@@ -208,58 +209,65 @@ std::vector<bool> BitStream::ReadBoolArray() {
   }
 
   std::vector<bool> bools(size);
-  for (uint32_t i = 0; i < size; ++i) {
+  for (std::uint32_t i = 0; i < size; ++i) {
     bools.at(i) = ReadBit();
   }
 
   return bools;
 }
 
-const std::uint8_t* BitStream::GetData() const { return buffer.data(); }
+const std::uint8_t* BitStream::GetData() const { return buffer_.data(); }
 
-size_t BitStream::GetSizeBytes() const {
-  return (m_WritePos + 7) / 8;  // Round up to nearest byte
+std::size_t BitStream::GetSizeBytes() const {
+  return (write_pos_ + 7) / 8;  // Round up to nearest byte
 }
 
-size_t BitStream::GetSizeBits() const { return m_WritePos; }
+std::size_t BitStream::GetSizeBits() const { return write_pos_; }
 
-size_t BitStream::GetRemainingBytes() const {
-  const size_t read_byte = (m_ReadPos + 7) / 8;  // current read position, rounded up to byte
-  return (read_byte < buffer.size()) ? (buffer.size() - read_byte) : 0;
+std::size_t BitStream::GetRemainingBytes() const {
+  const std::size_t read_byte =
+      (read_pos_ + 7) / 8;  // current read position, rounded up to byte
+  return (read_byte < buffer_.size()) ? (buffer_.size() - read_byte) : 0;
 }
 
-void BitStream::ResetWrite() { m_WritePos = 0; }
+void BitStream::ResetWrite() { write_pos_ = 0; }
 
-void BitStream::ResetRead() { m_ReadPos = 0; }
+void BitStream::ResetRead() { read_pos_ = 0; }
 
 void BitStream::Clear() {
-  buffer.clear();
-  m_WritePos = 0;
-  m_ReadPos = 0;
+  buffer_.clear();
+  write_pos_ = 0;
+  read_pos_ = 0;
 }
 
 void BitStream::WriteQuantizedFloat(float value, float min, float max,
-                                    uint8_t bits) {
+                                    std::uint8_t bits) {
   if (bits == 0 || bits > 32) {
     throw std::out_of_range("bits must be in range [1, 32]");
   }
 
   value = std::clamp(value, min, max);
 
-  const uint32_t range = (bits == 32) ? std::numeric_limits<std::uint32_t>::max() : ((std::uint32_t{1} << bits) - 1);
-  const auto quantized = static_cast<uint32_t>(static_cast<float>(range) * ((value - min) / (max - min)));
+  const std::uint32_t range = (bits == 32)
+                             ? std::numeric_limits<std::uint32_t>::max()
+                             : ((std::uint32_t{1} << bits) - 1);
+  const auto quantized = static_cast<std::uint32_t>(static_cast<float>(range) *
+                                               ((value - min) / (max - min)));
 
   WriteBits(quantized, bits);
 }
 
-float BitStream::ReadQuantizedFloat(float min, float max, uint8_t bits) {
+float BitStream::ReadQuantizedFloat(float min, float max, std::uint8_t bits) {
   if (bits == 0 || bits > 32) {
     throw std::out_of_range("bits must be in range [1, 32]");
   }
 
-  const uint32_t range = (bits == 32) ? std::numeric_limits<std::uint32_t>::max() : ((std::uint32_t{1} << bits) - 1);
-  const uint32_t quantized = ReadBits(bits);
-  return min + (static_cast<float>(quantized) / static_cast<float>(range)) * (max - min);
+  const uint32_t range = (bits == 32)
+                             ? std::numeric_limits<std::uint32_t>::max()
+                             : ((std::uint32_t{1} << bits) - 1);
+  const std::uint32_t quantized = ReadBits(bits);
+  return min + (static_cast<float>(quantized) / static_cast<float>(range)) *
+                   (max - min);
 }
 
 }  // namespace socketwire

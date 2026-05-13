@@ -1,9 +1,8 @@
 #pragma once
-/*
-  Lightweight authenticated encryption and client/server handshake built on top
-  of libsodium. The public types keep fixed sizes even when libsodium support is
-  disabled, so callers can configure crypto without conditional type branches.
-*/
+/// Lightweight authenticated encryption and client/server handshakes.
+///
+/// Public types keep fixed sizes even when libsodium support is disabled, so
+/// callers can configure crypto without conditional type branches.
 
 #include <algorithm>
 #include <array>

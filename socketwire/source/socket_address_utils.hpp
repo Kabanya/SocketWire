@@ -1,9 +1,5 @@
 #pragma once
-/*
-  socket_address_utils.hpp — shared address-conversion helpers for platform
-  socket implementations. All functions are marked `inline` to allow inclusion
-  from multiple TUs.
-*/
+/// Shared address-conversion helpers for platform socket implementations.
 
 #if defined(_WIN32) || defined(_WIN64)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -24,14 +20,14 @@
 
 namespace socketwire::detail {
 
-// Detect IPv4-mapped IPv6 address (::ffff:x.x.x.x)
+// Detect IPv4-mapped IPv6 addresses (::ffff:x.x.x.x).
 inline bool IsIpv4Mapped(const in6_addr& addr) {
   static const std::uint8_t kPrefix[12] = {0, 0, 0, 0, 0,    0,
                                            0, 0, 0, 0, 0xFF, 0xFF};
   return std::memcmp(addr.s6_addr, kPrefix, 12) == 0;
 }
 
-// Convert sockaddr_storage back to SocketAddress
+// Converts sockaddr_storage back to SocketAddress.
 inline SocketAddress SocketaddressFromSockaddr(
     const sockaddr_storage& storage) {
   if (storage.ss_family == AF_INET) {
@@ -52,10 +48,8 @@ inline SocketAddress SocketaddressFromSockaddr(
   return SocketAddress::FromIPv4(0);
 }
 
-/*
-  Fill sockaddr_storage from SocketAddress + port.
-  Template parameter AddrLen is socklen_t on POSIX and int on Windows.
-*/
+// Fills sockaddr_storage from SocketAddress and port.
+// AddrLen is socklen_t on POSIX and int on Windows.
 template <typename AddrLen>
 bool FillSockaddrStorage(const SocketAddress& address,
                          std::uint16_t port_host_order, bool prefer_i_pv6,

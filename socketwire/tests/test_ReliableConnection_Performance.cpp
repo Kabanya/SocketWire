@@ -58,7 +58,7 @@ class CounterHandler : public IReliableConnectionHandler {
 
   void OnConnected() override { connected = true; }
 
-  void OnReliableReceived(uint8_t channel, const void* data,
+  void OnReliableReceived(std::uint8_t channel, const void* data,
                           size_t size) override {
     (void)channel;
     (void)data;
@@ -66,7 +66,7 @@ class CounterHandler : public IReliableConnectionHandler {
     reliableCount++;
   }
 
-  void OnUnreliableReceived(uint8_t channel, const void* data,
+  void OnUnreliableReceived(std::uint8_t channel, const void* data,
                             size_t size) override {
     (void)channel;
     (void)data;
@@ -145,7 +145,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_SmallPacketThroughput) {
   ASSERT_TRUE(client_handler.connected);
 
   // Prepare data
-  std::vector<uint8_t> test_data(packet_size, 0xAB);
+  std::vector<std::uint8_t> test_data(packet_size, 0xAB);
 
   // Benchmark
   auto start_time = high_resolution_clock::now();
@@ -165,8 +165,10 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_SmallPacketThroughput) {
   EXPECT_EQ(server_handler.reliableCount, packet_count)
       << "All packets should be received";
 
-  const double packets_per_sec = (packet_count * 1000.0) / static_cast<double>(duration);
-  const double bytes_per_sec   = (packet_count * packet_size * 1000.0) / static_cast<double>(duration);
+  const double packets_per_sec =
+      (packet_count * 1000.0) / static_cast<double>(duration);
+  const double bytes_per_sec =
+      (packet_count * packet_size * 1000.0) / static_cast<double>(duration);
 
   std::cout << "\n=== Small Packet Throughput ===" << "\n";
   std::cout << "Packets: " << packet_count << "\n";
@@ -246,7 +248,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_MediumPacketThroughput) {
   }
   ASSERT_TRUE(client_handler.connected);
 
-  std::vector<uint8_t> test_data(packet_size, 0xCD);
+  std::vector<std::uint8_t> test_data(packet_size, 0xCD);
 
   auto start_time = high_resolution_clock::now();
 
@@ -354,7 +356,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_LargePacketThroughput) {
     FAIL() << "Connection failed to establish within timeout";
   }
 
-  std::vector<uint8_t> test_data(packet_size, 0xEF);
+  std::vector<std::uint8_t> test_data(packet_size, 0xEF);
 
   auto start_time = high_resolution_clock::now();
 
@@ -376,11 +378,12 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_LargePacketThroughput) {
   auto duration = duration_cast<milliseconds>(end_time - start_time).count();
 
   const uint32_t received = server_handler.unreliableCount;
-  const double delivery_rate   = (received * 100.0)  / packet_count;
-  const double packets_per_sec = (received * 1000.0) / static_cast<double>(duration);
-  const double bytes_per_sec   = (static_cast<double>(received) *
-                                  static_cast<double>(packet_size) * 1000.0) /
-                                  static_cast<double>(duration);
+  const double delivery_rate = (received * 100.0) / packet_count;
+  const double packets_per_sec =
+      (received * 1000.0) / static_cast<double>(duration);
+  const double bytes_per_sec = (static_cast<double>(received) *
+                                static_cast<double>(packet_size) * 1000.0) /
+                               static_cast<double>(duration);
 
   std::cout << "\n=== Unreliable Packet Throughput ===" << "\n";
   std::cout << "Packets sent: " << packet_count << "\n";
@@ -458,8 +461,8 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_ConnectionScalability) {
 
       for (size_t i = 0; i < client_sockets.size(); i++) {
         while (true) {
-          auto result = client_sockets.at(i)->Receive(buffer, sizeof(buffer), from,
-                                                   from_port);
+          auto result = client_sockets.at(i)->Receive(buffer, sizeof(buffer),
+                                                      from, from_port);
           if (!result.Succeeded()) break;
           if (result.bytes > 0) {
             client_conns.at(i)->ProcessPacket(
@@ -492,7 +495,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_ConnectionScalability) {
   auto start_time = high_resolution_clock::now();
 
   // Each client sends messages
-  std::vector<uint8_t> test_data(100, 0x42);
+  std::vector<std::uint8_t> test_data(100, 0x42);
   for (const auto& client_conn : client_conns) {
     for (int j = 0; j < messages_per_client; j++) {
       client_conn->SendReliable(0, test_data.data(), test_data.size());
@@ -535,7 +538,7 @@ TEST_F(ReliableConnectionPerformanceTest,
 
   for (int i = 0; i < iterations; i++) {
     BitStream bs;
-    bs.Write<uint8_t>(42);
+    bs.Write<std::uint8_t>(42);
     bs.Write<uint16_t>(1234);
     bs.Write<uint32_t>(123456);
     bs.Write<float>(3.14f);
@@ -555,7 +558,7 @@ TEST_F(ReliableConnectionPerformanceTest,
 
   // Read performance
   BitStream bs;
-  bs.Write<uint8_t>(42);
+  bs.Write<std::uint8_t>(42);
   bs.Write<uint16_t>(1234);
   bs.Write<uint32_t>(123456);
   bs.Write<float>(3.14f);
@@ -566,14 +569,14 @@ TEST_F(ReliableConnectionPerformanceTest,
 
   for (int i = 0; i < iterations; i++) {
     bs.ResetRead();
-    uint8_t v1 = 0;
+    std::uint8_t v1 = 0;
     uint16_t v2 = 0;
     uint32_t v3 = 0;
     float v4 = NAN;
     double v5 = NAN;
     bool v6 = false;
 
-    bs.Read<uint8_t>(v1);
+    bs.Read<std::uint8_t>(v1);
     bs.Read<uint16_t>(v2);
     bs.Read<uint32_t>(v3);
     bs.Read<float>(v4);

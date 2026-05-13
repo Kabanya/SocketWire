@@ -1,43 +1,18 @@
 #pragma once
 
-/*
-  Platform-agnostic socket initialization helper.
-
-  This header provides a unified way to initialize the socket subsystem
-  across different platforms (POSIX/Windows).
-
-  Usage:
-    // At application startup:
-    socketwire::initialize_sockets();
-
-    // At application shutdown (optional, automatic on destruction):
-    socketwire::shutdown_sockets();
-*/
+/// Platform-agnostic socket initialization helpers.
 
 namespace socketwire {
 
-// Forward declarations
 void RegisterWindowsSocketFactory();
 void RegisterPosixSocketFactory();
 
-/*
-  Initialize the socket subsystem.
-  - On Windows: Registers Windows socket factory and initializes WSA.
-  - On POSIX: Registers POSIX socket factory.
-
-  This function is safe to call multiple times (idempotent).
-  Returns true on success, false on failure.
-*/
+/// Initializes the socket subsystem.
+///
+/// Safe to call multiple times.
 bool InitializeSockets();
 
-/*
-  Shutdown the socket subsystem.
-  - On Windows: Cleanup is handled automatically by WSAInitializer destructor.
-  - On POSIX: No-op.
-
-  This function is optional as cleanup happens automatically,
-  but can be called explicitly for deterministic resource cleanup.
-*/
+/// Shuts down the socket subsystem where explicit cleanup is needed.
 void ShutdownSockets();
 
 }  // namespace socketwire

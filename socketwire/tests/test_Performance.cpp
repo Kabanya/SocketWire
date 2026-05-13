@@ -1,8 +1,4 @@
-/*
-Performance test suite for SocketWire library
-Migrated from legacy net_socket tests to use the new ISocket architecture
-with factory pattern and POSIX UDP socket implementation.
-*/
+// Performance-oriented tests for BitStream, sockets, and SocketPoller.
 
 #include <gtest/gtest.h>
 
@@ -24,7 +20,6 @@ class PerformanceTest : public ::testing::Test {
               << ::testing::UnitTest::GetInstance()->current_test_info()->name()
               << "________\n\n\n";
 
-    // Initialize platform-specific socket factory
     const bool result = InitializeSockets();
     ASSERT_TRUE(result) << "Socket initialization should succeed";
     factory = SocketFactoryRegistry::GetFactory();
@@ -100,7 +95,7 @@ TEST_F(PerformanceTest, BitStreamWriteReadBytes) {
   std::cout << "BitStream Byte Operations Performance:\n";
 
   const char* data = "Hello World! This is a test message.";
-  const size_t data_len = strlen(data);
+  const std::size_t data_len = strlen(data);
 
   // Write performance
   MeasureTime("Write " + std::to_string(iterations) + " byte arrays",
@@ -321,7 +316,7 @@ TEST_F(PerformanceTest, NetSocketSendReceive) {
   ASSERT_GT(receiver_port, 0);
 
   const char* message = "Performance test message";
-  const size_t message_len = strlen(message);
+  const std::size_t message_len = strlen(message);
 
   MeasureTime("Send 10K UDP packets", iterations,
               [&sender, message, message_len, &addr, receiver_port]() {

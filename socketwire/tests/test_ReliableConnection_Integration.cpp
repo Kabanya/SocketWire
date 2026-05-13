@@ -39,8 +39,8 @@ class EchoServerHandler : public IReliableConnectionHandler {
   ConnectionManager* manager = nullptr;
   std::atomic<int> messagesReceived{0};
 
-  void OnReliableReceived(uint8_t channel, const void* data,
-                          size_t size) override {
+  void OnReliableReceived(std::uint8_t channel, const void* data,
+                          std::size_t size) override {
     messagesReceived++;
 
     // Echo back to all clients
@@ -49,8 +49,8 @@ class EchoServerHandler : public IReliableConnectionHandler {
     }
   }
 
-  void OnUnreliableReceived(uint8_t channel, const void* data,
-                            size_t size) override {
+  void OnUnreliableReceived(std::uint8_t channel, const void* data,
+                            std::size_t size) override {
     messagesReceived++;
 
     // Echo back unreliable
@@ -67,36 +67,36 @@ class ClientHandler : public IReliableConnectionHandler {
   std::atomic<bool> disconnected{false};
   std::atomic<int> reliableReceived{0};
   std::atomic<int> unreliableReceived{0};
-  std::vector<std::vector<uint8_t>> receivedMessages;
+  std::vector<std::vector<std::uint8_t>> receivedMessages;
   std::mutex messagesMutex;
 
   void OnConnected() override { connected = true; }
 
   void OnDisconnected() override { disconnected = true; }
 
-  void OnReliableReceived(uint8_t channel, const void* data,
-                          size_t size) override {
+  void OnReliableReceived(std::uint8_t channel, const void* data,
+                          std::size_t size) override {
     (void)channel;
     reliableReceived++;
 
     const std::scoped_lock lock(messagesMutex);
-    const std::vector<uint8_t> msg(static_cast<const uint8_t*>(data),
-                             static_cast<const uint8_t*>(data) + size);
+    const std::vector<std::uint8_t> msg(static_cast<const std::uint8_t*>(data),
+                                   static_cast<const std::uint8_t*>(data) + size);
     receivedMessages.push_back(msg);
   }
 
-  void OnUnreliableReceived(uint8_t channel, const void* data,
-                            size_t size) override {
+  void OnUnreliableReceived(std::uint8_t channel, const void* data,
+                            std::size_t size) override {
     (void)channel;
     unreliableReceived++;
 
     const std::scoped_lock lock(messagesMutex);
-    const std::vector<uint8_t> msg(static_cast<const uint8_t*>(data),
-                             static_cast<const uint8_t*>(data) + size);
+    const std::vector<std::uint8_t> msg(static_cast<const std::uint8_t*>(data),
+                                   static_cast<const std::uint8_t*>(data) + size);
     receivedMessages.push_back(msg);
   }
 
-  std::vector<std::vector<uint8_t>> GetMessages() {
+  std::vector<std::vector<std::uint8_t>> GetMessages() {
     const std::scoped_lock lock(messagesMutex);
     return receivedMessages;
   }
@@ -534,7 +534,8 @@ TEST_F(IntegrationTest, MultipleClients) {
 
       for (size_t i = 0; i < client_sockets.size(); i++) {
         while (true) {
-          auto result = client_sockets.at(i)->Receive(buffer, sizeof(buffer), from, from_port);
+          auto result = client_sockets.at(i)->Receive(buffer, sizeof(buffer),
+                                                      from, from_port);
           if (!result.Succeeded()) break;
           if (result.bytes > 0) {
             client_conns.at(i)->ProcessPacket(

@@ -9,7 +9,6 @@
 
 namespace socketwire {
 
-// ---------------------------------- Helpers ----------------------------------
 static constexpr std::size_t kPacketHeaderSize = 6;
 
 static void WritePacketHeader(BitStream& bs, PacketType type,
@@ -28,7 +27,6 @@ static std::array<std::uint8_t, kPacketHeaderSize> MakePacketHeaderData(
   return header;
 }
 
-// Helper to read packet header
 static bool ReadPacketHeader(BitStream& bs, PacketType& type,
                              std::uint8_t& channel, std::uint32_t& sequence) {
   std::uint8_t type_val = 0;
@@ -43,104 +41,103 @@ static bool ReadPacketHeader(BitStream& bs, PacketType& type,
   return true;
 }
 
-// ---------------------------------- ReliableConnection
-// ----------------------------------
 ReliableConnection::ReliableConnection(ISocket* socket,
                                        const ReliableConnectionConfig& cfg)
-    : socket(socket),
-      config(cfg),
-      currentSendWindow((config.sendWindowSize > 0) ? config.sendWindowSize
-                                                    : 0) {
+    : socket_(socket),
+      config_(cfg),
+      current_send_window_((config_.sendWindowSize > 0) ? config_.sendWindowSize
+                                                        : 0) {
   const auto n = static_cast<std::size_t>(cfg.numChannels);
-  sendSequence.assign(n, 0);
-  receiveSequence.assign(n, 0);
-  seqWindowHigh.assign(n, 0);
-  seqWindowBits.resize(n);
-  pendingReceived.resize(n);
-  nextFragmentGroupId.assign(n, 0);
-  fragmentGroups.resize(n);
+  send_sequence_.assign(n, 0);
+  receive_sequence_.assign(n, 0);
+  seq_window_high_.assign(n, 0);
+  seq_window_bits_.resize(n);
+  pending_received_.resize(n);
+  next_fragment_group_id_.assign(n, 0);
+  fragment_groups_.resize(n);
 
-  // Initialise congestion control window
-  ssthresh = (config.sendWindowSize > 0)
-                 ? std::max(1u, config.sendWindowSize / 2)
-                 : 32;
+  // Initialize the congestion-control window.
+  ssthresh_ = (config_.sendWindowSize > 0)
+                  ? std::max(1u, config_.sendWindowSize / 2)
+                  : 32;
 
-  lastSendTime = std::chrono::steady_clock::now();
-  lastReceiveTime = std::chrono::steady_clock::now();
-  lastPingTime = std::chrono::steady_clock::now();
+  last_send_time_ = std::chrono::steady_clock::now();
+  last_receive_time_ = std::chrono::steady_clock::now();
+  last_ping_time_ = std::chrono::steady_clock::now();
 }
 
 bool ReliableConnection::Connect(const SocketAddress& addr,
                                  std::uint16_t port) {
-  remoteAddr = addr;
-  remotePort = port;
+  remote_addr_ = addr;
+  remote_port_ = port;
 
   if (SecureMode()) {
     if (!CanUseCrypto() ||
-        !crypto::ValidPublicKey(config.crypto.expected_server_public_key)) {
-      state = ConnectionState::kDisconnected;
+        !crypto::ValidPublicKey(config_.crypto.expected_server_public_key)) {
+      state_ = ConnectionState::kDisconnected;
       return false;
     }
 
-    auto result = cryptoHandshake.StartClient(
-        config.crypto.localKeyPair, config.crypto.expected_server_public_key);
+    auto result = crypto_handshake_.StartClient(
+        config_.crypto.localKeyPair, config_.crypto.expected_server_public_key);
     if (!result.ok) {
-      state = ConnectionState::kDisconnected;
+      state_ = ConnectionState::kDisconnected;
       return false;
     }
 
     BitStream client_hello;
-    result = cryptoHandshake.WriteClientHello(client_hello);
+    result = crypto_handshake_.WriteClientHello(client_hello);
     if (!result.ok) {
-      state = ConnectionState::kDisconnected;
+      state_ = ConnectionState::kDisconnected;
       return false;
     }
 
-    state = ConnectionState::kConnecting;
+    state_ = ConnectionState::kConnecting;
     if (!SendPacket(PacketType::kConnect, 0, client_hello.GetData(),
                     client_hello.GetSizeBytes())) {
-      state = ConnectionState::kDisconnected;
+      state_ = ConnectionState::kDisconnected;
       return false;
     }
     return true;
   }
 
-  state = ConnectionState::kConnecting;
+  state_ = ConnectionState::kConnecting;
 
   // Send connection request
   return SendPacket(PacketType::kConnect, 0, nullptr, 0);
 }
 
 void ReliableConnection::Disconnect() {
-  if (state == ConnectionState::kConnected ||
-      state == ConnectionState::kConnecting) {
+  if (state_ == ConnectionState::kConnected ||
+      state_ == ConnectionState::kConnecting) {
     (void)SendPacket(PacketType::kDisconnect, 0, nullptr, 0);
-    state = ConnectionState::kDisconnecting;
+    state_ = ConnectionState::kDisconnecting;
 
-    if (eventHandler != nullptr) eventHandler->OnDisconnected();
+    if (event_handler_ != nullptr) event_handler_->OnDisconnected();
   }
 
-  state = ConnectionState::kDisconnected;
-  pendingPackets.clear();
-  for (auto& h : seqWindowHigh) h = 0;
-  for (auto& b : seqWindowBits) b.reset();
-  for (auto& pr : pendingReceived) pr.clear();
-  for (auto& fg : fragmentGroups) fg.clear();
+  state_ = ConnectionState::kDisconnected;
+  pending_packets_.clear();
+  for (auto& h : seq_window_high_) h = 0;
+  for (auto& b : seq_window_bits_) b.reset();
+  for (auto& pr : pending_received_) pr.clear();
+  for (auto& fg : fragment_groups_) fg.clear();
 }
 
 void ReliableConnection::SetRemoteAddress(const SocketAddress& addr,
                                           std::uint16_t port) {
-  remoteAddr = addr;
-  remotePort = port;
+  remote_addr_ = addr;
+  remote_port_ = port;
 }
 
 bool ReliableConnection::SendReliable(const std::uint8_t channel,
                                       const void* data, std::size_t size) {
-  if (state != ConnectionState::kConnected) return false;
+  if (state_ != ConnectionState::kConnected) return false;
 
   // Congestion window check (only when send-window limiting is enabled)
-  if (currentSendWindow > 0 && pendingPackets.size() >= currentSendWindow) {
-    return false;  // window full — caller must retry later
+  if (current_send_window_ > 0 &&
+      pending_packets_.size() >= current_send_window_) {
+    return false;
   }
 
   const std::size_t max_payload = MaxPayloadForPacket();
@@ -149,7 +146,7 @@ bool ReliableConnection::SendReliable(const std::uint8_t channel,
 
   if (size > max_payload) {
     // Too large for one packet, split into Fragment packets.
-    if (channel >= nextFragmentGroupId.size()) return false;
+    if (channel >= next_fragment_group_id_.size()) return false;
     return SendFragmented(channel, data, size);
   }
 
@@ -168,14 +165,14 @@ bool ReliableConnection::SendReliable(const std::uint8_t channel,
   pending.sendTime = std::chrono::steady_clock::now();
   pending.channel = channel;
   pending.type = PacketType::kReliable;
-  pendingPackets.push_back(pending);
+  pending_packets_.push_back(pending);
 
   return true;
 }
 
 bool ReliableConnection::SendUnreliable(const std::uint8_t channel,
                                         const void* data, std::size_t size) {
-  if (state != ConnectionState::kConnected) return false;
+  if (state_ != ConnectionState::kConnected) return false;
 
   const std::size_t max_payload = MaxPayloadForPacket();
   if (max_payload == 0 || size > max_payload) return false;
@@ -188,7 +185,7 @@ bool ReliableConnection::SendUnreliable(const std::uint8_t channel,
 
 bool ReliableConnection::SendUnsequenced(const std::uint8_t channel,
                                          const void* data, std::size_t size) {
-  if (state != ConnectionState::kConnected) return false;
+  if (state_ != ConnectionState::kConnected) return false;
 
   const std::size_t max_payload = MaxPayloadForPacket();
   if (max_payload == 0 || size > max_payload) return false;
@@ -208,7 +205,7 @@ bool ReliableConnection::SendUnsequenced(const std::uint8_t channel,
   pending.sendTime = std::chrono::steady_clock::now();
   pending.channel = channel;
   pending.type = PacketType::kUnsequenced;
-  pendingPackets.push_back(pending);
+  pending_packets_.push_back(pending);
 
   return true;
 }
@@ -235,14 +232,14 @@ void ReliableConnection::Update() {
   RetryPendingPackets();
 
   // Send periodic ping
-  if (state == ConnectionState::kConnected) {
+  if (state_ == ConnectionState::kConnected) {
     auto time_since_ping =
         std::chrono::duration_cast<std::chrono::milliseconds>(now -
-                                                              lastPingTime)
-            .count();
-    if (std::cmp_greater(time_since_ping, config.pingIntervalMs)) {
+                                                              last_ping_time_)
+                                                             .count();
+    if (std::cmp_greater(time_since_ping, config_.pingIntervalMs)) {
       SendPing();
-      lastPingTime = now;
+      last_ping_time_ = now;
     }
   }
 
@@ -274,98 +271,99 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
 
   if (SecureMode() && type != PacketType::kConnect &&
       type != PacketType::kAccept) {
-    if (!cryptoReady) return;
+    if (!crypto_ready_) return;
 
     const auto decrypt_result =
-        cryptoContext.Decrypt(payload_data, payload_size, header_data.data(),
-                              header_data.size(), decrypted_payload);
+        crypto_context_.Decrypt(payload_data, payload_size, header_data.data(),
+                                header_data.size(), decrypted_payload);
     if (!decrypt_result.ok) return;
 
     payload_data = decrypted_payload.GetData();
     payload_size = decrypted_payload.GetSizeBytes();
   }
 
-  lastReceiveTime = std::chrono::steady_clock::now();
-  statsReceivedPackets++;
+  last_receive_time_ = std::chrono::steady_clock::now();
+  stats_received_packets_++;
 
   // Handle different packet types
   switch (type) {
     case PacketType::kConnect: {
-      if (state == ConnectionState::kDisconnected) {
-        remoteAddr = from;
-        remotePort = from_port;
+      if (state_ == ConnectionState::kDisconnected) {
+        remote_addr_ = from;
+        remote_port_ = from_port;
 
         if (SecureMode()) {
           if (!CanUseCrypto()) return;
 
-          auto result = cryptoHandshake.StartServer(config.crypto.localKeyPair);
+          auto result =
+              crypto_handshake_.StartServer(config_.crypto.localKeyPair);
           if (!result.ok) return;
 
           result =
-              cryptoHandshake.ProcessClientHello(payload_data, payload_size);
+              crypto_handshake_.ProcessClientHello(payload_data, payload_size);
           if (!result.ok) {
-            state = ConnectionState::kDisconnected;
+            state_ = ConnectionState::kDisconnected;
             return;
           }
 
-          cryptoContext = cryptoHandshake.CreateServerCryptoContext();
-          cryptoReady = cryptoContext.IsReady();
-          if (!cryptoReady) {
-            state = ConnectionState::kDisconnected;
+          crypto_context_ = crypto_handshake_.CreateServerCryptoContext();
+          crypto_ready_ = crypto_context_.IsReady();
+          if (!crypto_ready_) {
+            state_ = ConnectionState::kDisconnected;
             return;
           }
 
           BitStream server_hello;
-          result = cryptoHandshake.WriteServerHello(server_hello);
+          result = crypto_handshake_.WriteServerHello(server_hello);
           if (!result.ok) {
-            cryptoReady = false;
-            state = ConnectionState::kDisconnected;
+            crypto_ready_ = false;
+            state_ = ConnectionState::kDisconnected;
             return;
           }
 
-          state = ConnectionState::kConnected;
+          state_ = ConnectionState::kConnected;
           (void)SendPacket(PacketType::kAccept, 0, server_hello.GetData(),
                            server_hello.GetSizeBytes());
         } else {
-          state = ConnectionState::kConnected;
+          state_ = ConnectionState::kConnected;
           (void)SendPacket(PacketType::kAccept, 0, nullptr, 0);
         }
 
-        if (eventHandler != nullptr) eventHandler->OnConnected();
+        if (event_handler_ != nullptr) event_handler_->OnConnected();
       }
       break;
     }
 
     case PacketType::kAccept: {
-      if (state == ConnectionState::kConnecting) {
+      if (state_ == ConnectionState::kConnecting) {
         if (SecureMode()) {
           auto result =
-              cryptoHandshake.ProcessServerHello(payload_data, payload_size);
+              crypto_handshake_.ProcessServerHello(payload_data, payload_size);
           if (!result.ok) {
-            cryptoReady = false;
-            state = ConnectionState::kDisconnected;
+            crypto_ready_ = false;
+            state_ = ConnectionState::kDisconnected;
             return;
           }
 
-          cryptoContext = cryptoHandshake.CreateClientCryptoContext();
-          cryptoReady = cryptoContext.IsReady();
-          if (!cryptoReady) {
-            state = ConnectionState::kDisconnected;
+          crypto_context_ = crypto_handshake_.CreateClientCryptoContext();
+          crypto_ready_ = crypto_context_.IsReady();
+          if (!crypto_ready_) {
+            state_ = ConnectionState::kDisconnected;
             return;
           }
         }
 
-        state = ConnectionState::kConnected;
+        state_ = ConnectionState::kConnected;
 
-        if (eventHandler != nullptr) eventHandler->OnConnected();
+        if (event_handler_ != nullptr) event_handler_->OnConnected();
       }
       break;
     }
 
     case PacketType::kDisconnect: {
-      if (eventHandler != nullptr) eventHandler->OnDisconnected();
+      if (event_handler_ != nullptr) event_handler_->OnDisconnected();
 
-      state = ConnectionState::kDisconnected;
+      state_ = ConnectionState::kDisconnected;
       break;
     }
 
@@ -378,13 +376,13 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
     case PacketType::kPong: {
       // Calculate RTT
       auto now = std::chrono::steady_clock::now();
-      for (auto& pending : pendingPackets) {
+      for (auto& pending : pending_packets_) {
         if (pending.sequence == sequence) {
           auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                              now - pending.sendTime)
                              .count();
-          rtt = rtt * 0.9f + static_cast<float>(elapsed) *
-                                 0.1f;  // Exponential moving average
+          rtt_ = rtt_ * 0.9f + static_cast<float>(elapsed) *
+                                   0.1f;  // Exponential moving average
           break;
         }
       }
@@ -393,19 +391,19 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
 
     case PacketType::kAck: {
       // Remove acknowledged packet from pending list
-      auto it = std::ranges::find_if(pendingPackets,
+      auto it = std::ranges::find_if(pending_packets_,
                                      [sequence](const PendingPacket& p) {
                                        return p.sequence == sequence;
                                      });
 
-      if (it != pendingPackets.end()) {
+      if (it != pending_packets_.end()) {
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                            now - it->sendTime)
                            .count();
-        rtt = rtt * 0.9f + static_cast<float>(elapsed) * 0.1f;
+        rtt_ = rtt_ * 0.9f + static_cast<float>(elapsed) * 0.1f;
 
-        pendingPackets.erase(it);
+        pending_packets_.erase(it);
       }
       break;
     }
@@ -429,8 +427,8 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
       received.sequence = sequence;
       received.data = std::move(payload);
       received.channel = channel;
-      if (channel < pendingReceived.size()) {
-        pendingReceived.at(channel)[sequence] = std::move(received);
+      if (channel < pending_received_.size()) {
+        pending_received_.at(channel)[sequence] = std::move(received);
       }
 
       break;
@@ -450,9 +448,9 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
         std::memcpy(payload.data(), payload_data, payload_size);
       }
 
-      if (eventHandler != nullptr) {
-        eventHandler->OnReliableReceived(channel, payload.data(),
-                                         payload.size());
+      if (event_handler_ != nullptr) {
+        event_handler_->OnReliableReceived(channel, payload.data(),
+                                           payload.size());
       }
 
       break;
@@ -465,9 +463,9 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
         std::memcpy(payload.data(), payload_data, payload_size);
       }
 
-      if (eventHandler != nullptr) {
-        eventHandler->OnUnreliableReceived(channel, payload.data(),
-                                           payload.size());
+      if (event_handler_ != nullptr) {
+        event_handler_->OnUnreliableReceived(channel, payload.data(),
+                                             payload.size());
       }
 
       break;
@@ -497,12 +495,12 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
         frag_bs.ReadBytes(payload.data(), fragment_payload_size);
       }
 
-      if (channel >= fragmentGroups.size() || frag_total == 0 ||
+      if (channel >= fragment_groups_.size() || frag_total == 0 ||
           frag_index >= frag_total) {
         break;
       }
 
-      auto& groups = fragmentGroups.at(channel);
+      auto& groups = fragment_groups_.at(channel);
       auto it = groups.find(group_id);
       if (it == groups.end()) {
         FragmentGroup fg;
@@ -514,13 +512,14 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
       }
 
       FragmentGroup& fg = it->second;
-      if (frag_index < fg.pieces.size() && !fg.pieces.at(frag_index).has_value()) {
+      if (frag_index < fg.pieces.size() &&
+          !fg.pieces.at(frag_index).has_value()) {
         fg.pieces.at(frag_index) = std::move(payload);
         ++fg.receivedCount;
       }
 
       if (fg.receivedCount == fg.total) {
-        // All fragments received — reassemble and deliver
+        // Reassemble the completed fragment group.
         std::vector<std::uint8_t> full;
         full.reserve(fg.total * fragment_payload_size + fragment_payload_size);
         for (auto& piece : fg.pieces) {
@@ -529,8 +528,8 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
           }
         }
 
-        if (eventHandler != nullptr) {
-          eventHandler->OnReliableReceived(channel, full.data(), full.size());
+        if (event_handler_ != nullptr) {
+          event_handler_->OnReliableReceived(channel, full.data(), full.size());
         }
 
         groups.erase(it);
@@ -539,7 +538,6 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
     }
 
     default: {
-      // Unknown packet type — ignore
       break;
     }
   }
@@ -555,23 +553,23 @@ bool ReliableConnection::SendPacket(PacketType type, std::uint8_t channel,
     const auto header_data = MakePacketHeaderData(type, channel, sequence);
     BitStream encrypted;
     const auto* payload = static_cast<const std::uint8_t*>(data);
-    const auto result = cryptoContext.Encrypt(payload, size, header_data.data(),
-                                              header_data.size(), encrypted);
+    const auto result = crypto_context_.Encrypt(
+        payload, size, header_data.data(), header_data.size(), encrypted);
     if (!result.ok) return false;
     bs.WriteBytes(encrypted.GetData(), encrypted.GetSizeBytes());
   } else if (data != nullptr && size > 0) {
     bs.WriteBytes(data, size);
   }
 
-  socket->SendTo(bs.GetData(), bs.GetSizeBytes(), remoteAddr, remotePort);
-  lastSendTime = std::chrono::steady_clock::now();
-  statsSentPackets++;
+  socket_->SendTo(bs.GetData(), bs.GetSizeBytes(), remote_addr_, remote_port_);
+  last_send_time_ = std::chrono::steady_clock::now();
+  stats_sent_packets_++;
   return true;
 }
 
 bool ReliableConnection::SendFragmented(std::uint8_t channel, const void* data,
                                         std::size_t size) {
-  if (channel >= nextFragmentGroupId.size()) return false;
+  if (channel >= next_fragment_group_id_.size()) return false;
 
   const std::size_t max_frag_payload =
       MaxPayloadForPacket(kFragmentHeaderExtra);
@@ -581,7 +579,7 @@ bool ReliableConnection::SendFragmented(std::uint8_t channel, const void* data,
   if (frag_total_size > std::numeric_limits<std::uint16_t>::max()) return false;
 
   const auto frag_total = static_cast<std::uint16_t>(frag_total_size);
-  const std::uint16_t group_id = nextFragmentGroupId.at(channel)++;
+  const std::uint16_t group_id = next_fragment_group_id_.at(channel)++;
   const auto* src = static_cast<const std::uint8_t*>(data);
 
   for (std::uint16_t i = 0; i < frag_total; ++i) {
@@ -608,7 +606,7 @@ bool ReliableConnection::SendFragmented(std::uint8_t channel, const void* data,
     pending.sendTime = std::chrono::steady_clock::now();
     pending.channel = channel;
     pending.type = PacketType::kFragment;
-    pendingPackets.push_back(std::move(pending));
+    pending_packets_.push_back(std::move(pending));
   }
 
   return true;
@@ -616,13 +614,13 @@ bool ReliableConnection::SendFragmented(std::uint8_t channel, const void* data,
 
 void ReliableConnection::CleanupFragments() {
   auto now = std::chrono::steady_clock::now();
-  for (auto& ch_groups : fragmentGroups) {
+  for (auto& ch_groups : fragment_groups_) {
     std::erase_if(ch_groups, [&](const auto& kv) {
       const auto elapsed =
           std::chrono::duration_cast<std::chrono::milliseconds>(
               now - kv.second.firstReceived)
               .count();
-      return elapsed > static_cast<std::int64_t>(config.fragmentTimeoutMs);
+      return elapsed > static_cast<std::int64_t>(config_.fragmentTimeoutMs);
     });
   }
 }
@@ -634,11 +632,11 @@ bool ReliableConnection::CanUseCrypto() const {
   return init_result.ok &&
          crypto::CipherSuiteSupported(
              crypto::CipherSuite::kXChaCha20Poly1305) &&
-         config.crypto.localKeyPair.Valid();
+         config_.crypto.localKeyPair.Valid();
 }
 
 bool ReliableConnection::ShouldEncryptPacket(PacketType type) const {
-  return SecureMode() && cryptoReady && type != PacketType::kConnect &&
+  return SecureMode() && crypto_ready_ && type != PacketType::kConnect &&
          type != PacketType::kAccept;
 }
 
@@ -650,8 +648,8 @@ std::size_t ReliableConnection::MaxPayloadForPacket(
     std::size_t header_extra) const {
   const std::size_t overhead =
       kPacketHeaderSize + header_extra + CryptoEnvelopeOverhead();
-  if (config.maxPacketSize < overhead) return 0;
-  return config.maxPacketSize - overhead;
+  if (config_.maxPacketSize < overhead) return 0;
+  return config_.maxPacketSize - overhead;
 }
 
 void ReliableConnection::SendAck(std::uint32_t sequence) {
@@ -667,26 +665,26 @@ void ReliableConnection::SendPing() {
   pending.sequence = seq;
   pending.sendTime = std::chrono::steady_clock::now();
   pending.type = PacketType::kPing;
-  pendingPackets.push_back(pending);
+  pending_packets_.push_back(pending);
 }
 
 void ReliableConnection::ProcessPendingReliable() {
   // Process packets in order for each channel independently
   for (std::uint8_t ch = 0;
-       ch < static_cast<std::uint8_t>(receiveSequence.size()); ++ch) {
+       ch < static_cast<std::uint8_t>(receive_sequence_.size()); ++ch) {
     while (true) {
-      auto it = pendingReceived.at(ch).find(receiveSequence.at(ch));
-      if (it == pendingReceived.at(ch).end()) {
+      auto it = pending_received_.at(ch).find(receive_sequence_.at(ch));
+      if (it == pending_received_.at(ch).end()) {
         break;  // Next expected packet not yet received
       }
 
-      if (eventHandler != nullptr) {
-        eventHandler->OnReliableReceived(
+      if (event_handler_ != nullptr) {
+        event_handler_->OnReliableReceived(
             it->second.channel, it->second.data.data(), it->second.data.size());
       }
 
-      pendingReceived.at(ch).erase(it);
-      receiveSequence.at(ch)++;
+      pending_received_.at(ch).erase(it);
+      receive_sequence_.at(ch)++;
     }
   }
 }
@@ -694,15 +692,15 @@ void ReliableConnection::ProcessPendingReliable() {
 void ReliableConnection::RetryPendingPackets() {
   auto now = std::chrono::steady_clock::now();
 
-  for (auto& pending : pendingPackets) {
+  for (auto& pending : pending_packets_) {
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                        now - pending.sendTime)
                        .count();
 
-    if (std::cmp_greater(elapsed, config.retryTimeoutMs)) {
-      if (pending.retries >= config.maxRetries) {
+    if (std::cmp_greater(elapsed, config_.retryTimeoutMs)) {
+      if (pending.retries >= config_.maxRetries) {
         // Packet lost
-        statsLostPackets++;
+        stats_lost_packets_++;
         continue;
       }
 
@@ -717,24 +715,24 @@ void ReliableConnection::RetryPendingPackets() {
   }
 
   // Remove packets that exceeded retry limit
-  pendingPackets.erase(
-      std::remove_if(pendingPackets.begin(), pendingPackets.end(),
+  pending_packets_.erase(
+      std::remove_if(pending_packets_.begin(), pending_packets_.end(),
                      [this](const PendingPacket& p) {
-                       return p.retries >= config.maxRetries;
+                       return p.retries >= config_.maxRetries;
                      }),
-      pendingPackets.end());
+      pending_packets_.end());
 }
 
 void ReliableConnection::CheckTimeout() {
-  if (state != ConnectionState::kConnected) return;
+  if (state_ != ConnectionState::kConnected) return;
 
   auto now = std::chrono::steady_clock::now();
   auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                     now - lastReceiveTime)
+                     now - last_receive_time_)
                      .count();
 
-  if (std::cmp_greater(elapsed, config.disconnectTimeoutMs)) {
-    if (eventHandler != nullptr) eventHandler->OnTimeout();
+  if (std::cmp_greater(elapsed, config_.disconnectTimeoutMs)) {
+    if (event_handler_ != nullptr) event_handler_->OnTimeout();
 
     Disconnect();
   }
@@ -742,36 +740,37 @@ void ReliableConnection::CheckTimeout() {
 
 bool ReliableConnection::IsDuplicateSequence(std::uint8_t channel,
                                              std::uint32_t seq) const {
-  if (channel >= seqWindowHigh.size()) return false;
-  // Sequence before the window base (too old) — treat as duplicate
-  const std::uint32_t window_base = seqWindowHigh.at(channel) - kSeqWindowSize;
+  if (channel >= seq_window_high_.size()) return false;
+  // Sequence before the window base is too old.
+  const std::uint32_t window_base =
+      seq_window_high_.at(channel) - kSeqWindowSize;
   if (IsSequenceNewer(window_base, seq)) return true;
-  // Sequence newer than the highest seen — definitely not a duplicate
-  if (IsSequenceNewer(seq, seqWindowHigh.at(channel))) return false;
-  // Within the window — check the bit
-  return seqWindowBits.at(channel).test(seq % kSeqWindowSize);
+  // Sequence newer than the highest seen is definitely not a duplicate.
+  if (IsSequenceNewer(seq, seq_window_high_.at(channel))) return false;
+  // Within the window, check the bitset.
+  return seq_window_bits_.at(channel).test(seq % kSeqWindowSize);
 }
 
 void ReliableConnection::MarkSequenceReceived(std::uint8_t channel,
                                               std::uint32_t seq) {
-  if (channel >= seqWindowHigh.size()) return;
-  if (IsSequenceNewer(seq, seqWindowHigh.at(channel))) {
+  if (channel >= seq_window_high_.size()) return;
+  if (IsSequenceNewer(seq, seq_window_high_.at(channel))) {
     // Advance the window, clearing the newly exposed slots
-    const std::uint32_t advance = seq + 1 - seqWindowHigh.at(channel);
+    const std::uint32_t advance = seq + 1 - seq_window_high_.at(channel);
     if (advance >= kSeqWindowSize) {
-      seqWindowBits.at(channel).reset();
+      seq_window_bits_.at(channel).reset();
     } else {
       for (std::uint32_t i = 0; i < advance; ++i) {
-        seqWindowBits.at(channel).set((seqWindowHigh.at(channel) + i) % kSeqWindowSize, false);
+        seq_window_bits_.at(channel).set(
+            (seq_window_high_.at(channel) + i) % kSeqWindowSize, false);
       }
     }
-    seqWindowHigh.at(channel) = seq + 1;
+    seq_window_high_.at(channel) = seq + 1;
   }
-  seqWindowBits.at(channel).set(seq % kSeqWindowSize);
+  seq_window_bits_.at(channel).set(seq % kSeqWindowSize);
 }
 
-/*static*/ bool ReliableConnection::IsSequenceNewer(std::uint32_t s1,
-                                                    std::uint32_t s2) {
+bool ReliableConnection::IsSequenceNewer(std::uint32_t s1, std::uint32_t s2) {
   return ((s1 > s2) && (s1 - s2 <= 0x7FFFFFFF)) ||
          ((s1 < s2) && (s2 - s1 > 0x7FFFFFFF));
 }
@@ -779,38 +778,35 @@ void ReliableConnection::MarkSequenceReceived(std::uint8_t channel,
 ReliableConnection::~ReliableConnection() {
   // Don't call disconnect() which may trigger callbacks during destruction
   // Just clean up resources directly
-  state = ConnectionState::kDisconnected;
-  pendingPackets.clear();
-  for (auto& h : seqWindowHigh) h = 0;
-  for (auto& b : seqWindowBits) b.reset();
-  for (auto& pr : pendingReceived) pr.clear();
-  for (auto& fg : fragmentGroups) fg.clear();
+  state_ = ConnectionState::kDisconnected;
+  pending_packets_.clear();
+  for (auto& h : seq_window_high_) h = 0;
+  for (auto& b : seq_window_bits_) b.reset();
+  for (auto& pr : pending_received_) pr.clear();
+  for (auto& fg : fragment_groups_) fg.clear();
 }
-
-// ---------------------------------- ConnectionManager
-// ----------------------------------
 
 ConnectionManager::ConnectionManager(ISocket* socket,
                                      const ReliableConnectionConfig& cfg)
-    : socket(socket), config(cfg) {}
+    : socket_(socket), config_(cfg) {}
 
 ConnectionManager::~ConnectionManager() {
-  clients.clear();
-  clientMap.clear();
+  clients_.clear();
+  client_map_.clear();
 }
 
 void ConnectionManager::Update() {
-  for (auto& client : clients) {
+  for (auto& client : clients_) {
     if (client->connection != nullptr) client->connection->Update();
   }
 
-  // Remove disconnected clients
-  std::erase_if(clients, [this](const std::unique_ptr<RemoteClient>& client) {
+  // Remove disconnected clients.
+  std::erase_if(clients_, [this](const std::unique_ptr<RemoteClient>& client) {
     if (client->connection->GetState() == ConnectionState::kDisconnected) {
       if (onClientDisconnected != nullptr) onClientDisconnected(client.get());
 
       auto key = MakeAddressKey(client->address, client->port);
-      clientMap.erase(key);
+      client_map_.erase(key);
 
       return true;
     }
@@ -823,7 +819,7 @@ void ConnectionManager::ProcessPacket(const void* data, std::size_t size,
                                       std::uint16_t from_port) {
   // Check whether the sender is already a known client
   const bool is_known =
-      (clientMap.find(MakeAddressKey(from, from_port)) != clientMap.end());
+      (client_map_.find(MakeAddressKey(from, from_port)) != client_map_.end());
 
   if (!is_known) {
     // Peek at the packet type (byte 0). Only accept Connect packets from new
@@ -833,7 +829,7 @@ void ConnectionManager::ProcessPacket(const void* data, std::size_t size,
     if (type_val != static_cast<std::uint8_t>(PacketType::kConnect)) {
       return;  // Ignore non-Connect packets from unknown senders
     }
-    if (!HandshakeAllowed()) return;  // Rate limit exceeded — silently drop
+    if (!HandshakeAllowed()) return;
   }
 
   RemoteClient* client = FindOrCreateClient(from, from_port);
@@ -847,28 +843,28 @@ void ConnectionManager::ProcessPacket(const void* data, std::size_t size,
 }
 
 bool ConnectionManager::HandshakeAllowed() {
-  if (config.maxHandshakesPerSecond == 0) return true;  // unlimited
+  if (config_.maxHandshakesPerSecond == 0) return true;  // unlimited
 
   auto now = std::chrono::steady_clock::now();
   auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                     now - connectWindowStart)
+                     now - connect_window_start_)
                      .count();
 
   if (elapsed >= 1000) {
     // Start a fresh 1-second window
-    connectWindowStart = now;
-    connectWindowCount = 0;
+    connect_window_start_ = now;
+    connect_window_count_ = 0;
   }
 
-  if (connectWindowCount >= config.maxHandshakesPerSecond) return false;
+  if (connect_window_count_ >= config_.maxHandshakesPerSecond) return false;
 
-  ++connectWindowCount;
+  ++connect_window_count_;
   return true;
 }
 
 void ConnectionManager::BroadcastReliable(std::uint8_t channel,
                                           const void* data, std::size_t size) {
-  for (auto& client : clients) {
+  for (auto& client : clients_) {
     if (client->connection != nullptr && client->connection->IsConnected()) {
       client->connection->SendReliable(channel, data, size);
     }
@@ -878,7 +874,7 @@ void ConnectionManager::BroadcastReliable(std::uint8_t channel,
 void ConnectionManager::BroadcastUnreliable(std::uint8_t channel,
                                             const void* data,
                                             std::size_t size) {
-  for (auto& client : clients) {
+  for (auto& client : clients_) {
     if (client->connection != nullptr && client->connection->IsConnected()) {
       client->connection->SendUnreliable(channel, data, size);
     }
@@ -888,49 +884,49 @@ void ConnectionManager::BroadcastUnreliable(std::uint8_t channel,
 std::vector<ConnectionManager::RemoteClient*>
 ConnectionManager::GetConnections() {
   std::vector<RemoteClient*> result;
-  result.reserve(clients.size());
-  for (auto& client : clients) result.push_back(client.get());
+  result.reserve(clients_.size());
+  for (auto& client : clients_) result.push_back(client.get());
   return result;
 }
 
 ConnectionManager::RemoteClient* ConnectionManager::GetConnection(
     const SocketAddress& addr, std::uint16_t port) {
   auto key = MakeAddressKey(addr, port);
-  auto it = clientMap.find(key);
-  return (it != clientMap.end()) ? it->second : nullptr;
+  auto it = client_map_.find(key);
+  return (it != client_map_.end()) ? it->second : nullptr;
 }
 
 ConnectionManager::RemoteClient* ConnectionManager::FindOrCreateClient(
     const SocketAddress& addr, std::uint16_t port) {
   auto key = MakeAddressKey(addr, port);
 
-  auto it = clientMap.find(key);
-  if (it != clientMap.end()) return it->second;
+  auto it = client_map_.find(key);
+  if (it != client_map_.end()) return it->second;
 
   // Create new client
   auto client = std::make_unique<RemoteClient>();
   client->address = addr;
   client->port = port;
-  client->connection = std::make_unique<ReliableConnection>(socket, config);
+  client->connection = std::make_unique<ReliableConnection>(socket_, config_);
   client->connection->SetRemoteAddress(addr, port);
-  client->connection->SetHandler(eventHandler);
+  client->connection->SetHandler(event_handler_);
 
   RemoteClient* raw = client.get();
-  clients.push_back(std::move(client));
-  clientMap[key] = raw;
+  clients_.push_back(std::move(client));
+  client_map_[key] = raw;
 
   return raw;
 }
 
 void ConnectionManager::RemoveClient(RemoteClient* client) {
   auto key = MakeAddressKey(client->address, client->port);
-  clientMap.erase(key);
+  client_map_.erase(key);
 
   auto it = std::ranges::find_if(
-      clients, [client](const std::unique_ptr<RemoteClient>& c) {
+      clients_, [client](const std::unique_ptr<RemoteClient>& c) {
         return c.get() == client;
       });
-  if (it != clients.end()) clients.erase(it);
+  if (it != clients_.end()) clients_.erase(it);
 }
 
 std::string ConnectionManager::MakeAddressKey(const SocketAddress& addr,
@@ -939,14 +935,14 @@ std::string ConnectionManager::MakeAddressKey(const SocketAddress& addr,
 }
 
 void ReliableConnection::Tick() {
-  std::vector<std::uint8_t> buf(config.maxPacketSize);
+  std::vector<std::uint8_t> buf(config_.maxPacketSize);
   SocketAddress from_addr{};
   std::uint16_t from_port = 0;
 
   while (true) {
     const SocketResult res =
-        socket->Receive(buf.data(), buf.size(), from_addr, from_port);
-    if (res.Failed()) break;  // WouldBlock or error — no more packets
+        socket_->Receive(buf.data(), buf.size(), from_addr, from_port);
+    if (res.Failed()) break;
     if (res.bytes > 0) {
       ProcessPacket(buf.data(), static_cast<std::size_t>(res.bytes), from_addr,
                     from_port);
@@ -957,14 +953,14 @@ void ReliableConnection::Tick() {
 }
 
 void ConnectionManager::Tick() {
-  std::vector<std::uint8_t> buf(config.maxPacketSize);
+  std::vector<std::uint8_t> buf(config_.maxPacketSize);
   SocketAddress from_addr{};
   std::uint16_t from_port = 0;
 
   while (true) {
     const SocketResult res =
-        socket->Receive(buf.data(), buf.size(), from_addr, from_port);
-    if (res.Failed()) break;  // WouldBlock or error — no more packets
+        socket_->Receive(buf.data(), buf.size(), from_addr, from_port);
+    if (res.Failed()) break;
     if (res.bytes > 0) {
       ProcessPacket(buf.data(), static_cast<std::size_t>(res.bytes), from_addr,
                     from_port);
