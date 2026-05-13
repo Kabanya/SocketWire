@@ -13,227 +13,213 @@
   Note: These tests use Google Test and Google Mock frameworks.
 */
 
-#include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include "socket_poller.hpp"
-#include "i_socket.hpp"
-#include "socket_init.hpp"
+#include <gtest/gtest.h>
 
 #include <cstring>
 #include <memory>
 
-using namespace socketwire; //NOLINT
+#include "i_socket.hpp"
+#include "socket_init.hpp"
+#include "socket_poller.hpp"
+
+using namespace socketwire;  // NOLINT
 
 // Mock event handler for testing
-class MockSocketEventHandler : public ISocketEventHandler
-{
-public:
-  MOCK_METHOD(void, onDataReceived,
-              (const SocketAddress& from, std::uint16_t fromPort,
-               const void* data, std::size_t bytesRead),
+class MockSocketEventHandler : public ISocketEventHandler {
+ public:
+  MOCK_METHOD(void, OnDataReceived,
+              (const SocketAddress& from, std::uint16_t from_port,
+               const void* data, std::size_t bytes_read),
               (override));
-  MOCK_METHOD(void, onSocketError, (SocketError error), (override));
-  MOCK_METHOD(void, onSocketClosed, (), (override));
+  MOCK_METHOD(void, OnSocketError, (SocketError error), (override));
+  MOCK_METHOD(void, OnSocketClosed, (), (override));
 };
 
-class SocketPollerTest : public ::testing::Test
-{
-protected:
-  void SetUp() override
-  {
-    bool result = initialize_sockets();
+class SocketPollerTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    const bool result = InitializeSockets();
     ASSERT_TRUE(result) << "Socket initialization should succeed";
-    factory = SocketFactoryRegistry::getFactory();
+    factory = SocketFactoryRegistry::GetFactory();
     ASSERT_NE(factory, nullptr);
   }
 
-  void TearDown() override
-  {
-    shutdown_sockets();
-  }
+  void TearDown() override { ShutdownSockets(); }
 
   ISocketFactory* factory = nullptr;
 
-  std::unique_ptr<ISocket> createUDPSocket()
-  {
-    SocketConfig config;
-    return factory->createSocket(SocketType::UDP, config);
+  std::unique_ptr<ISocket> CreateUdpSocket() {
+    const SocketConfig config;
+    return factory->CreateSocket(SocketType::kUdp, config);
   }
 };
 
-TEST_F(SocketPollerTest, Constructor_DefaultConfig)
-{
-  SocketPoller poller;
+TEST_F(SocketPollerTest, ConstructorDefaultConfig) {
+  const SocketPoller poller;
 #if defined(_WIN32) || defined(_WIN64)
   EXPECT_EQ(poller.backendType(), PollBackend::WSAPoll);
 #elif defined(__linux__)
   EXPECT_EQ(poller.backendType(), PollBackend::Epoll);
 #elif defined(__APPLE__)
-  EXPECT_EQ(poller.backendType(), PollBackend::Kqueue);
+  EXPECT_EQ(poller.BackendType(), PollBackend::kKqueue);
 #else
   EXPECT_EQ(poller.backendType(), PollBackend::Select);
 #endif
 }
 
-TEST_F(SocketPollerTest, Constructor_CustomConfig)
-{
-  SocketPollerConfig cfg{128};
-  SocketPoller poller(cfg);
+TEST_F(SocketPollerTest, ConstructorCustomConfig) {
+  const SocketPollerConfig cfg{128};
+  const SocketPoller poller(cfg);
 #if defined(_WIN32) || defined(_WIN64)
   EXPECT_EQ(poller.backendType(), PollBackend::WSAPoll);
 #elif defined(__linux__)
   EXPECT_EQ(poller.backendType(), PollBackend::Epoll);
 #elif defined(__APPLE__)
-  EXPECT_EQ(poller.backendType(), PollBackend::Kqueue);
+  EXPECT_EQ(poller.BackendType(), PollBackend::kKqueue);
 #else
   EXPECT_EQ(poller.backendType(), PollBackend::Select);
 #endif
 }
 
-TEST_F(SocketPollerTest, AddRemoveSocket)
-{
+TEST_F(SocketPollerTest, AddRemoveSocket) {
   SocketPoller poller;
-  auto socket = createUDPSocket();
+  auto socket = CreateUdpSocket();
   ASSERT_TRUE(socket != nullptr);
 
   // Bind the socket first
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001); // 127.0.0.1
-  EXPECT_EQ(socket->bind(addr, 0), SocketError::None);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
+  EXPECT_EQ(socket->Bind(addr, 0), SocketError::kNone);
 
   // Add socket
-  EXPECT_TRUE(poller.addSocket(socket.get(), false));
+  const bool add_result = poller.AddSocket(socket.get(), false);
+  EXPECT_TRUE(add_result);
 
   // Try to add again (should succeed, as it's idempotent)
-  EXPECT_TRUE(poller.addSocket(socket.get(), false));
+  EXPECT_TRUE(poller.AddSocket(socket.get(), false));
 
   // Remove socket
-  poller.removeSocket(socket.get());
+  poller.RemoveSocket(socket.get());
 
   // Remove again (should not crash)
-  poller.removeSocket(socket.get());
+  poller.RemoveSocket(socket.get());
 }
 
-TEST_F(SocketPollerTest, AddNullSocket)
-{
+TEST_F(SocketPollerTest, AddNullSocket) {
   SocketPoller poller;
-  EXPECT_FALSE(poller.addSocket(nullptr, false));
+  EXPECT_FALSE(poller.AddSocket(nullptr, false));
 }
 
-TEST_F(SocketPollerTest, Poll_EmptyPoller)
-{
+TEST_F(SocketPollerTest, PollEmptyPoller) {
   SocketPoller poller;
-  auto events = poller.poll(0); // Non-blocking
+  auto events = poller.Poll(0);  // Non-blocking
   EXPECT_TRUE(events.empty());
 }
 
-TEST_F(SocketPollerTest, Poll_WithTimeout)
-{
+TEST_F(SocketPollerTest, PollWithTimeout) {
   SocketPoller poller;
-  auto socket = createUDPSocket();
+  auto socket = CreateUdpSocket();
   ASSERT_TRUE(socket != nullptr);
-  
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  EXPECT_EQ(socket->bind(addr, 0), SocketError::None);
-  
-  poller.addSocket(socket.get(), false);
+
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  EXPECT_EQ(socket->Bind(addr, 0), SocketError::kNone);
+
+  poller.AddSocket(socket.get(), false);
 
   // Poll with timeout (should return empty if no events)
-  auto events = poller.poll(10); // 10ms timeout
+  auto events = poller.Poll(10);  // 10ms timeout
   EXPECT_TRUE(events.empty());
 }
 
-TEST_F(SocketPollerTest, Poll_InfiniteTimeout)
-{
+TEST_F(SocketPollerTest, PollInfiniteTimeout) {
   SocketPoller poller;
-  auto socket = createUDPSocket();
+  auto socket = CreateUdpSocket();
   ASSERT_TRUE(socket != nullptr);
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  EXPECT_EQ(socket->bind(addr, 0), SocketError::None);
-  poller.addSocket(socket.get(), false);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  EXPECT_EQ(socket->Bind(addr, 0), SocketError::kNone);
+  poller.AddSocket(socket.get(), false);
 
   // For testing, we can't really test infinite timeout without hanging.
   // Instead, test that poll with large timeout works (but interrupt it)
   // For now, skip this test or use a reasonable timeout
-  auto events = poller.poll(100); // 100ms instead of infinite
+  auto events = poller.Poll(100);  // 100ms instead of infinite
   EXPECT_TRUE(events.empty());
 }
 
-TEST_F(SocketPollerTest, DispatchReadable_NoHandler)
-{
+TEST_F(SocketPollerTest, DispatchReadableNoHandler) {
   SocketPoller poller;
   SocketEvent ev;
   ev.readable = true;
-  poller.dispatchReadable(ev, nullptr); // Should not crash
+  poller.DispatchReadable(ev, nullptr);  // Should not crash
 }
 
-TEST_F(SocketPollerTest, DispatchReadable_NoEvent)
-{
+TEST_F(SocketPollerTest, DispatchReadableNoEvent) {
   SocketPoller poller;
   MockSocketEventHandler handler;
   SocketEvent ev;
   ev.readable = false;
-  poller.dispatchReadable(ev, &handler); // Should not call anything
+  poller.DispatchReadable(ev, &handler);  // Should not call anything
 }
 
-TEST_F(SocketPollerTest, DispatchAll_EmptyEvents)
-{
+TEST_F(SocketPollerTest, DispatchAllEmptyEvents) {
   SocketPoller poller;
   MockSocketEventHandler handler;
-  std::vector<SocketEvent> events;
-  poller.dispatchAll(events, &handler); // Should not crash
+  const std::vector<SocketEvent> events;
+  poller.DispatchAll(events, &handler);  // Should not crash
 }
 
-TEST_F(SocketPollerTest, BackendType)
-{
-  SocketPoller poller;
-  auto backend = poller.backendType();
+TEST_F(SocketPollerTest, BackendType) {
+  const SocketPoller poller;
+  auto backend = poller.BackendType();
 #if defined(_WIN32) || defined(_WIN64)
   EXPECT_EQ(backend, PollBackend::WSAPoll);
 #elif defined(__linux__)
   EXPECT_EQ(backend, PollBackend::Epoll);
 #elif defined(__APPLE__)
-  EXPECT_EQ(backend, PollBackend::Kqueue);
+  EXPECT_EQ(backend, PollBackend::kKqueue);
 #else
   EXPECT_EQ(backend, PollBackend::Select);
 #endif
 }
 
 // Integration test: Send and receive with poller
-TEST_F(SocketPollerTest, Integration_SendReceive)
-{
-  auto senderSocket = createUDPSocket();
-  auto receiverSocket = createUDPSocket();
-  ASSERT_TRUE(senderSocket != nullptr);
-  ASSERT_TRUE(receiverSocket != nullptr);
+TEST_F(SocketPollerTest, IntegrationSendReceive) {
+  auto sender_socket = CreateUdpSocket();
+  auto receiver_socket = CreateUdpSocket();
+  ASSERT_TRUE(sender_socket != nullptr);
+  ASSERT_TRUE(receiver_socket != nullptr);
 
   // Bind receiver to a port
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001); // 127.0.0.1
-  EXPECT_EQ(receiverSocket->bind(addr, 0), SocketError::None); // Bind to any available port
-  uint16_t receiverPort = receiverSocket->localPort();
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
+  EXPECT_EQ(receiver_socket->Bind(addr, 0),
+            SocketError::kNone);  // Bind to any available port
+  const uint16_t receiver_port = receiver_socket->LocalPort();
 
   // Bind sender (optional for UDP)
-  EXPECT_EQ(senderSocket->bind(addr, 0), SocketError::None);
-  uint16_t senderPort = senderSocket->localPort();
+  EXPECT_EQ(sender_socket->Bind(addr, 0), SocketError::kNone);
+  const uint16_t sender_port = sender_socket->LocalPort();
 
   SocketPoller poller;
-  poller.addSocket(receiverSocket.get(), false);
+  poller.AddSocket(receiver_socket.get(), false);
 
   // Send data from sender to receiver
-  const char* testData = "Hello, SocketPoller!";
-  size_t dataSize = strlen(testData) + 1;
-  SocketResult sendResult = senderSocket->sendTo(testData, dataSize, addr, receiverPort);
-  ASSERT_TRUE(sendResult.succeeded());
+  const char* test_data = "Hello, SocketPoller!";
+  const size_t data_size = strlen(test_data) + 1;
+  const SocketResult send_result =
+      sender_socket->SendTo(test_data, data_size, addr, receiver_port);
+  ASSERT_TRUE(send_result.Succeeded());
 
   // Poll for events
-  auto events = poller.poll(100); // 100ms timeout
+  auto events = poller.Poll(100);  // 100ms timeout
   ASSERT_FALSE(events.empty());
-  EXPECT_TRUE(events[0].readable);
-  EXPECT_EQ(events[0].socket, receiverSocket.get());
+  EXPECT_TRUE(events.at(0).readable);
+  EXPECT_EQ(events.at(0).socket, receiver_socket.get());
 
   // Dispatch to handler
   MockSocketEventHandler handler;
-  EXPECT_CALL(handler, onDataReceived(testing::_, senderPort, testing::_, dataSize))
+  EXPECT_CALL(handler,
+              OnDataReceived(testing::_, sender_port, testing::_, data_size))
       .Times(1);
 
-  poller.dispatchReadable(events[0], &handler);
+  poller.DispatchReadable(events.at(0), &handler);
 }

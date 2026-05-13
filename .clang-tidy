@@ -1,122 +1,157 @@
+---
 Checks: >
   -*,
-  cppcoreguidelines-avoid-goto,
-  cppcoreguidelines-pro-type-const-cast,
-  google-runtime-int,
-  modernize-use-nullptr,
-  readability-container-size-empty,
-  readability-redundant-control-flow,
+  google-*,
   readability-identifier-naming,
-  readability-simplify-boolean-expr,
-  google-build-using-namespace,
-  readability-implicit-bool-conversion,
-  google-explicit-constructor,
-  #
-  # bugprone checks
-  bugprone-argument-comment,
-  bugprone-assert-side-effect,
-  bugprone-bool-pointer-implicit-conversion,
-  bugprone-dangling-handle,
-  bugprone-inaccurate-erase,
-  bugprone-integer-division,
-  bugprone-misplaced-widening-cast,
-  bugprone-move-forwarding-reference,
-  bugprone-string-constructor,
-  bugprone-suspicious-memset-usage,
-  bugprone-undefined-memory-manipulation,
-  bugprone-unused-raii,
-  bugprone-unused-return-value,
-  bugprone-use-after-move,
-  # performance checks
-  performance-faster-string-find,
-  performance-for-range-copy,
-  performance-implicit-conversion-in-loop,
-  performance-inefficient-algorithm,
-  performance-inefficient-string-concatenation,
-  performance-inefficient-vector-operation,
-  performance-move-const-arg,
-  performance-move-constructor-init,
-  performance-no-automatic-move,
-  performance-trivially-destructible,
-  performance-unnecessary-copy-initialization,
-  performance-unnecessary-value-param,
-  # misc checks
-  misc-const-correctness,
-  misc-definitions-in-headers,
-  misc-misleading-identifier,
-  misc-misplaced-const,
-  misc-non-copyable-objects,
-  misc-redundant-expression,
-  misc-static-assert,
-  misc-throw-by-value-catch-by-reference,
-  misc-unconventional-assign-operator,
-  misc-uniqueptr-reset-release,
-  misc-unused-parameters,
-  # clang-analyzer checks
-  clang-analyzer-core.DivideZero,
-  clang-analyzer-core.NullDereference,
-  clang-analyzer-core.UndefinedBinaryOperatorResult,
-  clang-analyzer-core.uninitialized.Assign,
-  clang-analyzer-cplusplus.NewDelete,
-  clang-analyzer-cplusplus.NewDeleteLeaks,
-  clang-analyzer-deadcode.DeadStores,
-  clang-analyzer-security.insecureAPI.strcpy
-
-HeaderFilterRegex: '\.(hpp|h|cpp|cc|cxx)$'
+  bugprone-*,
+  performance-*,
+  misc-*,
+  modernize-*,
+  cppcoreguidelines-*,
+  clang-analyzer-*,
+  -google-objc-*,
+  -clang-analyzer-fuchsia*,
+  -clang-analyzer-osx*,
+  -clang-analyzer-optin.mpi*,
+  -clang-analyzer-optin.osx*,
+  -clang-analyzer-webkit*,
+  -modernize-deprecated-ios-base-aliases,
+  -modernize-use-trailing-return-type,
+  -modernize-use-ranges,
+  -modernize-use-designated-initializers,
+  -modernize-use-std-numbers,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes,
+  -misc-use-anonymous-namespace,
+  -misc-use-internal-linkage,
+  -bugprone-easily-swappable-parameters,
+  -cppcoreguidelines-avoid-c-arrays,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-macro-usage,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-special-member-functions,
+  -modernize-avoid-c-arrays
 
 WarningsAsErrors: '*'
+HeaderFilterRegex: '\.(hpp|h|cpp|cc|cxx)$'
+FormatStyle: file
 
-CheckOptions: # inspire by C++ Core Guidelines
-  # Namespace
+CheckOptions:
+  # Google C++ naming: namespaces and ordinary values use snake_case.
   - key: readability-identifier-naming.NamespaceCase
     value: lower_case
-
-  # Types
-  - key: readability-identifier-naming.ClassCase
-    value: CamelCase
-  - key: readability-identifier-naming.StructCase
-    value: CamelCase
-  - key: readability-identifier-naming.TypeAliasCase
-    value: CamelCase
-  - key: readability-identifier-naming.TypeTemplateParameterCase
-    value: CamelCase
-
-  # Functions and methods
-  - key: readability-identifier-naming.GlobalFunctionCase
-    value: lower_case
-  - key: readability-identifier-naming.MethodCase
-    value: lower_case
-
-  # Variables, parameters, class members
-  - key: readability-identifier-naming.ParameterCase
+  - key: readability-identifier-naming.InlineNamespaceCase
     value: lower_case
   - key: readability-identifier-naming.VariableCase
     value: lower_case
+  - key: readability-identifier-naming.LocalVariableCase
+    value: lower_case
+  - key: readability-identifier-naming.GlobalVariableCase
+    value: lower_case
+  - key: readability-identifier-naming.StaticVariableCase
+    value: lower_case
+  - key: readability-identifier-naming.ParameterCase
+    value: lower_case
+  - key: readability-identifier-naming.PointerParameterCase
+    value: lower_case
+  - key: readability-identifier-naming.ParameterPackCase
+    value: lower_case
+  - key: readability-identifier-naming.ValueTemplateParameterCase
+    value: lower_case
+  - key: readability-identifier-naming.LocalConstantCase
+    value: lower_case
+  - key: readability-identifier-naming.LocalConstexprVariableCase
+    value: lower_case
+
+  # Google C++ naming: type-like entities use CamelCase.
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.AbstractClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+  - key: readability-identifier-naming.UnionCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypeAliasCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypedefCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypeTemplateParameterCase
+    value: CamelCase
+  - key: readability-identifier-naming.TemplateParameterCase
+    value: CamelCase
+  - key: readability-identifier-naming.TemplateTemplateParameterCase
+    value: CamelCase
+  - key: readability-identifier-naming.ConceptCase
+    value: CamelCase
+
+  # Google C++ naming: ordinary functions and methods use CamelCase.
+  - key: readability-identifier-naming.FunctionCase
+    value: CamelCase
+  - key: readability-identifier-naming.GlobalFunctionCase
+    value: CamelCase
+  - key: readability-identifier-naming.MethodCase
+    value: CamelCase
+  - key: readability-identifier-naming.ClassMethodCase
+    value: CamelCase
+  - key: readability-identifier-naming.PublicMethodCase
+    value: CamelCase
+  - key: readability-identifier-naming.ProtectedMethodCase
+    value: CamelCase
+  - key: readability-identifier-naming.PrivateMethodCase
+    value: CamelCase
+  - key: readability-identifier-naming.VirtualMethodCase
+    value: CamelCase
+
+  # Google C++ naming: class data members have trailing underscores.
   - key: readability-identifier-naming.ClassMemberCase
     value: lower_case
+  - key: readability-identifier-naming.ClassMemberSuffix
+    value: _
 
-  # Constants
+  # Google C++ naming: static/global/class constants and enum values use kCamelCase.
   - key: readability-identifier-naming.GlobalConstantCase
-    value: lower_case
+    value: CamelCase
+  - key: readability-identifier-naming.GlobalConstantPrefix
+    value: k
+  - key: readability-identifier-naming.GlobalConstexprVariableCase
+    value: CamelCase
+  - key: readability-identifier-naming.GlobalConstexprVariablePrefix
+    value: k
   - key: readability-identifier-naming.StaticConstantCase
-    value: lower_case
-  - key: readability-identifier-naming.ConstexprVariableCase
-    value: lower_case
+    value: CamelCase
+  - key: readability-identifier-naming.StaticConstantPrefix
+    value: k
+  - key: readability-identifier-naming.StaticConstexprVariableCase
+    value: CamelCase
+  - key: readability-identifier-naming.StaticConstexprVariablePrefix
+    value: k
+  - key: readability-identifier-naming.ClassConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.ClassConstantPrefix
+    value: k
+  - key: readability-identifier-naming.ClassConstexprCase
+    value: CamelCase
+  - key: readability-identifier-naming.ClassConstexprPrefix
+    value: k
+  - key: readability-identifier-naming.EnumConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumConstantPrefix
+    value: k
+  - key: readability-identifier-naming.ScopedEnumConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.ScopedEnumConstantPrefix
+    value: k
 
-  # # Const-correctness check - warn if local variables can be declared const
-  # - key: misc-const-correctness.AnalyzeValues
-  #   value: 'true'
-  # - key: misc-const-correctness.AnalyzeReferences
-  #   value: 'true'
-  # - key: misc-const-correctness.AnalyzePointers
-  #   value: 'true'
-  # - key: misc-const-correctness.WarnPointersAsPointers
-  #   value: 'true'
-  # - key: misc-const-correctness.WarnPointersAsValues
-  #   value: 'false'
-  # - key: misc-const-correctness.TransformValues
-  #   value: 'true'
-  # - key: misc-const-correctness.TransformReferences
-  #   value: 'true'
-  # - key: misc-const-correctness.TransformPointersAsPointers
-  #   value: 'true'
+  # Google C++ naming: macros use UPPER_CASE.
+  - key: readability-identifier-naming.MacroDefinitionCase
+    value: UPPER_CASE
+...

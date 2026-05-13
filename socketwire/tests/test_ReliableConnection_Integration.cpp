@@ -1,75 +1,68 @@
 #include <gtest/gtest.h>
-#include "reliable_connection.hpp"
-#include "i_socket.hpp"
-#include "socket_init.hpp"
-#include <thread>
+
 #include <atomic>
 #include <memory>
+#include <thread>
+
+#include "i_socket.hpp"
+#include "reliable_connection.hpp"
+#include "socket_init.hpp"
 
 using namespace std::chrono_literals;
 
-using socketwire::ReliableConnection;
 using socketwire::ConnectionManager;
-using socketwire::ReliableConnectionConfig;
 using socketwire::IReliableConnectionHandler;
 using socketwire::ISocket;
+using socketwire::ReliableConnection;
+using socketwire::ReliableConnectionConfig;
 using socketwire::SocketAddress;
-using socketwire::SocketError;
 using socketwire::SocketConfig;
+using socketwire::SocketError;
 using socketwire::SocketFactoryRegistry;
 
-class IntegrationTest : public ::testing::Test
-{
-protected:
-  void SetUp() override
-  {
-    bool result = socketwire::initialize_sockets();
+class IntegrationTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    const bool result = socketwire::InitializeSockets();
     ASSERT_TRUE(result) << "Socket initialization should succeed";
 
-    auto factory = SocketFactoryRegistry::getFactory();
+    auto factory = SocketFactoryRegistry::GetFactory();
     ASSERT_NE(factory, nullptr) << "Socket factory should be available";
   }
 
-  void TearDown() override
-  {
-    socketwire::shutdown_sockets();
-  }
+  void TearDown() override { socketwire::ShutdownSockets(); }
 };
 
 // Simple echo server handler
-class EchoServerHandler : public IReliableConnectionHandler
-{
-public:
+class EchoServerHandler : public IReliableConnectionHandler {
+ public:
   ConnectionManager* manager = nullptr;
   std::atomic<int> messagesReceived{0};
 
-  void onReliableReceived(uint8_t channel, const void* data, size_t size) override
-  {
+  void OnReliableReceived(uint8_t channel, const void* data,
+                          size_t size) override {
     messagesReceived++;
 
     // Echo back to all clients
-    if (manager != nullptr)
-    {
-      manager->broadcastReliable(channel, data, size);
+    if (manager != nullptr) {
+      manager->BroadcastReliable(channel, data, size);
     }
   }
 
-  void onUnreliableReceived(uint8_t channel, const void* data, size_t size) override
-  {
+  void OnUnreliableReceived(uint8_t channel, const void* data,
+                            size_t size) override {
     messagesReceived++;
 
     // Echo back unreliable
-    if (manager != nullptr)
-    {
-      manager->broadcastUnreliable(channel, data, size);
+    if (manager != nullptr) {
+      manager->BroadcastUnreliable(channel, data, size);
     }
   }
 };
 
 // Client handler
-class ClientHandler : public IReliableConnectionHandler
-{
-public:
+class ClientHandler : public IReliableConnectionHandler {
+ public:
   std::atomic<bool> connected{false};
   std::atomic<bool> disconnected{false};
   std::atomic<int> reliableReceived{0};
@@ -77,599 +70,597 @@ public:
   std::vector<std::vector<uint8_t>> receivedMessages;
   std::mutex messagesMutex;
 
-  void onConnected() override
-  {
-    connected = true;
-  }
+  void OnConnected() override { connected = true; }
 
-  void onDisconnected() override
-  {
-    disconnected = true;
-  }
+  void OnDisconnected() override { disconnected = true; }
 
-  void onReliableReceived(uint8_t channel, const void* data, size_t size) override
-  {
+  void OnReliableReceived(uint8_t channel, const void* data,
+                          size_t size) override {
     (void)channel;
     reliableReceived++;
 
-    std::lock_guard<std::mutex> lock(messagesMutex);
-    std::vector<uint8_t> msg(static_cast<const uint8_t*>(data),
+    const std::scoped_lock lock(messagesMutex);
+    const std::vector<uint8_t> msg(static_cast<const uint8_t*>(data),
                              static_cast<const uint8_t*>(data) + size);
     receivedMessages.push_back(msg);
   }
 
-  void onUnreliableReceived(uint8_t channel, const void* data, size_t size) override
-  {
+  void OnUnreliableReceived(uint8_t channel, const void* data,
+                            size_t size) override {
     (void)channel;
     unreliableReceived++;
 
-    std::lock_guard<std::mutex> lock(messagesMutex);
-    std::vector<uint8_t> msg(static_cast<const uint8_t*>(data),
+    const std::scoped_lock lock(messagesMutex);
+    const std::vector<uint8_t> msg(static_cast<const uint8_t*>(data),
                              static_cast<const uint8_t*>(data) + size);
     receivedMessages.push_back(msg);
   }
 
-  std::vector<std::vector<uint8_t>> getMessages()
-  {
-    std::lock_guard<std::mutex> lock(messagesMutex);
+  std::vector<std::vector<uint8_t>> GetMessages() {
+    const std::scoped_lock lock(messagesMutex);
     return receivedMessages;
   }
 
-  void clearMessages()
-  {
-    std::lock_guard<std::mutex> lock(messagesMutex);
+  void ClearMessages() {
+    const std::scoped_lock lock(messagesMutex);
     receivedMessages.clear();
   }
 };
 
-TEST_F(IntegrationTest, ClientServerConnect)
-{
-  const uint16_t SERVER_PORT = 15001;
+TEST_F(IntegrationTest, ClientServerConnect) {
+  const uint16_t server_port = 15001;
 
-  auto factory = SocketFactoryRegistry::getFactory();
+  auto factory = SocketFactoryRegistry::GetFactory();
 
   // Server setup
-  SocketConfig serverCfg;
-  serverCfg.nonBlocking = true;
-  auto serverSocket = factory->createUDPSocket(serverCfg);
-  ASSERT_NE(serverSocket, nullptr);
+  SocketConfig server_cfg;
+  server_cfg.nonBlocking = true;
+  auto server_socket = factory->CreateUdpSocket(server_cfg);
+  ASSERT_NE(server_socket, nullptr);
 
-  SocketAddress serverAddr = SocketAddress::fromIPv4(0); // INADDR_ANY
-  ASSERT_EQ(serverSocket->bind(serverAddr, SERVER_PORT), SocketError::None);
+  SocketAddress server_addr = SocketAddress::FromIPv4(0);  // INADDR_ANY
+  ASSERT_EQ(server_socket->Bind(server_addr, server_port), SocketError::kNone);
 
-  ReliableConnectionConfig connCfg;
-  connCfg.pingIntervalMs = 200;
-  connCfg.disconnectTimeoutMs = 1000;
+  ReliableConnectionConfig conn_cfg;
+  conn_cfg.pingIntervalMs = 200;
+  conn_cfg.disconnectTimeoutMs = 1000;
 
-  EchoServerHandler serverHandler;
-  auto serverManager = std::make_unique<ConnectionManager>(serverSocket.get(), connCfg);
-  serverHandler.manager = serverManager.get();
-  serverManager->setHandler(&serverHandler);
+  EchoServerHandler server_handler;
+  auto server_manager =
+      std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
+  server_handler.manager = server_manager.get();
+  server_manager->SetHandler(&server_handler);
 
   // Client setup
-  auto clientSocket = factory->createUDPSocket(serverCfg);
-  ASSERT_NE(clientSocket, nullptr);
+  auto client_socket = factory->CreateUdpSocket(server_cfg);
+  ASSERT_NE(client_socket, nullptr);
 
-  ClientHandler clientHandler;
-  auto clientConn = std::make_unique<ReliableConnection>(clientSocket.get(), connCfg);
-  clientConn->setHandler(&clientHandler);
+  ClientHandler client_handler;
+  auto client_conn =
+      std::make_unique<ReliableConnection>(client_socket.get(), conn_cfg);
+  client_conn->SetHandler(&client_handler);
 
   // Connect
-  SocketAddress connectAddr = SocketAddress::fromIPv4(0x7F000001); // 127.0.0.1
-  clientConn->connect(connectAddr, SERVER_PORT);
+  SocketAddress connect_addr =
+      SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
+  client_conn->Connect(connect_addr, server_port);
 
-  EXPECT_FALSE(clientHandler.connected);
+  EXPECT_FALSE(client_handler.connected);
 
   // Run network loop
   std::atomic<bool> running{true};
-  std::thread networkThread([&]() {
+  std::thread network_thread([&]() {
     char buffer[2048];
 
-    while (running)
-    {
+    while (running) {
       // Server receive
-      while (true)
-      {
+      while (true) {
         SocketAddress from;
-        uint16_t fromPort;
-        auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded())
-          break;
+        uint16_t from_port = 0;
+        auto result =
+            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
 
-        if (result.bytes > 0)
-          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+        if (result.bytes > 0) {
+          server_manager->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
       // Client receive
-      while (true)
-      {
+      while (true) {
         SocketAddress from;
-        uint16_t fromPort;
-        auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded())
-          break;
+        uint16_t from_port = 0;
+        auto result =
+            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
 
-        if (result.bytes > 0)
-          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+        if (result.bytes > 0) {
+          client_conn->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      serverManager->update();
-      clientConn->update();
+      server_manager->Update();
+      client_conn->Update();
 
       std::this_thread::sleep_for(10ms);
     }
   });
 
   // Wait for connection
-  for (int i = 0; i < 50 && !clientHandler.connected; i++)
-  {
+  for (int i = 0; i < 50 && !client_handler.connected; i++) {
     std::this_thread::sleep_for(50ms);
   }
 
-  EXPECT_TRUE(clientHandler.connected) << "Client should connect to server";
+  EXPECT_TRUE(client_handler.connected) << "Client should connect to server";
 
-  auto connections = serverManager->getConnections();
+  auto connections = server_manager->GetConnections();
   EXPECT_EQ(connections.size(), 1) << "Server should have one client";
 
   running = false;
-  networkThread.join();
+  network_thread.join();
 }
 
-TEST_F(IntegrationTest, ClientServerReliableMessage)
-{
-  const uint16_t SERVER_PORT = 15002;
+TEST_F(IntegrationTest, ClientServerReliableMessage) {
+  const uint16_t server_port = 15002;
 
-  auto factory = SocketFactoryRegistry::getFactory();
+  auto factory = SocketFactoryRegistry::GetFactory();
 
   // Server
   SocketConfig cfg;
   cfg.nonBlocking = true;
-  auto serverSocket = factory->createUDPSocket(cfg);
-  ASSERT_NE(serverSocket, nullptr);
+  auto server_socket = factory->CreateUdpSocket(cfg);
+  ASSERT_NE(server_socket, nullptr);
 
-  SocketAddress serverAddr = SocketAddress::fromIPv4(0);
-  ASSERT_EQ(serverSocket->bind(serverAddr, SERVER_PORT), SocketError::None);
+  SocketAddress server_addr = SocketAddress::FromIPv4(0);
+  ASSERT_EQ(server_socket->Bind(server_addr, server_port), SocketError::kNone);
 
-  ReliableConnectionConfig connCfg;
-  connCfg.retryTimeoutMs = 100;
+  ReliableConnectionConfig conn_cfg;
+  conn_cfg.retryTimeoutMs = 100;
 
-  EchoServerHandler serverHandler;
-  auto serverManager = std::make_unique<ConnectionManager>(serverSocket.get(), connCfg);
-  serverHandler.manager = serverManager.get();
-  serverManager->setHandler(&serverHandler);
+  EchoServerHandler server_handler;
+  auto server_manager =
+      std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
+  server_handler.manager = server_manager.get();
+  server_manager->SetHandler(&server_handler);
 
   // Client
-  auto clientSocket = factory->createUDPSocket(cfg);
-  ASSERT_NE(clientSocket, nullptr);
+  auto client_socket = factory->CreateUdpSocket(cfg);
+  ASSERT_NE(client_socket, nullptr);
 
-  ClientHandler clientHandler;
-  auto clientConn = std::make_unique<ReliableConnection>(clientSocket.get(), connCfg);
-  clientConn->setHandler(&clientHandler);
+  ClientHandler client_handler;
+  auto client_conn =
+      std::make_unique<ReliableConnection>(client_socket.get(), conn_cfg);
+  client_conn->SetHandler(&client_handler);
 
-  SocketAddress connectAddr = SocketAddress::fromIPv4(0x7F000001);
-  clientConn->connect(connectAddr, SERVER_PORT);
+  SocketAddress connect_addr = SocketAddress::FromIPv4(0x7F000001);
+  client_conn->Connect(connect_addr, server_port);
 
   // Network loop
   std::atomic<bool> running{true};
-  std::thread networkThread([&]()
-  {
+  std::thread network_thread([&]() {
     char buffer[2048];
 
-    while (running)
-    {
-      while (true)
-      {
+    while (running) {
+      while (true) {
         SocketAddress from;
-        uint16_t fromPort;
-        auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+        uint16_t from_port = 0;
+        auto result =
+            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          server_manager->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      while (true)
-      {
+      while (true) {
         SocketAddress from;
-        uint16_t fromPort;
-        auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+        uint16_t from_port = 0;
+        auto result =
+            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          client_conn->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      serverManager->update();
-      clientConn->update();
+      server_manager->Update();
+      client_conn->Update();
       std::this_thread::sleep_for(10ms);
     }
   });
 
   // Wait for connection
-  for (int i = 0; i < 50 && !clientHandler.connected; i++)
-  {
+  for (int i = 0; i < 50 && !client_handler.connected; i++) {
     std::this_thread::sleep_for(50ms);
   }
 
-  ASSERT_TRUE(clientHandler.connected);
+  ASSERT_TRUE(client_handler.connected);
 
   // Send message
-  const char* testMessage = "Hello, Server!";
-  clientConn->sendReliable(0, testMessage, strlen(testMessage));
+  const char* test_message = "Hello, Server!";
+  client_conn->SendReliable(0, test_message, strlen(test_message));
 
   // Wait for echo
-  for (int i = 0; i < 50 && clientHandler.reliableReceived == 0; i++)
-  {
+  for (int i = 0; i < 50 && client_handler.reliableReceived == 0; i++) {
     std::this_thread::sleep_for(50ms);
   }
 
-  EXPECT_GT(clientHandler.reliableReceived, 0) << "Should receive echoed message";
-  EXPECT_GT(serverHandler.messagesReceived, 0) << "Server should receive message";
+  EXPECT_GT(client_handler.reliableReceived, 0)
+      << "Should receive echoed message";
+  EXPECT_GT(server_handler.messagesReceived, 0)
+      << "Server should receive message";
 
-  auto messages = clientHandler.getMessages();
+  auto messages = client_handler.GetMessages();
   ASSERT_FALSE(messages.empty());
 
-  std::string received(messages[0].begin(), messages[0].end());
-  EXPECT_EQ(received, std::string(testMessage));
+  const std::string received(messages.at(0).begin(), messages.at(0).end());
+  EXPECT_EQ(received, std::string(test_message));
 
   running = false;
-  networkThread.join();
+  network_thread.join();
 }
 
-TEST_F(IntegrationTest, ClientServerMultipleMessages)
-{
-  const uint16_t SERVER_PORT = 15003;
+TEST_F(IntegrationTest, ClientServerMultipleMessages) {
+  const uint16_t server_port = 15003;
 
-  auto factory = SocketFactoryRegistry::getFactory();
+  auto factory = SocketFactoryRegistry::GetFactory();
 
   SocketConfig cfg;
   cfg.nonBlocking = true;
-  auto serverSocket = factory->createUDPSocket(cfg);
-  ASSERT_NE(serverSocket, nullptr);
+  auto server_socket = factory->CreateUdpSocket(cfg);
+  ASSERT_NE(server_socket, nullptr);
 
-  ASSERT_EQ(serverSocket->bind(SocketAddress::fromIPv4(0), SERVER_PORT), SocketError::None);
+  ASSERT_EQ(server_socket->Bind(SocketAddress::FromIPv4(0), server_port),
+            SocketError::kNone);
 
-  ReliableConnectionConfig connCfg;
-  EchoServerHandler serverHandler;
-  auto serverManager = std::make_unique<ConnectionManager>(serverSocket.get(), connCfg);
-  serverHandler.manager = serverManager.get();
-  serverManager->setHandler(&serverHandler);
+  ReliableConnectionConfig conn_cfg;
+  EchoServerHandler server_handler;
+  auto server_manager =
+      std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
+  server_handler.manager = server_manager.get();
+  server_manager->SetHandler(&server_handler);
 
-  auto clientSocket = factory->createUDPSocket(cfg);
-  ClientHandler clientHandler;
-  auto clientConn = std::make_unique<ReliableConnection>(clientSocket.get(), connCfg);
-  clientConn->setHandler(&clientHandler);
+  auto client_socket = factory->CreateUdpSocket(cfg);
+  ClientHandler client_handler;
+  auto client_conn =
+      std::make_unique<ReliableConnection>(client_socket.get(), conn_cfg);
+  client_conn->SetHandler(&client_handler);
 
-  clientConn->connect(SocketAddress::fromIPv4(0x7F000001), SERVER_PORT);
+  client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
 
   std::atomic<bool> running{true};
-  std::thread networkThread([&]()
-  {
+  std::thread network_thread([&]() {
     char buffer[2048];
-    while (running)
-    {
+    while (running) {
       SocketAddress from;
-      uint16_t fromPort;
+      uint16_t from_port = 0;
 
-      while (true)
-      {
-        auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+      while (true) {
+        auto result =
+            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          server_manager->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      while (true)
-      {
-        auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+      while (true) {
+        auto result =
+            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          client_conn->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      serverManager->update();
-      clientConn->update();
+      server_manager->Update();
+      client_conn->Update();
       std::this_thread::sleep_for(10ms);
     }
   });
 
   // Wait for connection
-  for (int i = 0; i < 50 && !clientHandler.connected; i++)
-  {
+  for (int i = 0; i < 50 && !client_handler.connected; i++) {
     std::this_thread::sleep_for(50ms);
   }
-  ASSERT_TRUE(clientHandler.connected);
+  ASSERT_TRUE(client_handler.connected);
 
   // Send multiple messages
-  const int MESSAGE_COUNT = 10;
-  for (int i = 0; i < MESSAGE_COUNT; i++)
-  {
-    std::string msg = "Message #" + std::to_string(i);
-    clientConn->sendReliable(0, msg.c_str(), msg.length());
+  const int message_count = 10;
+  for (int i = 0; i < message_count; i++) {
+    const std::string msg = "Message #" + std::to_string(i);
+    client_conn->SendReliable(0, msg.c_str(), msg.length());
     std::this_thread::sleep_for(20ms);
   }
 
   // Wait for all echoes
-  for (int i = 0; i < 100 && clientHandler.reliableReceived < MESSAGE_COUNT; i++)
-  {
+  for (int i = 0; i < 100 && client_handler.reliableReceived < message_count;
+       i++) {
     std::this_thread::sleep_for(50ms);
   }
 
-  EXPECT_GE(clientHandler.reliableReceived, MESSAGE_COUNT)
-    << "Should receive all echoed messages";
+  EXPECT_GE(client_handler.reliableReceived, message_count)
+      << "Should receive all echoed messages";
 
   running = false;
-  networkThread.join();
+  network_thread.join();
 }
 
-TEST_F(IntegrationTest, ClientServerUnreliableMessages)
-{
-  const uint16_t SERVER_PORT = 15004;
+TEST_F(IntegrationTest, ClientServerUnreliableMessages) {
+  const uint16_t server_port = 15004;
 
-  auto factory = SocketFactoryRegistry::getFactory();
+  auto factory = SocketFactoryRegistry::GetFactory();
 
   SocketConfig cfg;
   cfg.nonBlocking = true;
-  auto serverSocket = factory->createUDPSocket(cfg);
-  ASSERT_NE(serverSocket, nullptr);
+  auto server_socket = factory->CreateUdpSocket(cfg);
+  ASSERT_NE(server_socket, nullptr);
 
-  ASSERT_EQ(serverSocket->bind(SocketAddress::fromIPv4(0), SERVER_PORT), SocketError::None);
+  ASSERT_EQ(server_socket->Bind(SocketAddress::FromIPv4(0), server_port),
+            SocketError::kNone);
 
-  EchoServerHandler serverHandler;
-  auto serverManager = std::make_unique<ConnectionManager>(serverSocket.get());
-  serverHandler.manager = serverManager.get();
-  serverManager->setHandler(&serverHandler);
+  EchoServerHandler server_handler;
+  auto server_manager =
+      std::make_unique<ConnectionManager>(server_socket.get());
+  server_handler.manager = server_manager.get();
+  server_manager->SetHandler(&server_handler);
 
-  auto clientSocket = factory->createUDPSocket(cfg);
-  ClientHandler clientHandler;
-  auto clientConn = std::make_unique<ReliableConnection>(clientSocket.get());
-  clientConn->setHandler(&clientHandler);
+  auto client_socket = factory->CreateUdpSocket(cfg);
+  ClientHandler client_handler;
+  auto client_conn = std::make_unique<ReliableConnection>(client_socket.get());
+  client_conn->SetHandler(&client_handler);
 
-  clientConn->connect(SocketAddress::fromIPv4(0x7F000001), SERVER_PORT);
+  client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
 
   std::atomic<bool> running{true};
-  std::thread networkThread([&]()
-  {
+  std::thread network_thread([&]() {
     char buffer[2048];
-    while (running)
-    {
+    while (running) {
       SocketAddress from;
-      uint16_t fromPort;
+      uint16_t from_port = 0;
 
-      while (true)
-      {
-        auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+      while (true) {
+        auto result =
+            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          server_manager->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      while (true)
-      {
-        auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+      while (true) {
+        auto result =
+            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          client_conn->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      serverManager->update();
-      clientConn->update();
+      server_manager->Update();
+      client_conn->Update();
       std::this_thread::sleep_for(10ms);
     }
   });
 
   // Wait for connection
-  for (int i = 0; i < 50 && !clientHandler.connected; i++)
-  {
+  for (int i = 0; i < 50 && !client_handler.connected; i++) {
     std::this_thread::sleep_for(50ms);
   }
-  ASSERT_TRUE(clientHandler.connected);
+  ASSERT_TRUE(client_handler.connected);
 
   // Send unreliable messages
   const char* msg = "Unreliable snapshot";
-  for (int i = 0; i < 5; i++)
-  {
-    clientConn->sendUnreliable(1, msg, strlen(msg));
+  for (int i = 0; i < 5; i++) {
+    client_conn->SendUnreliable(1, msg, strlen(msg));
     std::this_thread::sleep_for(30ms);
   }
 
   // Give time for processing
   std::this_thread::sleep_for(300ms);
 
-  EXPECT_GT(clientHandler.unreliableReceived, 0)
-    << "Should receive some unreliable messages";
+  EXPECT_GT(client_handler.unreliableReceived, 0)
+      << "Should receive some unreliable messages";
 
   running = false;
-  networkThread.join();
+  network_thread.join();
 }
 
-TEST_F(IntegrationTest, MultipleClients)
-{
-  const uint16_t SERVER_PORT = 15005;
-  const int NUM_CLIENTS = 3;
+TEST_F(IntegrationTest, MultipleClients) {
+  const uint16_t server_port = 15005;
+  const int num_clients = 3;
 
-  auto factory = SocketFactoryRegistry::getFactory();
+  auto factory = SocketFactoryRegistry::GetFactory();
 
   // Server
   SocketConfig cfg;
   cfg.nonBlocking = true;
-  auto serverSocket = factory->createUDPSocket(cfg);
-  ASSERT_NE(serverSocket, nullptr);
+  auto server_socket = factory->CreateUdpSocket(cfg);
+  ASSERT_NE(server_socket, nullptr);
 
-  ASSERT_EQ(serverSocket->bind(SocketAddress::fromIPv4(0), SERVER_PORT), SocketError::None);
+  ASSERT_EQ(server_socket->Bind(SocketAddress::FromIPv4(0), server_port),
+            SocketError::kNone);
 
-  EchoServerHandler serverHandler;
-  auto serverManager = std::make_unique<ConnectionManager>(serverSocket.get());
-  serverHandler.manager = serverManager.get();
-  serverManager->setHandler(&serverHandler);
+  EchoServerHandler server_handler;
+  auto server_manager =
+      std::make_unique<ConnectionManager>(server_socket.get());
+  server_handler.manager = server_manager.get();
+  server_manager->SetHandler(&server_handler);
 
   // Multiple clients
-  std::vector<std::unique_ptr<ISocket>> clientSockets;
-  std::vector<std::unique_ptr<ReliableConnection>> clientConns;
-  std::vector<std::unique_ptr<ClientHandler>> clientHandlers;
+  std::vector<std::unique_ptr<ISocket>> client_sockets;
+  std::vector<std::unique_ptr<ReliableConnection>> client_conns;
+  std::vector<std::unique_ptr<ClientHandler>> client_handlers;
 
-  for (int i = 0; i < NUM_CLIENTS; i++)
-  {
-    auto socket = factory->createUDPSocket(cfg);
+  for (int i = 0; i < num_clients; i++) {
+    auto socket = factory->CreateUdpSocket(cfg);
     ASSERT_NE(socket, nullptr);
 
     auto handler = std::make_unique<ClientHandler>();
     auto conn = std::make_unique<ReliableConnection>(socket.get());
-    conn->setHandler(handler.get());
-    conn->connect(SocketAddress::fromIPv4(0x7F000001), SERVER_PORT);
+    conn->SetHandler(handler.get());
+    conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
 
-    clientSockets.push_back(std::move(socket));
-    clientConns.push_back(std::move(conn));
-    clientHandlers.push_back(std::move(handler));
+    client_sockets.push_back(std::move(socket));
+    client_conns.push_back(std::move(conn));
+    client_handlers.push_back(std::move(handler));
   }
 
   // Network loop
   std::atomic<bool> running{true};
-  std::thread networkThread([&]()
-  {
+  std::thread network_thread([&]() {
     char buffer[2048];
-    while (running)
-    {
+    while (running) {
       SocketAddress from;
-      uint16_t fromPort;
+      uint16_t from_port = 0;
 
-      while (true)
-      {
-        auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
-      }
-
-      for (size_t i = 0; i < clientSockets.size(); i++)
-      {
-        while (true)
-        {
-          auto result = clientSockets[i]->receive(buffer, sizeof(buffer), from, fromPort);
-          if (!result.succeeded()) break;
-          if (result.bytes > 0)
-            clientConns[i]->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+      while (true) {
+        auto result =
+            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          server_manager->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
-        clientConns[i]->update();
       }
-      serverManager->update();
+
+      for (size_t i = 0; i < client_sockets.size(); i++) {
+        while (true) {
+          auto result = client_sockets.at(i)->Receive(buffer, sizeof(buffer), from, from_port);
+          if (!result.Succeeded()) break;
+          if (result.bytes > 0) {
+            client_conns.at(i)->ProcessPacket(
+                buffer, static_cast<std::size_t>(result.bytes), from,
+                from_port);
+          }
+        }
+        client_conns.at(i)->Update();
+      }
+      server_manager->Update();
       std::this_thread::sleep_for(10ms);
     }
   });
 
   // Wait for all clients to connect
-  bool allConnected = false;
-  for (int attempt = 0; attempt < 100 && !allConnected; attempt++)
-  {
-    allConnected = true;
-    for (const auto& handler : clientHandlers)
-    {
-      if (!handler->connected)
-      {
-        allConnected = false;
+  bool all_connected = false;
+  for (int attempt = 0; attempt < 100 && !all_connected; attempt++) {
+    all_connected = true;
+    for (const auto& handler : client_handlers) {
+      if (!handler->connected) {
+        all_connected = false;
         break;
       }
     }
     std::this_thread::sleep_for(50ms);
   }
 
-  EXPECT_TRUE(allConnected) << "All clients should connect";
+  EXPECT_TRUE(all_connected) << "All clients should connect";
 
-  auto connections = serverManager->getConnections();
-  EXPECT_EQ(connections.size(), NUM_CLIENTS)
-    << "Server should have " << NUM_CLIENTS << " clients";
+  auto connections = server_manager->GetConnections();
+  EXPECT_EQ(connections.size(), num_clients)
+      << "Server should have " << num_clients << " clients";
 
   // Each client sends a message
-  for (size_t i = 0; i < clientConns.size(); i++)
-  {
-    std::string msg = "Client " + std::to_string(i);
-    clientConns[i]->sendReliable(0, msg.c_str(), msg.length());
+  for (size_t i = 0; i < client_conns.size(); i++) {
+    const std::string msg = "Client " + std::to_string(i);
+    client_conns.at(i)->SendReliable(0, msg.c_str(), msg.length());
   }
 
   // Wait for broadcasts
   std::this_thread::sleep_for(1s);
 
   // Each client should receive messages from all clients (including themselves)
-  for (const auto& handler : clientHandlers)
-  {
-    EXPECT_GE(handler->reliableReceived, NUM_CLIENTS)
-      << "Each client should receive all broadcast messages";
+  for (const auto& handler : client_handlers) {
+    EXPECT_GE(handler->reliableReceived, num_clients)
+        << "Each client should receive all broadcast messages";
   }
 
   running = false;
-  networkThread.join();
+  network_thread.join();
 }
 
-TEST_F(IntegrationTest, ClientDisconnect)
-{
-  const uint16_t SERVER_PORT = 15006;
+TEST_F(IntegrationTest, ClientDisconnect) {
+  const uint16_t server_port = 15006;
 
-  auto factory = SocketFactoryRegistry::getFactory();
+  auto factory = SocketFactoryRegistry::GetFactory();
 
   SocketConfig cfg;
   cfg.nonBlocking = true;
-  auto serverSocket = factory->createUDPSocket(cfg);
-  ASSERT_NE(serverSocket, nullptr);
+  auto server_socket = factory->CreateUdpSocket(cfg);
+  ASSERT_NE(server_socket, nullptr);
 
-  ASSERT_EQ(serverSocket->bind(SocketAddress::fromIPv4(0), SERVER_PORT), SocketError::None);
+  ASSERT_EQ(server_socket->Bind(SocketAddress::FromIPv4(0), server_port),
+            SocketError::kNone);
 
-  EchoServerHandler serverHandler;
-  auto serverManager = std::make_unique<ConnectionManager>(serverSocket.get());
-  serverHandler.manager = serverManager.get();
-  serverManager->setHandler(&serverHandler);
+  EchoServerHandler server_handler;
+  auto server_manager =
+      std::make_unique<ConnectionManager>(server_socket.get());
+  server_handler.manager = server_manager.get();
+  server_manager->SetHandler(&server_handler);
 
-  auto clientSocket = factory->createUDPSocket(cfg);
-  ClientHandler clientHandler;
-  auto clientConn = std::make_unique<ReliableConnection>(clientSocket.get());
-  clientConn->setHandler(&clientHandler);
+  auto client_socket = factory->CreateUdpSocket(cfg);
+  ClientHandler client_handler;
+  auto client_conn = std::make_unique<ReliableConnection>(client_socket.get());
+  client_conn->SetHandler(&client_handler);
 
-  clientConn->connect(SocketAddress::fromIPv4(0x7F000001), SERVER_PORT);
+  client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
 
   std::atomic<bool> running{true};
-  std::thread networkThread([&]()
-  {
+  std::thread network_thread([&]() {
     char buffer[2048];
-    while (running)
-    {
+    while (running) {
       SocketAddress from;
-      uint16_t fromPort;
+      uint16_t from_port = 0;
 
-      while (true)
-      {
-        auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+      while (true) {
+        auto result =
+            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          server_manager->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      while (true)
-      {
-        auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+      while (true) {
+        auto result =
+            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          client_conn->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      serverManager->update();
-      clientConn->update();
+      server_manager->Update();
+      client_conn->Update();
       std::this_thread::sleep_for(10ms);
     }
   });
 
   // Wait for connection
-  for (int i = 0; i < 50 && !clientHandler.connected; i++)
-  {
+  for (int i = 0; i < 50 && !client_handler.connected; i++) {
     std::this_thread::sleep_for(50ms);
   }
-  ASSERT_TRUE(clientHandler.connected);
+  ASSERT_TRUE(client_handler.connected);
 
   // Disconnect
-  clientConn->disconnect();
+  client_conn->Disconnect();
 
   // Wait for disconnection
   std::this_thread::sleep_for(500ms);
 
-  EXPECT_TRUE(clientHandler.disconnected) << "Client should be disconnected";
-  EXPECT_FALSE(clientConn->isConnected());
+  EXPECT_TRUE(client_handler.disconnected) << "Client should be disconnected";
+  EXPECT_FALSE(client_conn->IsConnected());
 
   running = false;
-  networkThread.join();
+  network_thread.join();
 }

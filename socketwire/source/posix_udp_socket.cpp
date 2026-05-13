@@ -1,144 +1,128 @@
+#include <cassert>
+#include <cerrno>
+#include <cstring>
+#include <utility>
+
 #include "i_socket.hpp"
 
-#include <cstring>
-#include <cerrno>
-#include <cassert>
-
 #if defined(_WIN32) || defined(_WIN64)
-  #error "posix_udp_socket.cpp is for POSIX platforms only (Linux/macOS/BSD)."
+#error "posix_udp_socket.cpp is for POSIX platforms only (Linux/macOS/BSD)."
 #endif
 
-#include <netinet/in.h>
 #include <arpa/inet.h>
-#include <sys/socket.h>
 #include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include "socket_address_utils.hpp"
 
-namespace socketwire
-{
+namespace socketwire {
 
 // Pull shared address-conversion helpers into this TU's namespace.
-using detail::is_ipv4_mapped;
-using detail::socketaddress_from_sockaddr;
-using detail::fill_sockaddr_storage;
+using detail::FillSockaddrStorage;
+using detail::SocketaddressFromSockaddr;
 
 // ERRORS MAP errno -> SocketError
-static SocketError map_errno(int e)
-{
-  switch (e)
-  {
+static SocketError MapErrno(int e) {
+  switch (e) {
     case EAGAIN:
 #if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
     case EWOULDBLOCK:
 #endif
-      return SocketError::WouldBlock;
+      return SocketError::kWouldBlock;
     case EBADF:
     case ENOTSOCK:
     case EINVAL:
-      return SocketError::InvalidParam;
+      return SocketError::kInvalidParam;
     case ECONNRESET:
     case ENOTCONN:
     case EPIPE:
-      return SocketError::Closed;
+      return SocketError::kClosed;
     default:
-      return SocketError::System;
+      return SocketError::kSystem;
   }
 }
 
-
 // POSIX UDP implementation based on ISocket.
-class PosixUDPSocket final : public ISocket
-{
-public:
+class PosixUDPSocket final : public ISocket {
+ public:
   explicit PosixUDPSocket(const SocketConfig& cfg);
   ~PosixUDPSocket() override;
 
-  SocketError bind(const SocketAddress& address, std::uint16_t port) override;
-  SocketResult sendTo(const void* data,
-                      std::size_t length,
-                      const SocketAddress& toAddr,
-                      std::uint16_t toPort) override;
-  SocketResult receive(void* buffer,
-                       std::size_t capacity,
-                       SocketAddress& fromAddr,
-                       std::uint16_t& fromPort) override;
-  void poll(ISocketEventHandler* handler) override;
-  SocketError setBlocking(bool enable) override;
-  bool isBlocking() const override;
-  std::uint16_t localPort() const override;
-  SocketType type() const override;
-  int nativeHandle() const override;
-  void close() override;
+  SocketError Bind(const SocketAddress& address, std::uint16_t port) override;
+  SocketResult SendTo(const void* data, std::size_t length,
+                      const SocketAddress& to_addr,
+                      std::uint16_t to_port) override;
+  SocketResult Receive(void* buffer, std::size_t capacity,
+                       SocketAddress& from_addr,
+                       std::uint16_t& from_port) override;
+  void Poll(ISocketEventHandler* handler) override;
+  SocketError SetBlocking(bool enable) override;
+  [[nodiscard]] bool IsBlocking() const override;
+  [[nodiscard]] std::uint16_t LocalPort() const override;
+  [[nodiscard]] SocketType Type() const override;
+  [[nodiscard]] int NativeHandle() const override;
+  void Close() override;
 
-private:
+ private:
   int fd = -1;
   bool blocking = false;
-  std::uint16_t boundPort = 0;
+  std::uint16_t bound_port = 0;
   SocketConfig config;
   int family = AF_UNSPEC;
 };
 
-PosixUDPSocket::PosixUDPSocket(const SocketConfig& cfg)
-  : config(cfg)
-{
-}
+PosixUDPSocket::PosixUDPSocket(const SocketConfig& cfg) : config(cfg) {}
 
-PosixUDPSocket::~PosixUDPSocket()
-{
-  close();
-}
+PosixUDPSocket::~PosixUDPSocket() { Close(); }
 
-SocketError PosixUDPSocket::bind(const SocketAddress& address, std::uint16_t port)
-{
-  if (fd != -1)
-    return SocketError::InvalidParam; // already open
+SocketError PosixUDPSocket::Bind(const SocketAddress& address,
+                                 std::uint16_t port) {
+  if (fd != -1) return SocketError::kInvalidParam;  // already open
 
-  if (address.isIPv6 && !config.enableIPv6)
-    return SocketError::Unsupported;
+  if (address.isIPv6 && !config.enableIPv6) return SocketError::kUnsupported;
 
   family = address.isIPv6 ? AF_INET6 : AF_INET;
   fd = ::socket(family, SOCK_DGRAM, IPPROTO_UDP);
-  if (fd == -1)
-    return map_errno(errno);
+  if (fd == -1) return MapErrno(errno);
 
-  if (family == AF_INET6)
-  {
-    int v6only = config.enableIPv6 ? 0 : 1; // 0 allows dual-stack
+  if (family == AF_INET6) {
+    int v6only = config.enableIPv6 ? 0 : 1;  // 0 allows dual-stack
     ::setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only));
   }
 
-  if (config.reuseAddress)
-  {
+  if (config.reuseAddress) {
     int v = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(v));
   }
-  if (config.sendBufferSize > 0)
-    ::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &config.sendBufferSize, sizeof(int));
-  if (config.recvBufferSize > 0)
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &config.recvBufferSize, sizeof(int));
+  if (config.sendBufferSize > 0) {
+    ::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &config.sendBufferSize,
+                 sizeof(int));
+  }
+  if (config.recvBufferSize > 0) {
+    ::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &config.recvBufferSize,
+                 sizeof(int));
+  }
 
-  if (config.nonBlocking)
-  {
+  if (config.nonBlocking) {
     ::fcntl(fd, F_SETFL, O_NONBLOCK);
     blocking = false;
   }
 
   sockaddr_storage addr{};
-  socklen_t addrLen = 0;
-  int targetFamily = AF_UNSPEC;
-  if (!fill_sockaddr_storage(address, port, family == AF_INET6, addr, targetFamily, addrLen))
-  {
+  socklen_t addr_len = 0;
+  int target_family = AF_UNSPEC;
+  if (!FillSockaddrStorage(address, port, family == AF_INET6, addr,
+                           target_family, addr_len)) {
     ::close(fd);
     fd = -1;
     family = AF_UNSPEC;
-    return SocketError::InvalidParam;
+    return SocketError::kInvalidParam;
   }
 
-  if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), addrLen) != 0)
-  {
-    SocketError err = map_errno(errno);
+  if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), addr_len) != 0) {
+    const SocketError err = MapErrno(errno);
     ::close(fd);
     fd = -1;
     family = AF_UNSPEC;
@@ -146,224 +130,178 @@ SocketError PosixUDPSocket::bind(const SocketAddress& address, std::uint16_t por
   }
 
   // Get the actual assigned port (important when port == 0)
-  sockaddr_storage boundAddr{};
-  socklen_t boundLen = sizeof(boundAddr);
-  if (::getsockname(fd, reinterpret_cast<sockaddr*>(&boundAddr), &boundLen) == 0)
-  {
-    if (boundAddr.ss_family == AF_INET)
-    {
-      boundPort = ntohs(reinterpret_cast<sockaddr_in*>(&boundAddr)->sin_port);
+  sockaddr_storage bound_addr{};
+  socklen_t bound_len = sizeof(bound_addr);
+  if (::getsockname(fd, reinterpret_cast<sockaddr*>(&bound_addr), &bound_len) ==
+      0) {
+    if (bound_addr.ss_family == AF_INET) {
+      bound_port = ntohs(reinterpret_cast<sockaddr_in*>(&bound_addr)->sin_port);
+    } else if (bound_addr.ss_family == AF_INET6) {
+      bound_port =
+          ntohs(reinterpret_cast<sockaddr_in6*>(&bound_addr)->sin6_port);
     }
-    else if (boundAddr.ss_family == AF_INET6)
-    {
-      boundPort = ntohs(reinterpret_cast<sockaddr_in6*>(&boundAddr)->sin6_port);
-    }
-  }
-  else
-  {
-    boundPort = port; // fallback
+  } else {
+    bound_port = port;  // fallback
   }
 
-  return SocketError::None;
+  return SocketError::kNone;
 }
 
-SocketResult PosixUDPSocket::sendTo(const void* data,
-                                    std::size_t length,
-                                    const SocketAddress& toAddr,
-                                    std::uint16_t toPort)
-{
-  if (data == nullptr || length == 0)
-    return { -1, SocketError::InvalidParam };
+SocketResult PosixUDPSocket::SendTo(const void* data, std::size_t length,
+                                    const SocketAddress& to_addr,
+                                    std::uint16_t to_port) {
+  if (data == nullptr || length == 0) {
+    return {.bytes = -1, .error = SocketError::kInvalidParam};
+  }
 
-  if (fd != -1 && toAddr.isIPv6 && family == AF_INET)
-    return { -1, SocketError::Unsupported };
+  if (fd != -1 && to_addr.isIPv6 && family == AF_INET) {
+    return {.bytes = -1, .error = SocketError::kUnsupported};
+  }
 
-  if (toAddr.isIPv6 && !config.enableIPv6)
-    return { -1, SocketError::Unsupported };
+  if (to_addr.isIPv6 && !config.enableIPv6) {
+    return {.bytes = -1, .error = SocketError::kUnsupported};
+  }
 
-  // Lazy open if socket is not created (could require bind — but UDP allows send without bind).
-  if (fd == -1)
-  {
-    family = toAddr.isIPv6 ? AF_INET6 : AF_INET;
+  // Lazy open if socket is not created (could require bind — but UDP allows
+  // send without bind).
+  if (fd == -1) {
+    family = to_addr.isIPv6 ? AF_INET6 : AF_INET;
     fd = ::socket(family, SOCK_DGRAM, IPPROTO_UDP);
-    if (fd == -1)
-      return { -1, map_errno(errno) };
+    if (fd == -1) return {.bytes = -1, .error = MapErrno(errno)};
 
-    if (family == AF_INET6)
-    {
+    if (family == AF_INET6) {
       int v6only = config.enableIPv6 ? 0 : 1;
       ::setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only));
     }
 
-    if (config.nonBlocking)
-    {
+    if (config.nonBlocking) {
       ::fcntl(fd, F_SETFL, O_NONBLOCK);
       blocking = false;
     }
     // reuseAddress for sender — optional
-    if (config.reuseAddress)
-    {
+    if (config.reuseAddress) {
       int v = 1;
       ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(v));
     }
   }
 
   sockaddr_storage addr{};
-  socklen_t addrLen = 0;
-  int targetFamily = AF_UNSPEC;
-  if (!fill_sockaddr_storage(toAddr, toPort, family == AF_INET6, addr, targetFamily, addrLen))
-    return { -1, SocketError::InvalidParam };
+  socklen_t addr_len = 0;
+  int target_family = AF_UNSPEC;
+  if (!FillSockaddrStorage(to_addr, to_port, family == AF_INET6, addr,
+                           target_family, addr_len)) {
+    return {.bytes = -1, .error = SocketError::kInvalidParam};
+  }
 
-  ssize_t sent = ::sendto(fd,
-                          reinterpret_cast<const char*>(data),
-                          length,
-                          0,
-                          reinterpret_cast<sockaddr*>(&addr),
-                          addrLen);
-  if (sent == -1)
-    return { -1, map_errno(errno) };
+  const ssize_t sent = ::sendto(fd, reinterpret_cast<const char*>(data), length, 0,
+                      reinterpret_cast<sockaddr*>(&addr), addr_len);
+  if (std::cmp_equal(sent , -1)) return {.bytes = -1, .error = MapErrno(errno)};
 
-  return { sent, SocketError::None };
+  return {.bytes = static_cast<ptrdiff_t>(sent), .error = SocketError::kNone};
 }
 
-SocketResult PosixUDPSocket::receive(void* buffer,
-                                     std::size_t capacity,
-                                     SocketAddress& fromAddr,
-                                     std::uint16_t& fromPort)
-{
-  if (fd == -1)
-    return { -1, SocketError::NotBound };
-  if (buffer == nullptr || capacity == 0)
-    return { -1, SocketError::InvalidParam };
+SocketResult PosixUDPSocket::Receive(void* buffer, std::size_t capacity,
+                                     SocketAddress& from_addr,
+                                     std::uint16_t& from_port) {
+  if (fd == -1) return {.bytes = -1, .error = SocketError::kNotBound};
+  if (buffer == nullptr || capacity == 0) {
+    return {.bytes = -1, .error = SocketError::kInvalidParam};
+  }
 
   sockaddr_storage addr{};
   socklen_t len = sizeof(addr);
-  ssize_t got = ::recvfrom(fd,
-                           reinterpret_cast<char*>(buffer),
-                           capacity,
-                           0,
-                           reinterpret_cast<sockaddr*>(&addr),
-                           &len);
-  if (got == -1)
-    return { -1, map_errno(errno) };
+  const ssize_t got = ::recvfrom(fd, reinterpret_cast<char*>(buffer), capacity, 0,
+                           reinterpret_cast<sockaddr*>(&addr), &len);
+  if (std::cmp_equal(got, -1)) return {.bytes = -1, .error = MapErrno(errno)};
 
-  fromAddr = socketaddress_from_sockaddr(addr);
-  if (addr.ss_family == AF_INET)
-    fromPort = ntohs(reinterpret_cast<sockaddr_in*>(&addr)->sin_port);
-  else if (addr.ss_family == AF_INET6)
-    fromPort = ntohs(reinterpret_cast<sockaddr_in6*>(&addr)->sin6_port);
-  else
-    fromPort = 0;
-  return { got, SocketError::None };
+  from_addr = SocketaddressFromSockaddr(addr);
+  if (addr.ss_family == AF_INET) {
+    from_port = ntohs(reinterpret_cast<sockaddr_in*>(&addr)->sin_port);
+  } else if (addr.ss_family == AF_INET6) {
+    from_port = ntohs(reinterpret_cast<sockaddr_in6*>(&addr)->sin6_port);
+  } else {
+    from_port = 0;
+  }
+  return {.bytes = got, .error = SocketError::kNone};
 }
 
-void PosixUDPSocket::poll(ISocketEventHandler* handler)
-{
-  if (handler == nullptr || fd == -1)
-    return;
+void PosixUDPSocket::Poll(ISocketEventHandler* handler) {
+  if (handler == nullptr || fd == -1) return;
 
   // Single read loop until WouldBlock.
-  for (;;)
-  {
+  for (;;) {
     SocketAddress from;
     std::uint16_t port = 0;
     char temp[2048];
-    SocketResult r = receive(temp, sizeof(temp), from, port);
-    if (!r.succeeded())
-    {
-      if (r.error != SocketError::WouldBlock)
-        handler->onSocketError(r.error);
+    const SocketResult r = Receive(temp, sizeof(temp), from, port);
+    if (!r.Succeeded()) {
+      if (r.error != SocketError::kWouldBlock) handler->OnSocketError(r.error);
       break;
     }
-    if (r.bytes <= 0)
-      break;
-    handler->onDataReceived(from, port, temp, static_cast<std::size_t>(r.bytes));
+    if (r.bytes <= 0) break;
+    handler->OnDataReceived(from, port, temp,
+                            static_cast<std::size_t>(r.bytes));
 
     // Heuristic: if received less than full buffer — finish
-    if (r.bytes < static_cast<std::ptrdiff_t>(sizeof(temp)))
-      break;
+    if (std::cmp_less(r.bytes, sizeof(temp))) break;
   }
 }
 
-SocketError PosixUDPSocket::setBlocking(bool enable)
-{
-  if (fd == -1)
-    return SocketError::NotBound;
+SocketError PosixUDPSocket::SetBlocking(bool enable) {
+  if (fd == -1) return SocketError::kNotBound;
 
   int flags = ::fcntl(fd, F_GETFL, 0);
-  if (flags == -1)
-    return map_errno(errno);
+  if (flags == -1) return MapErrno(errno);
 
-  if (enable)
+  if (enable) {
     flags &= ~O_NONBLOCK;
-  else
+  } else {
     flags |= O_NONBLOCK;
+  }
 
-  if (::fcntl(fd, F_SETFL, flags) == -1)
-    return map_errno(errno);
+  if (::fcntl(fd, F_SETFL, flags) == -1) return MapErrno(errno);
 
   blocking = enable;
-  return SocketError::None;
+  return SocketError::kNone;
 }
 
-bool PosixUDPSocket::isBlocking() const
-{
-  return blocking;
-}
+bool PosixUDPSocket::IsBlocking() const { return blocking; }
 
-std::uint16_t PosixUDPSocket::localPort() const
-{
-  return boundPort;
-}
+std::uint16_t PosixUDPSocket::LocalPort() const { return bound_port; }
 
-SocketType PosixUDPSocket::type() const
-{
-  return SocketType::UDP;
-}
+SocketType PosixUDPSocket::Type() const { return SocketType::kUdp; }
 
-int PosixUDPSocket::nativeHandle() const
-{
-  return fd;
-}
+int PosixUDPSocket::NativeHandle() const { return fd; }
 
-void PosixUDPSocket::close()
-{
-  if (fd != -1)
-  {
+void PosixUDPSocket::Close() {
+  if (fd != -1) {
     ::close(fd);
     fd = -1;
-    boundPort = 0;
+    bound_port = 0;
     family = AF_UNSPEC;
   }
 }
 
-
 // POSIX Socket Factory (currently implements only UDP).
-class PosixSocketFactory : public ISocketFactory
-{
-public:
-  std::unique_ptr<ISocket> createSocket(SocketType type,
-                                        const SocketConfig& cfg) override
-  {
-    switch (type)
-    {
-      case SocketType::UDP:
+class PosixSocketFactory : public ISocketFactory {
+ public:
+  std::unique_ptr<ISocket> CreateSocket(SocketType type,
+                                        const SocketConfig& cfg) override {
+    switch (type) {
+      case SocketType::kUdp:
         return std::make_unique<PosixUDPSocket>(cfg);
-      case SocketType::TCP:
-        // TODO: add TCP socket implementation (PosixTCPSocket)
-        return nullptr;
+      case SocketType::kTcp:
       default:
         return nullptr;
     }
   }
 };
 
-
-// Public function to register the factory. Call once during network layer initialization.
-void register_posix_socket_factory()
-{
+// Public function to register the factory. Call once during network layer
+// initialization.
+void RegisterPosixSocketFactory() {
   static PosixSocketFactory factory;
-  SocketFactoryRegistry::setFactory(&factory);
+  SocketFactoryRegistry::SetFactory(&factory);
 }
 
-} // namespace socketwire
+}  // namespace socketwire

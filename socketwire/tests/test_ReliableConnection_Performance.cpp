@@ -1,51 +1,45 @@
 #include <gtest/gtest.h>
-#include "reliable_connection.hpp"
-#include "i_socket.hpp"
-#include "socket_init.hpp"
-#include "bit_stream.hpp"
-#include <chrono>
-#include <thread>
-#include <atomic>
-#include <iostream>
 
-using socketwire::ReliableConnection;
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <iostream>
+#include <thread>
+
+#include "bit_stream.hpp"
+#include "i_socket.hpp"
+#include "reliable_connection.hpp"
+#include "socket_init.hpp"
+
+using socketwire::BitStream;
 using socketwire::ConnectionManager;
-using socketwire::ReliableConnectionConfig;
 using socketwire::IReliableConnectionHandler;
 using socketwire::ISocket;
+using socketwire::ReliableConnection;
 using socketwire::SocketAddress;
-using socketwire::SocketError;
 using socketwire::SocketConfig;
+using socketwire::SocketError;
 using socketwire::SocketFactoryRegistry;
-using socketwire::BitStream;
 
-using std::chrono::high_resolution_clock;
 using std::chrono::duration_cast;
-using std::chrono::milliseconds;
+using std::chrono::high_resolution_clock;
 using std::chrono::microseconds;
+using std::chrono::milliseconds;
 
-
-
-class ReliableConnectionPerformanceTest : public ::testing::Test
-{
-protected:
-  void SetUp() override
-  {
-    bool result = socketwire::initialize_sockets();
+class ReliableConnectionPerformanceTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    const bool result = socketwire::InitializeSockets();
     ASSERT_TRUE(result) << "Socket initialization should succeed";
 
-    auto factory = SocketFactoryRegistry::getFactory();
+    auto factory = SocketFactoryRegistry::GetFactory();
     ASSERT_NE(factory, nullptr) << "Socket factory should be available";
   }
 
-  void TearDown() override
-  {
-    socketwire::shutdown_sockets();
-  }
+  void TearDown() override { socketwire::ShutdownSockets(); }
 
   // Helper to measure throughput
-  struct ThroughputResult
-  {
+  struct ThroughputResult {
     double packetsPerSecond;
     double bytesPerSecond;
     double averageLatencyMs;
@@ -56,28 +50,24 @@ protected:
 };
 
 // Simple packet counter handler
-class CounterHandler : public IReliableConnectionHandler
-{
-public:
+class CounterHandler : public IReliableConnectionHandler {
+ public:
   std::atomic<uint32_t> reliableCount{0};
   std::atomic<uint32_t> unreliableCount{0};
   std::atomic<bool> connected{false};
 
-  void onConnected() override
-  {
-    connected = true;
-  }
+  void OnConnected() override { connected = true; }
 
-  void onReliableReceived(uint8_t channel, const void* data, size_t size) override
-  {
+  void OnReliableReceived(uint8_t channel, const void* data,
+                          size_t size) override {
     (void)channel;
     (void)data;
     (void)size;
     reliableCount++;
   }
 
-  void onUnreliableReceived(uint8_t channel, const void* data, size_t size) override
-  {
+  void OnUnreliableReceived(uint8_t channel, const void* data,
+                            size_t size) override {
     (void)channel;
     (void)data;
     (void)size;
@@ -85,501 +75,519 @@ public:
   }
 };
 
-TEST_F(ReliableConnectionPerformanceTest, DISABLED_SmallPacketThroughput)
-{
-  const uint16_t SERVER_PORT = 16001;
-  const int PACKET_COUNT = 1000;
-  const size_t PACKET_SIZE = 64; // Small packets
+TEST_F(ReliableConnectionPerformanceTest, DISABLED_SmallPacketThroughput) {
+  const uint16_t server_port = 16001;
+  const int packet_count = 1000;
+  const size_t packet_size = 64;  // Small packets
 
-  auto factory = SocketFactoryRegistry::getFactory();
+  auto factory = SocketFactoryRegistry::GetFactory();
 
   // Server
   SocketConfig cfg;
   cfg.nonBlocking = true;
-  auto serverSocket = factory->createUDPSocket(cfg);
-  ASSERT_NE(serverSocket, nullptr);
-  ASSERT_EQ(serverSocket->bind(SocketAddress::fromIPv4(0), SERVER_PORT), SocketError::None);
+  auto server_socket = factory->CreateUdpSocket(cfg);
+  ASSERT_NE(server_socket, nullptr);
+  ASSERT_EQ(server_socket->Bind(SocketAddress::FromIPv4(0), server_port),
+            SocketError::kNone);
 
-  CounterHandler serverHandler;
-  auto serverManager = std::make_unique<ConnectionManager>(serverSocket.get());
-  serverManager->setHandler(&serverHandler);
+  CounterHandler server_handler;
+  auto server_manager =
+      std::make_unique<ConnectionManager>(server_socket.get());
+  server_manager->SetHandler(&server_handler);
 
   // Client
-  auto clientSocket = factory->createUDPSocket(cfg);
-  CounterHandler clientHandler;
-  auto clientConn = std::make_unique<ReliableConnection>(clientSocket.get());
-  clientConn->setHandler(&clientHandler);
+  auto client_socket = factory->CreateUdpSocket(cfg);
+  CounterHandler client_handler;
+  auto client_conn = std::make_unique<ReliableConnection>(client_socket.get());
+  client_conn->SetHandler(&client_handler);
 
-  clientConn->connect(SocketAddress::fromIPv4(0x7F000001), SERVER_PORT);
+  client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
 
   // Network thread
   std::atomic<bool> running{true};
-  std::thread networkThread([&]() {
+  std::thread network_thread([&]() {
     char buffer[2048];
-    while (running)
-    {
+    while (running) {
       SocketAddress from;
-      uint16_t fromPort;
+      uint16_t from_port = 0;
 
-      while (true)
-      {
-        auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+      while (true) {
+        auto result =
+            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          server_manager->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      while (true)
-      {
-        auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+      while (true) {
+        auto result =
+            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          client_conn->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      serverManager->update();
-      clientConn->update();
+      server_manager->Update();
+      client_conn->Update();
 
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   });
 
   // Wait for connection
-  for (int i = 0; i < 100 && !clientHandler.connected; i++)
-  {
+  for (int i = 0; i < 100 && !client_handler.connected; i++) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-  ASSERT_TRUE(clientHandler.connected);
+  ASSERT_TRUE(client_handler.connected);
 
   // Prepare data
-  std::vector<uint8_t> testData(PACKET_SIZE, 0xAB);
+  std::vector<uint8_t> test_data(packet_size, 0xAB);
 
   // Benchmark
-  auto startTime = high_resolution_clock::now();
+  auto start_time = high_resolution_clock::now();
 
-  for (int i = 0; i < PACKET_COUNT; i++)
-  {
-    clientConn->sendReliable(0, testData.data(), testData.size());
+  for (int i = 0; i < packet_count; i++) {
+    client_conn->SendReliable(0, test_data.data(), test_data.size());
   }
 
   // Wait for all packets to be received
-  for (int i = 0; i < 500 && serverHandler.reliableCount < PACKET_COUNT; i++)
-  {
+  for (int i = 0; i < 500 && server_handler.reliableCount < packet_count; i++) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
-  auto endTime = high_resolution_clock::now();
-  auto duration = duration_cast<milliseconds>(endTime - startTime).count();
+  auto end_time = high_resolution_clock::now();
+  auto duration = duration_cast<milliseconds>(end_time - start_time).count();
 
-  EXPECT_EQ(serverHandler.reliableCount, PACKET_COUNT) 
-    << "All packets should be received";
+  EXPECT_EQ(server_handler.reliableCount, packet_count)
+      << "All packets should be received";
 
-  double packetsPerSec = (PACKET_COUNT * 1000.0) / static_cast<double>(duration);
-  double bytesPerSec = (PACKET_COUNT * PACKET_SIZE * 1000.0) / static_cast<double>(duration);
+  const double packets_per_sec = (packet_count * 1000.0) / static_cast<double>(duration);
+  const double bytes_per_sec   = (packet_count * packet_size * 1000.0) / static_cast<double>(duration);
 
-  std::cout << "\n=== Small Packet Throughput ===" << std::endl;
-  std::cout << "Packets: " << PACKET_COUNT << std::endl;
-  std::cout << "Packet size: " << PACKET_SIZE << " bytes" << std::endl;
-  std::cout << "Duration: " << duration << " ms" << std::endl;
-  std::cout << "Throughput: " << packetsPerSec << " packets/sec" << std::endl;
-  std::cout << "Throughput: " << (bytesPerSec / 1024.0) << " KB/sec" << std::endl;
-  std::cout << "Lost packets: " << clientConn->getLostPackets() << std::endl;
-  std::cout << "RTT: " << clientConn->getRTT() << " ms" << std::endl;
+  std::cout << "\n=== Small Packet Throughput ===" << "\n";
+  std::cout << "Packets: " << packet_count << "\n";
+  std::cout << "Packet size: " << packet_size << " bytes" << "\n";
+  std::cout << "Duration: " << duration << " ms" << "\n";
+  std::cout << "Throughput: " << packets_per_sec << " packets/sec" << "\n";
+  std::cout << "Throughput: " << (bytes_per_sec / 1024.0) << " KB/sec"
+            << "\n";
+  std::cout << "Lost packets: " << client_conn->GetLostPackets() << "\n";
+  std::cout << "RTT: " << client_conn->GetRtt() << " ms" << "\n";
 
   running = false;
-  networkThread.join();
+  network_thread.join();
 }
 
-TEST_F(ReliableConnectionPerformanceTest, DISABLED_MediumPacketThroughput)
-{
-  const uint16_t SERVER_PORT = 16002;
-  const int PACKET_COUNT = 500;
-  const size_t PACKET_SIZE = 1024; // Larger packets
+TEST_F(ReliableConnectionPerformanceTest, DISABLED_MediumPacketThroughput) {
+  const uint16_t server_port = 16002;
+  const int packet_count = 500;
+  const size_t packet_size = 1024;  // Larger packets
 
-  auto factory = SocketFactoryRegistry::getFactory();
+  auto factory = SocketFactoryRegistry::GetFactory();
 
   SocketConfig cfg;
   cfg.nonBlocking = true;
-  auto serverSocket = factory->createUDPSocket(cfg);
-  ASSERT_NE(serverSocket, nullptr);
-  ASSERT_EQ(serverSocket->bind(SocketAddress::fromIPv4(0), SERVER_PORT), SocketError::None);
+  auto server_socket = factory->CreateUdpSocket(cfg);
+  ASSERT_NE(server_socket, nullptr);
+  ASSERT_EQ(server_socket->Bind(SocketAddress::FromIPv4(0), server_port),
+            SocketError::kNone);
 
-  CounterHandler serverHandler;
-  auto serverManager = std::make_unique<ConnectionManager>(serverSocket.get());
-  serverManager->setHandler(&serverHandler);
+  CounterHandler server_handler;
+  auto server_manager =
+      std::make_unique<ConnectionManager>(server_socket.get());
+  server_manager->SetHandler(&server_handler);
 
-  auto clientSocket = factory->createUDPSocket(cfg);
-  CounterHandler clientHandler;
-  auto clientConn = std::make_unique<ReliableConnection>(clientSocket.get());
-  clientConn->setHandler(&clientHandler);
+  auto client_socket = factory->CreateUdpSocket(cfg);
+  CounterHandler client_handler;
+  auto client_conn = std::make_unique<ReliableConnection>(client_socket.get());
+  client_conn->SetHandler(&client_handler);
 
-  clientConn->connect(SocketAddress::fromIPv4(0x7F000001), SERVER_PORT);
+  client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
 
   std::atomic<bool> running{true};
-  std::thread networkThread([&]() {
+  std::thread network_thread([&]() {
     char buffer[2048];
-    while (running)
-    {
+    while (running) {
       SocketAddress from;
-      uint16_t fromPort;
+      uint16_t from_port = 0;
 
-      while (true)
-      {
-        auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+      while (true) {
+        auto result =
+            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          server_manager->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      while (true)
-      {
-        auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+      while (true) {
+        auto result =
+            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          client_conn->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      serverManager->update();
-      clientConn->update();
+      server_manager->Update();
+      client_conn->Update();
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   });
 
-  for (int i = 0; i < 100 && !clientHandler.connected; i++)
-  {
+  for (int i = 0; i < 100 && !client_handler.connected; i++) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-  ASSERT_TRUE(clientHandler.connected);
+  ASSERT_TRUE(client_handler.connected);
 
-  std::vector<uint8_t> testData(PACKET_SIZE, 0xCD);
+  std::vector<uint8_t> test_data(packet_size, 0xCD);
 
-  auto startTime = high_resolution_clock::now();
+  auto start_time = high_resolution_clock::now();
 
-  for (int i = 0; i < PACKET_COUNT; i++)
-  {
-    clientConn->sendReliable(0, testData.data(), testData.size());
+  for (int i = 0; i < packet_count; i++) {
+    client_conn->SendReliable(0, test_data.data(), test_data.size());
   }
 
-  for (int i = 0; i < 500 && serverHandler.reliableCount < PACKET_COUNT; i++)
-  {
+  for (int i = 0; i < 500 && server_handler.reliableCount < packet_count; i++) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
-  auto endTime = high_resolution_clock::now();
-  auto duration = duration_cast<milliseconds>(endTime - startTime).count();
+  auto end_time = high_resolution_clock::now();
+  auto duration = duration_cast<milliseconds>(end_time - start_time).count();
 
-  EXPECT_EQ(serverHandler.reliableCount, PACKET_COUNT);
+  EXPECT_EQ(server_handler.reliableCount, packet_count);
 
-  double packetsPerSec = (PACKET_COUNT * 1000.0) / static_cast<double>(duration);
-  double bytesPerSec = (PACKET_COUNT * PACKET_SIZE * 1000.0) / static_cast<double>(duration);
+  const double packets_per_sec =
+      (packet_count * 1000.0) / static_cast<double>(duration);
+  const double bytes_per_sec =
+      (packet_count * packet_size * 1000.0) / static_cast<double>(duration);
 
-  std::cout << "\n=== Large Packet Throughput ===" << std::endl;
-  std::cout << "Packets: " << PACKET_COUNT << std::endl;
-  std::cout << "Packet size: " << PACKET_SIZE << " bytes" << std::endl;
-  std::cout << "Duration: " << duration << " ms" << std::endl;
-  std::cout << "Throughput: " << packetsPerSec << " packets/sec" << std::endl;
-  std::cout << "Throughput: " << (bytesPerSec / 1024.0) << " KB/sec" << std::endl;
-  std::cout << "Lost packets: " << clientConn->getLostPackets() << std::endl;
-  std::cout << "RTT: " << clientConn->getRTT() << " ms" << std::endl;
+  std::cout << "\n=== Large Packet Throughput ===" << "\n";
+  std::cout << "Packets: " << packet_count << "\n";
+  std::cout << "Packet size: " << packet_size << " bytes" << "\n";
+  std::cout << "Duration: " << duration << " ms" << "\n";
+  std::cout << "Throughput: " << packets_per_sec << " packets/sec" << "\n";
+  std::cout << "Throughput: " << (bytes_per_sec / 1024.0) << " KB/sec"
+            << "\n";
+  std::cout << "Lost packets: " << client_conn->GetLostPackets() << "\n";
+  std::cout << "RTT: " << client_conn->GetRtt() << " ms" << "\n";
 
   running = false;
-  networkThread.join();
+  network_thread.join();
 }
 
-TEST_F(ReliableConnectionPerformanceTest, DISABLED_LargePacketThroughput)
-{
-  const uint16_t SERVER_PORT = 16003;
-  const int PACKET_COUNT = 500;
-  const size_t PACKET_SIZE = 128;
+TEST_F(ReliableConnectionPerformanceTest, DISABLED_LargePacketThroughput) {
+  const uint16_t server_port = 16003;
+  const int packet_count = 500;
+  const size_t packet_size = 128;
 
-  auto factory = SocketFactoryRegistry::getFactory();
+  auto factory = SocketFactoryRegistry::GetFactory();
 
   SocketConfig cfg;
   cfg.nonBlocking = true;
-  auto serverSocket = factory->createUDPSocket(cfg);
-  ASSERT_NE(serverSocket, nullptr);
-  ASSERT_EQ(serverSocket->bind(SocketAddress::fromIPv4(0), SERVER_PORT), SocketError::None);
+  auto server_socket = factory->CreateUdpSocket(cfg);
+  ASSERT_NE(server_socket, nullptr);
+  ASSERT_EQ(server_socket->Bind(SocketAddress::FromIPv4(0), server_port),
+            SocketError::kNone);
 
-  CounterHandler serverHandler;
-  auto serverManager = std::make_unique<ConnectionManager>(serverSocket.get());
-  serverManager->setHandler(&serverHandler);
+  CounterHandler server_handler;
+  auto server_manager =
+      std::make_unique<ConnectionManager>(server_socket.get());
+  server_manager->SetHandler(&server_handler);
 
-  auto clientSocket = factory->createUDPSocket(cfg);
-  CounterHandler clientHandler;
-  auto clientConn = std::make_unique<ReliableConnection>(clientSocket.get());
-  clientConn->setHandler(&clientHandler);
+  auto client_socket = factory->CreateUdpSocket(cfg);
+  CounterHandler client_handler;
+  auto client_conn = std::make_unique<ReliableConnection>(client_socket.get());
+  client_conn->SetHandler(&client_handler);
 
-  clientConn->connect(SocketAddress::fromIPv4(0x7F000001), SERVER_PORT);
+  client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
 
   std::atomic<bool> running{true};
-  std::thread networkThread([&]() {
+  std::thread network_thread([&]() {
     char buffer[2048];
-    while (running)
-    {
+    while (running) {
       SocketAddress from;
-      uint16_t fromPort;
+      uint16_t from_port = 0;
 
-      while (true)
-      {
-        auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+      while (true) {
+        auto result =
+            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          server_manager->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      while (true)
-      {
-        auto result = clientSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          clientConn->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+      while (true) {
+        auto result =
+            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          client_conn->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+        }
       }
 
-      serverManager->update();
-      clientConn->update();
+      server_manager->Update();
+      client_conn->Update();
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   });
 
   // Wait for connection with timeout
   bool connected = false;
-  for (int i = 0; i < 500 && !clientHandler.connected; i++)
-  {
+  for (int i = 0; i < 500 && !client_handler.connected; i++) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-  connected = clientHandler.connected;
-  
+  connected = client_handler.connected;
+
   if (!connected) {
     running = false;
-    networkThread.join();
+    network_thread.join();
     FAIL() << "Connection failed to establish within timeout";
   }
 
-  std::vector<uint8_t> testData(PACKET_SIZE, 0xEF);
+  std::vector<uint8_t> test_data(packet_size, 0xEF);
 
-  auto startTime = high_resolution_clock::now();
+  auto start_time = high_resolution_clock::now();
 
   // Send unreliable packets
-  for (int i = 0; i < PACKET_COUNT; i++)
-  {
-    clientConn->sendUnreliable(1, testData.data(), testData.size());
+  for (int i = 0; i < packet_count; i++) {
+    client_conn->SendUnreliable(1, test_data.data(), test_data.size());
   }
 
   // Give time for processing - wait until all packets are received or timeout
-  const int maxWaitIterations = 1000; // 10 seconds max
-  int waitIterations = 0;
-  while (serverHandler.unreliableCount < PACKET_COUNT && waitIterations < maxWaitIterations) {
+  const int max_wait_iterations = 1000;  // 10 seconds max
+  int wait_iterations = 0;
+  while (server_handler.unreliableCount < packet_count &&
+         wait_iterations < max_wait_iterations) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    waitIterations++;
+    wait_iterations++;
   }
 
-  auto endTime = high_resolution_clock::now();
-  auto duration = duration_cast<milliseconds>(endTime - startTime).count();
+  auto end_time = high_resolution_clock::now();
+  auto duration = duration_cast<milliseconds>(end_time - start_time).count();
 
-  uint32_t received = serverHandler.unreliableCount;
-  double deliveryRate = (received * 100.0) / PACKET_COUNT;
-  double packetsPerSec = (received * 1000.0) / static_cast<double>(duration);
-  double bytesPerSec = (received * PACKET_SIZE * 1000.0) / static_cast<double>(duration);
+  const uint32_t received = server_handler.unreliableCount;
+  const double delivery_rate   = (received * 100.0)  / packet_count;
+  const double packets_per_sec = (received * 1000.0) / static_cast<double>(duration);
+  const double bytes_per_sec   = (static_cast<double>(received) *
+                                  static_cast<double>(packet_size) * 1000.0) /
+                                  static_cast<double>(duration);
 
-  std::cout << "\n=== Unreliable Packet Throughput ===" << std::endl;
-  std::cout << "Packets sent: " << PACKET_COUNT << std::endl;
-  std::cout << "Packets received: " << received << std::endl;
-  std::cout << "Delivery rate: " << deliveryRate << "%" << std::endl;
-  std::cout << "Duration: " << duration << " ms" << std::endl;
-  std::cout << "Throughput: " << packetsPerSec << " packets/sec" << std::endl;
-  std::cout << "Throughput: " << (bytesPerSec / 1024.0) << " KB/sec" << std::endl;
-  std::cout << "Wait iterations: " << waitIterations << std::endl;
+  std::cout << "\n=== Unreliable Packet Throughput ===" << "\n";
+  std::cout << "Packets sent: " << packet_count << "\n";
+  std::cout << "Packets received: " << received << "\n";
+  std::cout << "Delivery rate: " << delivery_rate << "%" << "\n";
+  std::cout << "Duration: " << duration << " ms" << "\n";
+  std::cout << "Throughput: " << packets_per_sec << " packets/sec" << "\n";
+  std::cout << "Throughput: " << (bytes_per_sec / 1024.0) << " KB/sec"
+            << "\n";
+  std::cout << "Wait iterations: " << wait_iterations << "\n";
 
   // Unreliable should be faster and have high delivery rate on localhost
-  // Use a more realistic threshold for unreliable packets, especially under load
-  EXPECT_GT(deliveryRate, 70.0) << "Delivery rate should be reasonable on localhost, got " << deliveryRate << "%";
+  // Use a more realistic threshold for unreliable packets, especially under
+  // load
+  EXPECT_GT(delivery_rate, 70.0)
+      << "Delivery rate should be reasonable on localhost, got "
+      << delivery_rate << "%";
 
   running = false;
-  networkThread.join();
+  network_thread.join();
 }
 
-TEST_F(ReliableConnectionPerformanceTest, DISABLED_ConnectionScalability)
-{
-  const uint16_t SERVER_PORT = 16004;
-  const int NUM_CLIENTS = 10;
-  const int MESSAGES_PER_CLIENT = 50;
+TEST_F(ReliableConnectionPerformanceTest, DISABLED_ConnectionScalability) {
+  const uint16_t server_port = 16004;
+  const int num_clients = 10;
+  const int messages_per_client = 50;
 
-  auto factory = SocketFactoryRegistry::getFactory();
+  auto factory = SocketFactoryRegistry::GetFactory();
 
   SocketConfig cfg;
   cfg.nonBlocking = true;
-  auto serverSocket = factory->createUDPSocket(cfg);
-  ASSERT_NE(serverSocket, nullptr);
-  ASSERT_EQ(serverSocket->bind(SocketAddress::fromIPv4(0), SERVER_PORT), SocketError::None);
+  auto server_socket = factory->CreateUdpSocket(cfg);
+  ASSERT_NE(server_socket, nullptr);
+  ASSERT_EQ(server_socket->Bind(SocketAddress::FromIPv4(0), server_port),
+            SocketError::kNone);
 
-  CounterHandler serverHandler;
-  auto serverManager = std::make_unique<ConnectionManager>(serverSocket.get());
-  serverManager->setHandler(&serverHandler);
+  CounterHandler server_handler;
+  auto server_manager =
+      std::make_unique<ConnectionManager>(server_socket.get());
+  server_manager->SetHandler(&server_handler);
 
   // Create multiple clients
-  std::vector<std::unique_ptr<ISocket>> clientSockets;
-  std::vector<std::unique_ptr<ReliableConnection>> clientConns;
-  std::vector<std::unique_ptr<CounterHandler>> clientHandlers;
+  std::vector<std::unique_ptr<ISocket>> client_sockets;
+  std::vector<std::unique_ptr<ReliableConnection>> client_conns;
+  std::vector<std::unique_ptr<CounterHandler>> client_handlers;
 
-  for (int i = 0; i < NUM_CLIENTS; i++)
-  {
-    auto socket = factory->createUDPSocket(cfg);
+  for (int i = 0; i < num_clients; i++) {
+    auto socket = factory->CreateUdpSocket(cfg);
     auto handler = std::make_unique<CounterHandler>();
     auto conn = std::make_unique<ReliableConnection>(socket.get());
-    conn->setHandler(handler.get());
-    conn->connect(SocketAddress::fromIPv4(0x7F000001), SERVER_PORT);
+    conn->SetHandler(handler.get());
+    conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
 
-    clientSockets.push_back(std::move(socket));
-    clientConns.push_back(std::move(conn));
-    clientHandlers.push_back(std::move(handler));
+    client_sockets.push_back(std::move(socket));
+    client_conns.push_back(std::move(conn));
+    client_handlers.push_back(std::move(handler));
   }
 
   std::atomic<bool> running{true};
-  std::thread networkThread([&]() {
+  std::thread network_thread([&]() {
     char buffer[2048];
-    while (running)
-    {
+    while (running) {
       SocketAddress from;
-      uint16_t fromPort;
+      uint16_t from_port = 0;
 
-      while (true)
-      {
-        auto result = serverSocket->receive(buffer, sizeof(buffer), from, fromPort);
-        if (!result.succeeded()) break;
-        if (result.bytes > 0)
-          serverManager->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
-      }
-
-      for (size_t i = 0; i < clientSockets.size(); i++)
-      {
-        while (true)
-        {
-          auto result = clientSockets[i]->receive(buffer, sizeof(buffer), from, fromPort);
-          if (!result.succeeded()) break;
-          if (result.bytes > 0)
-            clientConns[i]->processPacket(buffer, static_cast<std::size_t>(result.bytes), from, fromPort);
+      while (true) {
+        auto result =
+            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+        if (!result.Succeeded()) break;
+        if (result.bytes > 0) {
+          server_manager->ProcessPacket(
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
-        clientConns[i]->update();
       }
 
-      serverManager->update();
+      for (size_t i = 0; i < client_sockets.size(); i++) {
+        while (true) {
+          auto result = client_sockets.at(i)->Receive(buffer, sizeof(buffer), from,
+                                                   from_port);
+          if (!result.Succeeded()) break;
+          if (result.bytes > 0) {
+            client_conns.at(i)->ProcessPacket(
+                buffer, static_cast<std::size_t>(result.bytes), from,
+                from_port);
+          }
+        }
+        client_conns.at(i)->Update();
+      }
+
+      server_manager->Update();
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   });
 
   // Wait for all connections
-  bool allConnected = false;
-  for (int attempt = 0; attempt < 200 && !allConnected; attempt++)
-  {
-    allConnected = true;
-    for (const auto& handler : clientHandlers)
-    {
-      if (!handler->connected)
-      {
-        allConnected = false;
+  bool all_connected = false;
+  for (int attempt = 0; attempt < 200 && !all_connected; attempt++) {
+    all_connected = true;
+    for (const auto& handler : client_handlers) {
+      if (!handler->connected) {
+        all_connected = false;
         break;
       }
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-  ASSERT_TRUE(allConnected);
+  ASSERT_TRUE(all_connected);
 
-  auto startTime = high_resolution_clock::now();
+  auto start_time = high_resolution_clock::now();
 
   // Each client sends messages
-  std::vector<uint8_t> testData(100, 0x42);
-  for (size_t i = 0; i < clientConns.size(); i++)
-  {
-    for (int j = 0; j < MESSAGES_PER_CLIENT; j++)
-    {
-      clientConns[i]->sendReliable(0, testData.data(), testData.size());
+  std::vector<uint8_t> test_data(100, 0x42);
+  for (const auto& client_conn : client_conns) {
+    for (int j = 0; j < messages_per_client; j++) {
+      client_conn->SendReliable(0, test_data.data(), test_data.size());
     }
   }
 
   // Wait for all messages
-  uint32_t expectedTotal = NUM_CLIENTS * MESSAGES_PER_CLIENT;
-  for (int i = 0; i < 1000 && serverHandler.reliableCount < expectedTotal; i++)
-  {
+  const uint32_t expected_total = num_clients * messages_per_client;
+  for (int i = 0; i < 1000 && server_handler.reliableCount < expected_total;
+       i++) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
-  auto endTime = high_resolution_clock::now();
-  auto duration = duration_cast<milliseconds>(endTime - startTime).count();
+  auto end_time = high_resolution_clock::now();
+  auto duration = duration_cast<milliseconds>(end_time - start_time).count();
 
-  std::cout << "\n=== Connection Scalability ===" << std::endl;
-  std::cout << "Clients: " << NUM_CLIENTS << std::endl;
-  std::cout << "Messages per client: " << MESSAGES_PER_CLIENT << std::endl;
-  std::cout << "Total messages: " << expectedTotal << std::endl;
-  std::cout << "Received: " << serverHandler.reliableCount.load() << std::endl;
-  std::cout << "Duration: " << duration << " ms" << std::endl;
-  std::cout << "Average per client: " << (duration / NUM_CLIENTS) << " ms" << std::endl;
+  std::cout << "\n=== Connection Scalability ===" << "\n";
+  std::cout << "Clients: " << num_clients << "\n";
+  std::cout << "Messages per client: " << messages_per_client << "\n";
+  std::cout << "Total messages: " << expected_total << "\n";
+  std::cout << "Received: " << server_handler.reliableCount.load() << "\n";
+  std::cout << "Duration: " << duration << " ms" << "\n";
+  std::cout << "Average per client: " << (duration / num_clients) << " ms"
+            << "\n";
 
-  EXPECT_EQ(serverHandler.reliableCount, expectedTotal);
+  EXPECT_EQ(server_handler.reliableCount, expected_total);
 
   running = false;
-  networkThread.join();
+  network_thread.join();
 }
 
-TEST_F(ReliableConnectionPerformanceTest, DISABLED_BitStreamSerializationPerformance)
-{
-  const int ITERATIONS = 100000;
+TEST_F(ReliableConnectionPerformanceTest,
+       DISABLED_BitStreamSerializationPerformance) {
+  const int iterations = 100000;
 
-  std::cout << "\n=== BitStream Serialization Performance ===" << std::endl;
+  std::cout << "\n=== BitStream Serialization Performance ===" << "\n";
 
   // Write performance
-  auto writeStart = high_resolution_clock::now();
+  auto write_start = high_resolution_clock::now();
 
-  for (int i = 0; i < ITERATIONS; i++)
-  {
+  for (int i = 0; i < iterations; i++) {
     BitStream bs;
-    bs.write<uint8_t>(42);
-    bs.write<uint16_t>(1234);
-    bs.write<uint32_t>(123456);
-    bs.write<float>(3.14f);
-    bs.write<double>(2.718);
-    bs.write<bool>(true);
+    bs.Write<uint8_t>(42);
+    bs.Write<uint16_t>(1234);
+    bs.Write<uint32_t>(123456);
+    bs.Write<float>(3.14f);
+    bs.Write<double>(2.718);
+    bs.Write<bool>(true);
   }
 
-  auto writeEnd = high_resolution_clock::now();
-  auto writeDuration = duration_cast<microseconds>(writeEnd - writeStart).count();
+  auto write_end = high_resolution_clock::now();
+  auto write_duration =
+      duration_cast<microseconds>(write_end - write_start).count();
 
-  std::cout << "Write operations: " << ITERATIONS << std::endl;
-  std::cout << "Write time: " << writeDuration << " μs" << std::endl;
-  std::cout << "Writes per second: " << (ITERATIONS * 1000000.0 / static_cast<double>(writeDuration)) << std::endl;
+  std::cout << "Write operations: " << iterations << "\n";
+  std::cout << "Write time: " << write_duration << " μs" << "\n";
+  std::cout << "Writes per second: "
+            << (iterations * 1000000.0 / static_cast<double>(write_duration))
+            << "\n";
 
   // Read performance
   BitStream bs;
-  bs.write<uint8_t>(42);
-  bs.write<uint16_t>(1234);
-  bs.write<uint32_t>(123456);
-  bs.write<float>(3.14f);
-  bs.write<double>(2.718);
-  bs.write<bool>(true);
+  bs.Write<uint8_t>(42);
+  bs.Write<uint16_t>(1234);
+  bs.Write<uint32_t>(123456);
+  bs.Write<float>(3.14f);
+  bs.Write<double>(2.718);
+  bs.Write<bool>(true);
 
-  auto readStart = high_resolution_clock::now();
+  auto read_start = high_resolution_clock::now();
 
-  for (int i = 0; i < ITERATIONS; i++)
-  {
-    bs.resetRead();
-    uint8_t v1;
-    uint16_t v2;
-    uint32_t v3;
-    float v4;
-    double v5;
-    bool v6;
+  for (int i = 0; i < iterations; i++) {
+    bs.ResetRead();
+    uint8_t v1 = 0;
+    uint16_t v2 = 0;
+    uint32_t v3 = 0;
+    float v4 = NAN;
+    double v5 = NAN;
+    bool v6 = false;
 
-    bs.read<uint8_t>(v1);
-    bs.read<uint16_t>(v2);
-    bs.read<uint32_t>(v3);
-    bs.read<float>(v4);
-    bs.read<double>(v5);
-    bs.read<bool>(v6);
+    bs.Read<uint8_t>(v1);
+    bs.Read<uint16_t>(v2);
+    bs.Read<uint32_t>(v3);
+    bs.Read<float>(v4);
+    bs.Read<double>(v5);
+    bs.Read<bool>(v6);
   }
 
-  auto readEnd = high_resolution_clock::now();
-  auto readDuration = duration_cast<microseconds>(readEnd - readStart).count();
+  auto read_end = high_resolution_clock::now();
+  auto read_duration =
+      duration_cast<microseconds>(read_end - read_start).count();
 
-  std::cout << "Read operations: " << ITERATIONS << std::endl;
-  std::cout << "Read time: " << readDuration << " μs" << std::endl;
-  std::cout << "Reads per second: " << (ITERATIONS * 1000000.0 / static_cast<double>(readDuration)) << std::endl;
+  std::cout << "Read operations: " << iterations << "\n";
+  std::cout << "Read time: " << read_duration << " μs" << "\n";
+  std::cout << "Reads per second: "
+            << (iterations * 1000000.0 / static_cast<double>(read_duration))
+            << "\n";
 }

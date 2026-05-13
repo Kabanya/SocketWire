@@ -1,171 +1,145 @@
-#include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include "reliable_connection.hpp"
-#include "i_socket.hpp"
+#include <gtest/gtest.h>
+
 #include <algorithm>
-#include <vector>
-#include <thread>
 #include <chrono>
 #include <cstring>
+#include <thread>
+#include <vector>
 
-using socketwire::ReliableConnection;
+#include "i_socket.hpp"
+#include "reliable_connection.hpp"
+
+using socketwire::BitStream;
 using socketwire::ConnectionManager;
-using socketwire::ReliableConnectionConfig;
 using socketwire::ConnectionState;
 using socketwire::IReliableConnectionHandler;
+using socketwire::ISocket;
 using socketwire::ISocketEventHandler;
 using socketwire::PacketType;
-using socketwire::BitStream;
-using socketwire::ISocket;
+using socketwire::ReliableConnection;
+using socketwire::ReliableConnectionConfig;
 using socketwire::SocketAddress;
 using socketwire::SocketError;
 using socketwire::SocketResult;
-using socketwire::SocketConfig;
 using socketwire::SocketType;
-using socketwire::SocketFactoryRegistry;
 
 namespace {
 
 // Mock socket for testing
-class MockSocket : public ISocket
-{
-public:
-  struct SentPacket
-  {
+class MockSocket : public ISocket {
+ public:
+  struct SentPacket {
     std::vector<uint8_t> data;
     SocketAddress address;
-    uint16_t port;
+    uint16_t port = 0;
   };
 
   std::vector<SentPacket> sentPackets;
   std::vector<std::vector<uint8_t>> receiveQueue;
   bool shouldBlock = false;
-  SocketError receiveError = SocketError::None;
+  SocketError receiveError = SocketError::kNone;
 
-  SocketError bind(const SocketAddress& address, uint16_t port) override
-  {
+  SocketError Bind(const SocketAddress& address, uint16_t port) override {
     (void)address;
     (void)port;
-    return SocketError::None;
+    return SocketError::kNone;
   }
 
-  SocketResult sendTo(const void* data, size_t length,
-                     const SocketAddress& toAddr, uint16_t toPort) override
-  {
+  SocketResult SendTo(const void* data, size_t length,
+                      const SocketAddress& to_addr, uint16_t to_port) override {
     SentPacket packet;
     packet.data.assign(static_cast<const uint8_t*>(data),
-                      static_cast<const uint8_t*>(data) + length);
-    packet.address = toAddr;
-    packet.port = toPort;
+                       static_cast<const uint8_t*>(data) + length);
+    packet.address = to_addr;
+    packet.port = to_port;
     sentPackets.push_back(packet);
-    return {static_cast<std::ptrdiff_t>(length), SocketError::None};
+    return {.bytes = static_cast<std::ptrdiff_t>(length),
+            .error = SocketError::kNone};
   }
 
-  SocketResult sendBitStream(BitStream& stream, const SocketAddress& toAddr,
-                            uint16_t toPort) override
-  {
-    return sendTo(stream.getData(), stream.getSizeBytes(), toAddr, toPort);
+  SocketResult SendBitStream(BitStream& stream, const SocketAddress& to_addr,
+                             uint16_t to_port) override {
+    return SendTo(stream.GetData(), stream.GetSizeBytes(), to_addr, to_port);
   }
 
-  SocketResult receive(void* buffer, size_t capacity,
-                      SocketAddress& fromAddr, uint16_t& fromPort) override
-  {
-    if (shouldBlock || receiveQueue.empty())
-    {
-      if (receiveError != SocketError::None)
-        return {-1, receiveError};
-      return {-1, SocketError::WouldBlock};
+  SocketResult Receive(void* buffer, size_t capacity, SocketAddress& from_addr,
+                       uint16_t& from_port) override {
+    if (shouldBlock || receiveQueue.empty()) {
+      if (receiveError != SocketError::kNone) {
+        return {.bytes = -1, .error = receiveError};
+      }
+      return {.bytes = -1, .error = SocketError::kWouldBlock};
     }
 
     auto& packet = receiveQueue.front();
-    size_t copySize = std::min(capacity, packet.size());
-    std::memcpy(buffer, packet.data(), copySize);
+    const size_t copy_size = std::min(capacity, packet.size());
+    std::memcpy(buffer, packet.data(), copy_size);
 
-    fromAddr = SocketAddress::fromIPv4(0x7F000001);
-    fromPort = 12345;
+    from_addr = SocketAddress::FromIPv4(0x7F000001);
+    from_port = 12345;
 
     receiveQueue.erase(receiveQueue.begin());
-    return {static_cast<std::ptrdiff_t>(copySize), SocketError::None};
+    return {.bytes = static_cast<std::ptrdiff_t>(copy_size),
+            .error = SocketError::kNone};
   }
 
-  void poll(ISocketEventHandler* handler) override
-  {
-    (void)handler;
-  }
+  void Poll(ISocketEventHandler* handler) override { (void)handler; }
 
-  SocketError setBlocking(bool enable) override
-  {
+  SocketError SetBlocking(bool enable) override {
     (void)enable;
-    return SocketError::None;
+    return SocketError::kNone;
   }
 
-  bool isBlocking() const override { return false; }
-  uint16_t localPort() const override { return 54321; }
-  SocketType type() const override { return SocketType::UDP; }
-  int nativeHandle() const override { return 42; }
-  void close() override {}
+  [[nodiscard]] bool IsBlocking() const override { return false; }
+  [[nodiscard]] uint16_t LocalPort() const override { return 54321; }
+  [[nodiscard]] SocketType Type() const override { return SocketType::kUdp; }
+  [[nodiscard]] int NativeHandle() const override { return 42; }
+  void Close() override {}
 
-  void queueReceive(const void* data, size_t size)
-  {
-    std::vector<uint8_t> packet(static_cast<const uint8_t*>(data),
+  void QueueReceive(const void* data, size_t size) {
+    const std::vector<uint8_t> packet(static_cast<const uint8_t*>(data),
                                 static_cast<const uint8_t*>(data) + size);
     receiveQueue.push_back(packet);
   }
 
-  void clearSent()
-  {
-    sentPackets.clear();
-  }
+  void ClearSent() { sentPackets.clear(); }
 
-  size_t getSentCount() const
-  {
-    return sentPackets.size();
-  }
+  [[nodiscard]] size_t GetSentCount() const { return sentPackets.size(); }
 };
 
 // Mock event handler
-class MockEventHandler : public IReliableConnectionHandler
-{
-public:
+class MockEventHandler : public IReliableConnectionHandler {
+ public:
   bool connected = false;
   bool disconnected = false;
   bool timedOut = false;
   std::vector<std::vector<uint8_t>> reliablePackets;
   std::vector<std::vector<uint8_t>> unreliablePackets;
 
-  void onConnected() override
-  {
-    connected = true;
-  }
+  void OnConnected() override { connected = true; }
 
-  void onDisconnected() override
-  {
-    disconnected = true;
-  }
+  void OnDisconnected() override { disconnected = true; }
 
-  void onTimeout() override
-  {
-    timedOut = true;
-  }
+  void OnTimeout() override { timedOut = true; }
 
-  void onReliableReceived(uint8_t channel, const void* data, size_t size) override
-  {
+  void OnReliableReceived(uint8_t channel, const void* data,
+                          size_t size) override {
     (void)channel;
-    std::vector<uint8_t> packet(static_cast<const uint8_t*>(data),
-                               static_cast<const uint8_t*>(data) + size);
+    const std::vector<uint8_t> packet(static_cast<const uint8_t*>(data),
+                                static_cast<const uint8_t*>(data) + size);
     reliablePackets.push_back(packet);
   }
 
-  void onUnreliableReceived(uint8_t channel, const void* data, size_t size) override
-  {
+  void OnUnreliableReceived(uint8_t channel, const void* data,
+                            size_t size) override {
     (void)channel;
-    std::vector<uint8_t> packet(static_cast<const uint8_t*>(data),
-                               static_cast<const uint8_t*>(data) + size);
+    const std::vector<uint8_t> packet(static_cast<const uint8_t*>(data),
+                                static_cast<const uint8_t*>(data) + size);
     unreliablePackets.push_back(packet);
   }
 
-  void reset()
-  {
+  void Reset() {
     connected = false;
     disconnected = false;
     timedOut = false;
@@ -174,15 +148,13 @@ public:
   }
 };
 
-class ReliableConnectionTest : public ::testing::Test
-{
-protected:
+class ReliableConnectionTest : public ::testing::Test {
+ protected:
   MockSocket socket;
   ReliableConnectionConfig config;
   MockEventHandler handler;
 
-  void SetUp() override
-  {
+  void SetUp() override {
     config.maxRetries = 3;
     config.retryTimeoutMs = 50;
     config.pingIntervalMs = 100;
@@ -192,533 +164,532 @@ protected:
   }
 };
 
-TEST_F(ReliableConnectionTest, Construction)
-{
+TEST_F(ReliableConnectionTest, Construction) {
   ReliableConnection conn(&socket, config);
-  EXPECT_EQ(conn.getState(), ConnectionState::Disconnected);
-  EXPECT_FALSE(conn.isConnected());
+  EXPECT_EQ(conn.GetState(), ConnectionState::kDisconnected);
+  EXPECT_FALSE(conn.IsConnected());
 }
 
-TEST_F(ReliableConnectionTest, ClientConnect)
-{
+TEST_F(ReliableConnectionTest, ClientConnect) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.connect(addr, 12345);
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.Connect(addr, 12345);
 
-  EXPECT_EQ(conn.getState(), ConnectionState::Connecting);
-  EXPECT_FALSE(conn.isConnected());
-  EXPECT_GT(socket.getSentCount(), 0) << "Should send connect packet";
+  EXPECT_EQ(conn.GetState(), ConnectionState::kConnecting);
+  EXPECT_FALSE(conn.IsConnected());
+  EXPECT_GT(socket.GetSentCount(), 0) << "Should send connect packet";
 
   // Verify connect packet was sent
   ASSERT_FALSE(socket.sentPackets.empty());
-  auto& packet = socket.sentPackets[0];
+  const auto& packet = socket.sentPackets.at(0);
   EXPECT_GT(packet.data.size(), 0);
 }
 
-TEST_F(ReliableConnectionTest, ServerAcceptConnection)
-{
+TEST_F(ReliableConnectionTest, ServerAcceptConnection) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress clientAddr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(clientAddr, 12345);
+  SocketAddress client_addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(client_addr, 12345);
 
   // Simulate receiving connect packet
   BitStream bs;
-  bs.write<uint8_t>(static_cast<uint8_t>(PacketType::Connect));
-  bs.write<uint8_t>(0); // channel
-  bs.write<uint32_t>(0); // sequence
+  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
+  bs.Write<uint8_t>(0);   // channel
+  bs.Write<uint32_t>(0);  // sequence
 
-  conn.processPacket(bs.getData(), bs.getSizeBytes(), clientAddr, 12345);
+  conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), client_addr, 12345);
 
   EXPECT_TRUE(handler.connected) << "Should trigger onConnected";
-  EXPECT_EQ(conn.getState(), ConnectionState::Connected);
-  EXPECT_TRUE(conn.isConnected());
+  EXPECT_EQ(conn.GetState(), ConnectionState::kConnected);
+  EXPECT_TRUE(conn.IsConnected());
 }
 
-TEST_F(ReliableConnectionTest, ClientReceiveAccept)
-{
+TEST_F(ReliableConnectionTest, ClientReceiveAccept) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.connect(addr, 12345);
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.Connect(addr, 12345);
 
   EXPECT_FALSE(handler.connected);
 
   // Simulate receiving accept packet
   BitStream bs;
-  bs.write<uint8_t>(static_cast<uint8_t>(PacketType::Accept));
-  bs.write<uint8_t>(0); // channel
-  bs.write<uint32_t>(0); // sequence
+  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kAccept));
+  bs.Write<uint8_t>(0);   // channel
+  bs.Write<uint32_t>(0);  // sequence
 
-  conn.processPacket(bs.getData(), bs.getSizeBytes(), addr, 12345);
+  conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
   EXPECT_TRUE(handler.connected) << "Should trigger onConnected";
-  EXPECT_EQ(conn.getState(), ConnectionState::Connected);
-  EXPECT_TRUE(conn.isConnected());
+  EXPECT_EQ(conn.GetState(), ConnectionState::kConnected);
+  EXPECT_TRUE(conn.IsConnected());
 }
 
-TEST_F(ReliableConnectionTest, SendReliablePacket)
-{
+TEST_F(ReliableConnectionTest, SendReliablePacket) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
   // Set connected state
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
-  socket.clearSent();
+  socket.ClearSent();
 
   // Send reliable packet
-  const char* testData = "Hello, World!";
-  bool result = conn.sendReliable(0, testData, strlen(testData));
+  const char* test_data = "Hello, World!";
+  const bool result = conn.SendReliable(0, test_data, strlen(test_data));
 
   EXPECT_TRUE(result) << "sendReliable should succeed";
-  EXPECT_EQ(socket.getSentCount(), 1) << "Should send one packet";
+  EXPECT_EQ(socket.GetSentCount(), 1) << "Should send one packet";
 
   // Verify packet structure
   ASSERT_FALSE(socket.sentPackets.empty());
-  auto& packet = socket.sentPackets[0];
-  EXPECT_GT(packet.data.size(), strlen(testData)) << "Packet should include header";
+  const auto& packet = socket.sentPackets.at(0);
+  EXPECT_GT(packet.data.size(), strlen(test_data))
+      << "Packet should include header";
 }
 
-TEST_F(ReliableConnectionTest, SendUnreliablePacket)
-{
+TEST_F(ReliableConnectionTest, SendUnreliablePacket) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
-  socket.clearSent();
+  socket.ClearSent();
 
-  const char* testData = "Unreliable data";
-  bool result = conn.sendUnreliable(0, testData, strlen(testData));
+  const char* test_data = "Unreliable data";
+  const bool result = conn.SendUnreliable(0, test_data, strlen(test_data));
 
   EXPECT_TRUE(result) << "sendUnreliable should succeed";
-  EXPECT_EQ(socket.getSentCount(), 1) << "Should send one packet";
+  EXPECT_EQ(socket.GetSentCount(), 1) << "Should send one packet";
 }
 
-TEST_F(ReliableConnectionTest, SendWithBitStream)
-{
+TEST_F(ReliableConnectionTest, SendWithBitStream) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
-  socket.clearSent();
+  socket.ClearSent();
 
   // Create BitStream with data
   BitStream bs;
-  bs.write<uint8_t>(42);
-  bs.write<float>(3.14f);
-  bs.write<uint32_t>(12345);
+  bs.Write<uint8_t>(42);
+  bs.Write<float>(3.14f);
+  bs.Write<uint32_t>(12345);
 
-  bool result = conn.sendReliable(0, bs);
+  const bool result = conn.SendReliable(0, bs);
 
   EXPECT_TRUE(result) << "sendReliable with BitStream should succeed";
-  EXPECT_EQ(socket.getSentCount(), 1) << "Should send one packet";
+  EXPECT_EQ(socket.GetSentCount(), 1) << "Should send one packet";
 }
 
-TEST_F(ReliableConnectionTest, ReceiveReliablePacket)
-{
+TEST_F(ReliableConnectionTest, ReceiveReliablePacket) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
   // Create reliable packet
   BitStream bs;
-  bs.write<uint8_t>(static_cast<uint8_t>(PacketType::Reliable));
-  bs.write<uint8_t>(0); // channel
-  bs.write<uint32_t>(0); // sequence
+  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kReliable));
+  bs.Write<uint8_t>(0);   // channel
+  bs.Write<uint32_t>(0);  // sequence
   const char* payload = "Test payload";
-  bs.writeBytes(payload, strlen(payload));
+  bs.WriteBytes(payload, strlen(payload));
 
-  socket.clearSent();
-  conn.processPacket(bs.getData(), bs.getSizeBytes(), addr, 12345);
+  socket.ClearSent();
+  conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
   // Should send ACK
-  EXPECT_GT(socket.getSentCount(), 0) << "Should send ACK packet";
+  EXPECT_GT(socket.GetSentCount(), 0) << "Should send ACK packet";
 
   // Process packet queue (since it's sequenced)
-  conn.update();
+  conn.Update();
 
-  EXPECT_EQ(handler.reliablePackets.size(), 1) << "Should receive one reliable packet";
+  EXPECT_EQ(handler.reliablePackets.size(), 1)
+      << "Should receive one reliable packet";
   ASSERT_FALSE(handler.reliablePackets.empty());
 
-  auto& receivedData = handler.reliablePackets[0];
-  std::string receivedStr(receivedData.begin(), receivedData.end());
-  EXPECT_EQ(receivedStr, std::string(payload));
+  const auto& received_data = handler.reliablePackets.at(0);
+  const std::string received_str(received_data.begin(), received_data.end());
+  EXPECT_EQ(received_str, std::string(payload));
 }
 
-TEST_F(ReliableConnectionTest, ReceiveUnreliablePacket)
-{
+TEST_F(ReliableConnectionTest, ReceiveUnreliablePacket) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
   // Create unreliable packet
   BitStream bs;
-  bs.write<uint8_t>(static_cast<uint8_t>(PacketType::Unreliable));
-  bs.write<uint8_t>(0); // channel
-  bs.write<uint32_t>(0); // sequence
+  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kUnreliable));
+  bs.Write<uint8_t>(0);   // channel
+  bs.Write<uint32_t>(0);  // sequence
   const char* payload = "Unreliable payload";
-  bs.writeBytes(payload, strlen(payload));
+  bs.WriteBytes(payload, strlen(payload));
 
-  conn.processPacket(bs.getData(), bs.getSizeBytes(), addr, 12345);
+  conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
-  EXPECT_EQ(handler.unreliablePackets.size(), 1) << "Should receive one unreliable packet";
+  EXPECT_EQ(handler.unreliablePackets.size(), 1)
+      << "Should receive one unreliable packet";
   ASSERT_FALSE(handler.unreliablePackets.empty());
 
-  auto& receivedData = handler.unreliablePackets[0];
-  std::string receivedStr(receivedData.begin(), receivedData.end());
-  EXPECT_EQ(receivedStr, std::string(payload));
+  const auto& received_data = handler.unreliablePackets.at(0);
+  const std::string received_str(received_data.begin(), received_data.end());
+  EXPECT_EQ(received_str, std::string(payload));
 }
 
-TEST_F(ReliableConnectionTest, PacketSequencing)
-{
+TEST_F(ReliableConnectionTest, PacketSequencing) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
   // Send packets out of order
-  auto createPacket = [](uint32_t seq, const char* payload) -> std::vector<uint8_t>
-  {
+  auto create_packet = [](uint32_t seq,
+                          const char* payload) -> std::vector<uint8_t> {
     BitStream bs;
-    bs.write<uint8_t>(static_cast<uint8_t>(PacketType::Reliable));
-    bs.write<uint8_t>(0); // channel
-    bs.write<uint32_t>(seq);
-    bs.writeBytes(payload, strlen(payload));
-    return std::vector<uint8_t>(bs.getData(), bs.getData() + bs.getSizeBytes());
+    bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kReliable));
+    bs.Write<uint8_t>(0);  // channel
+    bs.Write<uint32_t>(seq);
+    bs.WriteBytes(payload, strlen(payload));
+    return {bs.GetData(), bs.GetData() + bs.GetSizeBytes()};
   };
 
-  auto packet2 = createPacket(2, "Second");
-  auto packet1 = createPacket(1, "First");
-  auto packet0 = createPacket(0, "Zero");
+  auto packet2 = create_packet(2, "Second");
+  auto packet1 = create_packet(1, "First");
+  auto packet0 = create_packet(0, "Zero");
 
   // Receive in wrong order: 2, 1, 0
-  conn.processPacket(packet2.data(), packet2.size(), addr, 12345);
-  conn.update();
+  conn.ProcessPacket(packet2.data(), packet2.size(), addr, 12345);
+  conn.Update();
   EXPECT_EQ(handler.reliablePackets.size(), 0) << "Should wait for sequence 0";
 
-  conn.processPacket(packet1.data(), packet1.size(), addr, 12345);
-  conn.update();
-  EXPECT_EQ(handler.reliablePackets.size(), 0) << "Still waiting for sequence 0";
+  conn.ProcessPacket(packet1.data(), packet1.size(), addr, 12345);
+  conn.Update();
+  EXPECT_EQ(handler.reliablePackets.size(), 0)
+      << "Still waiting for sequence 0";
 
-  conn.processPacket(packet0.data(), packet0.size(), addr, 12345);
-  conn.update();
+  conn.ProcessPacket(packet0.data(), packet0.size(), addr, 12345);
+  conn.Update();
 
   // Now all packets should be delivered in order
-  EXPECT_EQ(handler.reliablePackets.size(), 3) << "Should receive all three packets";
+  EXPECT_EQ(handler.reliablePackets.size(), 3)
+      << "Should receive all three packets";
 
-  std::string first(handler.reliablePackets[0].begin(), handler.reliablePackets[0].end());
-  std::string second(handler.reliablePackets[1].begin(), handler.reliablePackets[1].end());
-  std::string third(handler.reliablePackets[2].begin(), handler.reliablePackets[2].end());
+  const std::string first(handler.reliablePackets.at(0).begin(),
+                    handler.reliablePackets.at(0).end());
+  const std::string second(handler.reliablePackets.at(1).begin(),
+                     handler.reliablePackets.at(1).end());
+  const std::string third(handler.reliablePackets.at(2).begin(),
+                    handler.reliablePackets.at(2).end());
 
   EXPECT_EQ(first, "Zero");
   EXPECT_EQ(second, "First");
   EXPECT_EQ(third, "Second");
 }
 
-TEST_F(ReliableConnectionTest, DuplicateDetection)
-{
+TEST_F(ReliableConnectionTest, DuplicateDetection) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
   // Create reliable packet
   BitStream bs;
-  bs.write<uint8_t>(static_cast<uint8_t>(PacketType::Reliable));
-  bs.write<uint8_t>(0); // channel
-  bs.write<uint32_t>(0); // sequence
-  bs.writeBytes("Test", 4);
+  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kReliable));
+  bs.Write<uint8_t>(0);   // channel
+  bs.Write<uint32_t>(0);  // sequence
+  bs.WriteBytes("Test", 4);
 
   // Send same packet twice
-  conn.processPacket(bs.getData(), bs.getSizeBytes(), addr, 12345);
-  conn.update();
+  conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
+  conn.Update();
 
-  size_t firstCount = handler.reliablePackets.size();
+  const size_t first_count = handler.reliablePackets.size();
 
-  conn.processPacket(bs.getData(), bs.getSizeBytes(), addr, 12345);
-  conn.update();
+  conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
+  conn.Update();
 
-  EXPECT_EQ(handler.reliablePackets.size(), firstCount)
-    << "Duplicate packet should be ignored";
+  EXPECT_EQ(handler.reliablePackets.size(), first_count)
+      << "Duplicate packet should be ignored";
 }
 
-TEST_F(ReliableConnectionTest, AcknowledgmentReceived)
-{
-  // TODO: why on windows this test does not pass with 1000 ping interval
-  config.pingIntervalMs = 10000; // in fact disable ping
+TEST_F(ReliableConnectionTest, AcknowledgmentReceived) {
+  // TODO(kabanya): why on windows this test does not pass with 1000 ping
+  // interval
+  config.pingIntervalMs = 10000;  // in fact disable ping
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
-  socket.clearSent();
+  socket.ClearSent();
 
   // Send reliable packet
-  conn.sendReliable(0, "Test", 4);
+  conn.SendReliable(0, "Test", 4);
 
-  size_t sentBefore = socket.getSentCount();
-  uint32_t lostBefore = conn.getLostPackets();
+  const size_t sent_before = socket.GetSentCount();
+  const uint32_t lost_before = conn.GetLostPackets();
 
   // Extract sequence from sent packet
   ASSERT_FALSE(socket.sentPackets.empty());
-  auto& sentPacket = socket.sentPackets.back();
-  BitStream sentBs(sentPacket.data.data(), sentPacket.data.size());
-  uint8_t type, channel;
-  uint32_t sequence;
-  sentBs.read<uint8_t>(type);
-  sentBs.read<uint8_t>(channel);
-  sentBs.read<uint32_t>(sequence);
+  const auto& sent_packet = socket.sentPackets.back();
+  BitStream sent_bs(sent_packet.data.data(), sent_packet.data.size());
+  uint8_t type = 0, channel = 0;
+  uint32_t sequence = 0;
+  sent_bs.Read<uint8_t>(type);
+  sent_bs.Read<uint8_t>(channel);
+  sent_bs.Read<uint32_t>(sequence);
 
   // Send ACK
-  BitStream ackBs;
-  ackBs.write<uint8_t>(static_cast<uint8_t>(PacketType::Ack));
-  ackBs.write<uint8_t>(0);
-  ackBs.write<uint32_t>(sequence);
+  BitStream ack_bs;
+  ack_bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kAck));
+  ack_bs.Write<uint8_t>(0);
+  ack_bs.Write<uint32_t>(sequence);
 
-  conn.processPacket(ackBs.getData(), ackBs.getSizeBytes(), addr, 12345);
-  conn.update();
+  conn.ProcessPacket(ack_bs.GetData(), ack_bs.GetSizeBytes(), addr, 12345);
+  conn.Update();
 
   // Wait longer than retry timeout
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  conn.update();
+  conn.Update();
 
   // Should not resend after ACK
-  EXPECT_EQ(socket.getSentCount(), sentBefore)
-    << "Should not resend acknowledged packet";
-  EXPECT_EQ(conn.getLostPackets(), lostBefore)
-    << "Acknowledged packet should not be counted as lost";
+  EXPECT_EQ(socket.GetSentCount(), sent_before)
+      << "Should not resend acknowledged packet";
+  EXPECT_EQ(conn.GetLostPackets(), lost_before)
+      << "Acknowledged packet should not be counted as lost";
 }
 
-TEST_F(ReliableConnectionTest, Disconnect)
-{
+TEST_F(ReliableConnectionTest, Disconnect) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
-  EXPECT_TRUE(conn.isConnected());
+  EXPECT_TRUE(conn.IsConnected());
   EXPECT_FALSE(handler.disconnected);
 
-  socket.clearSent();
-  conn.disconnect();
+  socket.ClearSent();
+  conn.Disconnect();
 
-  EXPECT_FALSE(conn.isConnected());
+  EXPECT_FALSE(conn.IsConnected());
   EXPECT_TRUE(handler.disconnected) << "Should trigger onDisconnected";
-  EXPECT_GT(socket.getSentCount(), 0) << "Should send disconnect packet";
+  EXPECT_GT(socket.GetSentCount(), 0) << "Should send disconnect packet";
 }
 
-TEST_F(ReliableConnectionTest, ReceiveDisconnect)
-{
+TEST_F(ReliableConnectionTest, ReceiveDisconnect) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
   EXPECT_FALSE(handler.disconnected);
 
   // Receive disconnect packet
   BitStream bs;
-  bs.write<uint8_t>(static_cast<uint8_t>(PacketType::Disconnect));
-  bs.write<uint8_t>(0);
-  bs.write<uint32_t>(0);
+  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kDisconnect));
+  bs.Write<uint8_t>(0);
+  bs.Write<uint32_t>(0);
 
-  conn.processPacket(bs.getData(), bs.getSizeBytes(), addr, 12345);
+  conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
   EXPECT_TRUE(handler.disconnected) << "Should trigger onDisconnected";
-  EXPECT_EQ(conn.getState(), ConnectionState::Disconnected);
+  EXPECT_EQ(conn.GetState(), ConnectionState::kDisconnected);
 }
 
-TEST_F(ReliableConnectionTest, Statistics)
-{
+TEST_F(ReliableConnectionTest, Statistics) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
-  uint32_t initialSent = conn.getSentPackets();
-  uint32_t initialReceived = conn.getReceivedPackets();
+  const uint32_t initial_sent = conn.GetSentPackets();
+  const uint32_t initial_received = conn.GetReceivedPackets();
 
   // Send packet
-  conn.sendReliable(0, "Test", 4);
-  EXPECT_GT(conn.getSentPackets(), initialSent) << "Sent count should increase";
+  conn.SendReliable(0, "Test", 4);
+  EXPECT_GT(conn.GetSentPackets(), initial_sent)
+      << "Sent count should increase";
 
   // Receive packet
   BitStream bs;
-  bs.write<uint8_t>(static_cast<uint8_t>(PacketType::Unreliable));
-  bs.write<uint8_t>(0);
-  bs.write<uint32_t>(0);
-  bs.writeBytes("Data", 4);
+  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kUnreliable));
+  bs.Write<uint8_t>(0);
+  bs.Write<uint32_t>(0);
+  bs.WriteBytes("Data", 4);
 
-  conn.processPacket(bs.getData(), bs.getSizeBytes(), addr, 12345);
+  conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
-  EXPECT_GT(conn.getReceivedPackets(), initialReceived) << "Received count should increase";
+  EXPECT_GT(conn.GetReceivedPackets(), initial_received)
+      << "Received count should increase";
 }
 
-TEST_F(ReliableConnectionTest, PingPong)
-{
+TEST_F(ReliableConnectionTest, PingPong) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
-  socket.clearSent();
+  socket.ClearSent();
 
   // Receive ping
-  BitStream pingBs;
-  pingBs.write<uint8_t>(static_cast<uint8_t>(PacketType::Ping));
-  pingBs.write<uint8_t>(0);
-  pingBs.write<uint32_t>(42);
+  BitStream ping_bs;
+  ping_bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kPing));
+  ping_bs.Write<uint8_t>(0);
+  ping_bs.Write<uint32_t>(42);
 
-  conn.processPacket(pingBs.getData(), pingBs.getSizeBytes(), addr, 12345);
+  conn.ProcessPacket(ping_bs.GetData(), ping_bs.GetSizeBytes(), addr, 12345);
 
   // Should send pong
-  EXPECT_GT(socket.getSentCount(), 0) << "Should send pong response";
+  EXPECT_GT(socket.GetSentCount(), 0) << "Should send pong response";
 
   // Verify pong packet
   ASSERT_FALSE(socket.sentPackets.empty());
-  auto& pongPacket = socket.sentPackets[0];
-  BitStream pongBs(pongPacket.data.data(), pongPacket.data.size());
+  const auto& pong_packet = socket.sentPackets.at(0);
+  BitStream pong_bs(pong_packet.data.data(), pong_packet.data.size());
 
-  uint8_t type;
-  uint8_t channel;
-  uint32_t sequence;
-  pongBs.read<uint8_t>(type);
-  pongBs.read<uint8_t>(channel);
-  pongBs.read<uint32_t>(sequence);
+  uint8_t type = 0;
+  uint8_t channel = 0;
+  uint32_t sequence = 0;
+  pong_bs.Read<uint8_t>(type);
+  pong_bs.Read<uint8_t>(channel);
+  pong_bs.Read<uint32_t>(sequence);
 
-  EXPECT_EQ(type, static_cast<uint8_t>(PacketType::Pong));
+  EXPECT_EQ(type, static_cast<uint8_t>(PacketType::kPong));
   EXPECT_EQ(sequence, 42) << "Pong should echo ping sequence";
 }
 
-TEST_F(ReliableConnectionTest, RTTMeasurement)
-{
+TEST_F(ReliableConnectionTest, RTTMeasurement) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
-  float initialRTT = conn.getRTT();
-  EXPECT_GT(initialRTT, 0.0f) << "RTT should have initial value";
+  const float initial_rtt = conn.GetRtt();
+  EXPECT_GT(initial_rtt, 0.0f) << "RTT should have initial value";
 
   // RTT will be updated when ACKs are received
   // For now just verify the getter works
-  EXPECT_GE(conn.getRTT(), 0.0f);
+  EXPECT_GE(conn.GetRtt(), 0.0f);
 }
 
-TEST_F(ReliableConnectionTest, SendBeforeConnected)
-{
+TEST_F(ReliableConnectionTest, SendBeforeConnected) {
   ReliableConnection conn(&socket, config);
 
   // Try to send before connecting
-  bool result = conn.sendReliable(0, "Test", 4);
+  const bool result = conn.SendReliable(0, "Test", 4);
 
   EXPECT_FALSE(result) << "Should fail to send before connected";
 }
 
-TEST_F(ReliableConnectionTest, MaxPacketSizeLimit)
-{
+TEST_F(ReliableConnectionTest, MaxPacketSizeLimit) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
-  // A payload larger than maxPacketSize should be transparently fragmented, not rejected
-  const std::size_t bigSize = config.maxPacketSize * 3; // definitely needs fragmentation
-  std::vector<uint8_t> largeData(bigSize, 0xFF);
+  // A payload larger than maxPacketSize should be transparently fragmented, not
+  // rejected
+  const std::size_t big_size = static_cast<std::size_t>(config.maxPacketSize) *
+                               3U;  // definitely needs fragmentation
+  std::vector<uint8_t> large_data(big_size, 0xFF);
 
-  socket.clearSent();
-  bool result = conn.sendReliable(0, largeData.data(), largeData.size());
+  socket.ClearSent();
+  const bool result = conn.SendReliable(0, large_data.data(), large_data.size());
 
   EXPECT_TRUE(result) << "Large payloads should succeed via fragmentation";
   // The payload must have been split into multiple Fragment packets
-  EXPECT_GT(socket.getSentCount(), 1u) << "Oversized payload should produce multiple Fragment packets";
+  EXPECT_GT(socket.GetSentCount(), 1u)
+      << "Oversized payload should produce multiple Fragment packets";
 }
 
-TEST_F(ReliableConnectionTest, MultipleChannels)
-{
+TEST_F(ReliableConnectionTest, MultipleChannels) {
   ReliableConnection conn(&socket, config);
-  conn.setHandler(&handler);
+  conn.SetHandler(&handler);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
-  socket.clearSent();
+  socket.ClearSent();
 
   // Send on different channels
-  conn.sendReliable(0, "Channel0", 8);
-  conn.sendReliable(1, "Channel1", 8);
+  conn.SendReliable(0, "Channel0", 8);
+  conn.SendReliable(1, "Channel1", 8);
 
-  EXPECT_EQ(socket.getSentCount(), 2) << "Should send packets on different channels";
+  EXPECT_EQ(socket.GetSentCount(), 2)
+      << "Should send packets on different channels";
 
   // Verify channels are different
   ASSERT_GE(socket.sentPackets.size(), 2);
 
-  BitStream bs0(socket.sentPackets[0].data.data(), socket.sentPackets[0].data.size());
-  BitStream bs1(socket.sentPackets[1].data.data(), socket.sentPackets[1].data.size());
+  BitStream bs0(socket.sentPackets.at(0).data.data(),
+                socket.sentPackets.at(0).data.size());
+  BitStream bs1(socket.sentPackets.at(1).data.data(),
+                socket.sentPackets.at(1).data.size());
 
-  uint8_t type0, channel0, type1, channel1;
-  uint32_t seq0, seq1;
+  uint8_t type0 = 0, channel0 = 0, type1 = 0, channel1 = 0;
+  uint32_t seq0 = 0, seq1 = 0;
 
-  bs0.read<uint8_t>(type0);
-  bs0.read<uint8_t>(channel0);
-  bs0.read<uint32_t>(seq0);
+  bs0.Read<uint8_t>(type0);
+  bs0.Read<uint8_t>(channel0);
+  bs0.Read<uint32_t>(seq0);
 
-  bs1.read<uint8_t>(type1);
-  bs1.read<uint8_t>(channel1);
-  bs1.read<uint32_t>(seq1);
+  bs1.Read<uint8_t>(type1);
+  bs1.Read<uint8_t>(channel1);
+  bs1.Read<uint32_t>(seq1);
 
+  EXPECT_EQ(type0, static_cast<uint8_t>(PacketType::kReliable));
+  EXPECT_EQ(type1, static_cast<uint8_t>(PacketType::kReliable));
+  EXPECT_EQ(seq0, 0u);
+  EXPECT_EQ(seq1, 0u);
   EXPECT_EQ(channel0, 0);
   EXPECT_EQ(channel1, 1);
 }
 
 // ConnectionManager tests
-class ConnectionManagerTest : public ::testing::Test
-{
-protected:
+class ConnectionManagerTest : public ::testing::Test {
+ protected:
   MockSocket socket;
   ReliableConnectionConfig config;
   MockEventHandler handler;
 
-  void SetUp() override
-  {
+  void SetUp() override {
     config.maxRetries = 3;
     config.retryTimeoutMs = 50;
     config.pingIntervalMs = 100;
@@ -726,440 +697,439 @@ protected:
   }
 };
 
-TEST_F(ConnectionManagerTest, Construction)
-{
+TEST_F(ConnectionManagerTest, Construction) {
   ConnectionManager manager(&socket, config);
-  auto connections = manager.getConnections();
+  auto connections = manager.GetConnections();
   EXPECT_TRUE(connections.empty()) << "Should start with no connections";
 }
 
-TEST_F(ConnectionManagerTest, AutoCreateConnection)
-{
+TEST_F(ConnectionManagerTest, AutoCreateConnection) {
   ConnectionManager manager(&socket, config);
-  manager.setHandler(&handler);
+  manager.SetHandler(&handler);
 
-  SocketAddress clientAddr = SocketAddress::fromIPv4(0x7F000001);
+  SocketAddress client_addr = SocketAddress::FromIPv4(0x7F000001);
 
   // Simulate receiving connect packet from new client
   BitStream bs;
-  bs.write<uint8_t>(static_cast<uint8_t>(PacketType::Connect));
-  bs.write<uint8_t>(0);
-  bs.write<uint32_t>(0);
+  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
+  bs.Write<uint8_t>(0);
+  bs.Write<uint32_t>(0);
 
-  manager.processPacket(bs.getData(), bs.getSizeBytes(), clientAddr, 12345);
+  manager.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), client_addr, 12345);
 
-  auto connections = manager.getConnections();
-  EXPECT_EQ(connections.size(), 1) << "Should auto-create connection for new client";
+  auto connections = manager.GetConnections();
+  EXPECT_EQ(connections.size(), 1)
+      << "Should auto-create connection for new client";
 }
 
-TEST_F(ConnectionManagerTest, GetConnection)
-{
+TEST_F(ConnectionManagerTest, GetConnection) {
   ConnectionManager manager(&socket, config);
 
-  SocketAddress addr1 = SocketAddress::fromIPv4(0x7F000001);
-  SocketAddress addr2 = SocketAddress::fromIPv4(0x7F000002);
+  SocketAddress addr1 = SocketAddress::FromIPv4(0x7F000001);
+  SocketAddress addr2 = SocketAddress::FromIPv4(0x7F000002);
 
   // Create connections
   BitStream bs;
-  bs.write<uint8_t>(static_cast<uint8_t>(PacketType::Connect));
-  bs.write<uint8_t>(0);
-  bs.write<uint32_t>(0);
+  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
+  bs.Write<uint8_t>(0);
+  bs.Write<uint32_t>(0);
 
-  manager.processPacket(bs.getData(), bs.getSizeBytes(), addr1, 12345);
-  manager.processPacket(bs.getData(), bs.getSizeBytes(), addr2, 12346);
+  manager.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr1, 12345);
+  manager.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr2, 12346);
 
-  auto* client1 = manager.getConnection(addr1, 12345);
-  auto* client2 = manager.getConnection(addr2, 12346);
+  auto* client1 = manager.GetConnection(addr1, 12345);
+  auto* client2 = manager.GetConnection(addr2, 12346);
 
   EXPECT_NE(client1, nullptr);
   EXPECT_NE(client2, nullptr);
   EXPECT_NE(client1, client2) << "Different clients should be distinct";
 }
 
-TEST_F(ConnectionManagerTest, BroadcastReliable)
-{
+TEST_F(ConnectionManagerTest, BroadcastReliable) {
   ConnectionManager manager(&socket, config);
 
   // Create multiple connections
-  SocketAddress addr1 = SocketAddress::fromIPv4(0x7F000001);
-  SocketAddress addr2 = SocketAddress::fromIPv4(0x7F000002);
+  SocketAddress addr1 = SocketAddress::FromIPv4(0x7F000001);
+  SocketAddress addr2 = SocketAddress::FromIPv4(0x7F000002);
 
-  BitStream connectBs;
-  connectBs.write<uint8_t>(static_cast<uint8_t>(PacketType::Connect));
-  connectBs.write<uint8_t>(0);
-  connectBs.write<uint32_t>(0);
+  BitStream connect_bs;
+  connect_bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
+  connect_bs.Write<uint8_t>(0);
+  connect_bs.Write<uint32_t>(0);
 
-  manager.processPacket(connectBs.getData(), connectBs.getSizeBytes(), addr1, 12345);
-  manager.processPacket(connectBs.getData(), connectBs.getSizeBytes(), addr2, 12346);
+  manager.ProcessPacket(connect_bs.GetData(), connect_bs.GetSizeBytes(), addr1,
+                        12345);
+  manager.ProcessPacket(connect_bs.GetData(), connect_bs.GetSizeBytes(), addr2,
+                        12346);
 
-  socket.clearSent();
+  socket.ClearSent();
 
   // Broadcast
-  const char* broadcastData = "Broadcast message";
-  manager.broadcastReliable(0, broadcastData, strlen(broadcastData));
+  const char* broadcast_data = "Broadcast message";
+  manager.BroadcastReliable(0, broadcast_data, strlen(broadcast_data));
 
   // Should send to all connected clients
-  EXPECT_GE(socket.getSentCount(), 2) << "Should send to multiple clients";
+  EXPECT_GE(socket.GetSentCount(), 2) << "Should send to multiple clients";
 }
 
-TEST_F(ConnectionManagerTest, BroadcastUnreliable)
-{
+TEST_F(ConnectionManagerTest, BroadcastUnreliable) {
   ConnectionManager manager(&socket, config);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
 
-  BitStream connectBs;
-  connectBs.write<uint8_t>(static_cast<uint8_t>(PacketType::Connect));
-  connectBs.write<uint8_t>(0);
-  connectBs.write<uint32_t>(0);
+  BitStream connect_bs;
+  connect_bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
+  connect_bs.Write<uint8_t>(0);
+  connect_bs.Write<uint32_t>(0);
 
-  manager.processPacket(connectBs.getData(), connectBs.getSizeBytes(), addr, 12345);
+  manager.ProcessPacket(connect_bs.GetData(), connect_bs.GetSizeBytes(), addr,
+                        12345);
 
-  socket.clearSent();
+  socket.ClearSent();
 
-  manager.broadcastUnreliable(0, "Test", 4);
+  manager.BroadcastUnreliable(0, "Test", 4);
 
-  EXPECT_GT(socket.getSentCount(), 0) << "Should send broadcast";
+  EXPECT_GT(socket.GetSentCount(), 0) << "Should send broadcast";
 }
 
-TEST_F(ConnectionManagerTest, UpdateAllConnections)
-{
+TEST_F(ConnectionManagerTest, UpdateAllConnections) {
   ConnectionManager manager(&socket, config);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
 
   BitStream bs;
-  bs.write<uint8_t>(static_cast<uint8_t>(PacketType::Connect));
-  bs.write<uint8_t>(0);
-  bs.write<uint32_t>(0);
+  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
+  bs.Write<uint8_t>(0);
+  bs.Write<uint32_t>(0);
 
-  manager.processPacket(bs.getData(), bs.getSizeBytes(), addr, 12345);
+  manager.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
   // Update should process all connections
-  manager.update();
+  manager.Update();
 
-  auto connections = manager.getConnections();
+  auto connections = manager.GetConnections();
   EXPECT_FALSE(connections.empty());
 
-  for (auto* client : connections)
-  {
+  for (auto* client : connections) {
     EXPECT_NE(client->connection, nullptr);
   }
 }
 
-TEST_F(ConnectionManagerTest, UserData)
-{
+TEST_F(ConnectionManagerTest, UserData) {
   ConnectionManager manager(&socket, config);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
 
   BitStream bs;
-  bs.write<uint8_t>(static_cast<uint8_t>(PacketType::Connect));
-  bs.write<uint8_t>(0);
-  bs.write<uint32_t>(0);
+  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
+  bs.Write<uint8_t>(0);
+  bs.Write<uint32_t>(0);
 
-  manager.processPacket(bs.getData(), bs.getSizeBytes(), addr, 12345);
+  manager.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
-  auto* client = manager.getConnection(addr, 12345);
+  auto* client = manager.GetConnection(addr, 12345);
   ASSERT_NE(client, nullptr);
 
   // Set user data
-  int* userData = new int(42);
-  client->userData = userData;
+  int user_data = 42;
+  client->userData = &user_data;
 
-  EXPECT_EQ(*static_cast<int*>(client->userData), 42);
-
-  delete userData;
+  EXPECT_EQ(*static_cast<const int*>(client->userData), 42);
 }
 
-// ========================= Safety & correctness tests =========================
+// ========================= Safety & correctness tests
+// =========================
 
-TEST_F(ReliableConnectionTest, UnknownPacketTypeIsIgnored)
-{
+TEST_F(ReliableConnectionTest, UnknownPacketTypeIsIgnored) {
   ReliableConnection conn(&socket, config);
-  auto addr = SocketAddress::fromIPv4(0x7F000001);
-  conn.setRemoteAddress(addr, 12345);
-  conn.setConnected();
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
 
   // Craft a packet with an invalid PacketType (value 100, well beyond Ack=8)
   BitStream bs;
-  bs.write<uint8_t>(100); // invalid type
-  bs.write<uint8_t>(0);   // channel
-  bs.write<uint32_t>(0);  // sequence
+  bs.Write<uint8_t>(100);  // invalid type
+  bs.Write<uint8_t>(0);    // channel
+  bs.Write<uint32_t>(0);   // sequence
 
-  auto receivedBefore [[maybe_unused]] = conn.getReceivedPackets();
+  auto received_before [[maybe_unused]] = conn.GetReceivedPackets();
   EXPECT_NO_THROW(
-    conn.processPacket(bs.getData(), bs.getSizeBytes(), addr, 12345)
-  );
+      conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345));
   // The packet header was still read, but no side effects occur.
   // The counter increments because lastReceiveTime is not updated
   // (readPacketHeader returns false before reaching the counter update).
   // The key behavior: no crash, no undefined behavior.
 }
 
-TEST_F(ConnectionManagerTest, IPv6ClientsAreSeparated)
-{
+TEST_F(ConnectionManagerTest, IPv6ClientsAreSeparated) {
   ConnectionManager manager(&socket, config);
 
   // Create two different IPv6 addresses
   std::array<uint8_t, 16> bytes1{};
-  bytes1[15] = 1;
+  bytes1.at(15) = 1;
   std::array<uint8_t, 16> bytes2{};
-  bytes2[15] = 2;
+  bytes2.at(15) = 2;
 
-  SocketAddress addr1 = SocketAddress::fromIPv6(bytes1);
-  SocketAddress addr2 = SocketAddress::fromIPv6(bytes2);
+  SocketAddress addr1 = SocketAddress::FromIPv6(bytes1);
+  SocketAddress addr2 = SocketAddress::FromIPv6(bytes2);
 
   // Send connect packets from each address
   BitStream bs1;
-  bs1.write<uint8_t>(static_cast<uint8_t>(PacketType::Connect));
-  bs1.write<uint8_t>(0);
-  bs1.write<uint32_t>(0);
+  bs1.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
+  bs1.Write<uint8_t>(0);
+  bs1.Write<uint32_t>(0);
 
   BitStream bs2;
-  bs2.write<uint8_t>(static_cast<uint8_t>(PacketType::Connect));
-  bs2.write<uint8_t>(0);
-  bs2.write<uint32_t>(0);
+  bs2.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
+  bs2.Write<uint8_t>(0);
+  bs2.Write<uint32_t>(0);
 
-  manager.processPacket(bs1.getData(), bs1.getSizeBytes(), addr1, 5000);
-  manager.processPacket(bs2.getData(), bs2.getSizeBytes(), addr2, 5000);
+  manager.ProcessPacket(bs1.GetData(), bs1.GetSizeBytes(), addr1, 5000);
+  manager.ProcessPacket(bs2.GetData(), bs2.GetSizeBytes(), addr2, 5000);
 
-  auto connections = manager.getConnections();
+  auto connections = manager.GetConnections();
   EXPECT_EQ(connections.size(), 2u)
-    << "Two IPv6 clients with different addresses should create separate connections";
+      << "Two IPv6 clients with different addresses should create separate "
+         "connections";
 
-  auto* c1 = manager.getConnection(addr1, 5000);
-  auto* c2 = manager.getConnection(addr2, 5000);
+  auto* c1 = manager.GetConnection(addr1, 5000);
+  auto* c2 = manager.GetConnection(addr2, 5000);
   ASSERT_NE(c1, nullptr);
   ASSERT_NE(c2, nullptr);
   EXPECT_NE(c1, c2) << "Should be different RemoteClient instances";
 }
 
-TEST_F(ConnectionManagerTest, ConnectionManagerOwnsClients)
-{
+TEST_F(ConnectionManagerTest, ConnectionManagerOwnsClients) {
   // This test verifies that unique_ptr properly manages client lifetime
   auto manager = std::make_unique<ConnectionManager>(&socket, config);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
 
   BitStream bs;
-  bs.write<uint8_t>(static_cast<uint8_t>(PacketType::Connect));
-  bs.write<uint8_t>(0);
-  bs.write<uint32_t>(0);
+  bs.Write<uint8_t>(static_cast<uint8_t>(PacketType::kConnect));
+  bs.Write<uint8_t>(0);
+  bs.Write<uint32_t>(0);
 
-  manager->processPacket(bs.getData(), bs.getSizeBytes(), addr, 12345);
-  EXPECT_EQ(manager->getConnections().size(), 1u);
+  manager->ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
+  EXPECT_EQ(manager->GetConnections().size(), 1u);
 
   // Destroying the manager should not leak or crash
   EXPECT_NO_THROW(manager.reset());
 }
 
-TEST_F(ReliableConnectionTest, SecureConnectFailsWithoutValidCryptoConfig)
-{
+TEST_F(ReliableConnectionTest, SecureConnectFailsWithoutValidCryptoConfig) {
   config.crypto.enabled = true;
 
   ReliableConnection conn(&socket, config);
-  auto addr = SocketAddress::fromIPv4(0x7F000001);
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
 
-  const bool result = conn.connect(addr, 12345);
+  const bool result = conn.Connect(addr, 12345);
 
   EXPECT_FALSE(result);
-  EXPECT_EQ(conn.getState(), ConnectionState::Disconnected);
-  EXPECT_EQ(socket.getSentCount(), 0u);
+  EXPECT_EQ(conn.GetState(), ConnectionState::kDisconnected);
+  EXPECT_EQ(socket.GetSentCount(), 0u);
 }
 
 #if SOCKETWIRE_HAVE_LIBSODIUM
-bool connectSecurePair(ReliableConnection& client,
-                       MockSocket& clientSocket,
-                       MockEventHandler& clientHandler,
-                       ReliableConnection& server,
-                       MockSocket& serverSocket,
-                       MockEventHandler& serverHandler,
-                       const SocketAddress& serverAddr)
-{
-  client.setHandler(&clientHandler);
-  server.setHandler(&serverHandler);
+bool ConnectSecurePair(ReliableConnection& client, MockSocket& client_socket,
+                       MockEventHandler& client_handler,
+                       ReliableConnection& server, MockSocket& server_socket,
+                       MockEventHandler& server_handler,
+                       const SocketAddress& server_addr) {
+  client.SetHandler(&client_handler);
+  server.SetHandler(&server_handler);
 
-  if (!client.connect(serverAddr, 12345) || clientSocket.sentPackets.empty())
+  if (!client.Connect(server_addr, 12345) ||
+      client_socket.sentPackets.empty()) {
     return false;
+  }
 
-  const auto connectPacket = clientSocket.sentPackets.back();
-  server.processPacket(connectPacket.data.data(), connectPacket.data.size(), serverAddr, 23456);
-  if (serverSocket.sentPackets.empty())
-    return false;
+  const auto connect_packet = client_socket.sentPackets.back();
+  server.ProcessPacket(connect_packet.data.data(), connect_packet.data.size(),
+                       server_addr, 23456);
+  if (server_socket.sentPackets.empty()) return false;
 
-  const auto acceptPacket = serverSocket.sentPackets.back();
-  client.processPacket(acceptPacket.data.data(), acceptPacket.data.size(), serverAddr, 12345);
+  const auto accept_packet = server_socket.sentPackets.back();
+  client.ProcessPacket(accept_packet.data.data(), accept_packet.data.size(),
+                       server_addr, 12345);
 
-  return client.isConnected() &&
-         server.isConnected() &&
-         client.isCryptoReady() &&
-         server.isCryptoReady() &&
-         clientHandler.connected &&
-         serverHandler.connected;
+  return client.IsConnected() && server.IsConnected() &&
+         client.IsCryptoReady() && server.IsCryptoReady() &&
+         client_handler.connected && server_handler.connected;
 }
 
-TEST_F(ReliableConnectionTest, SecureConnectClientServer)
-{
-  auto client_keys = socketwire::crypto::KeyPair::generate();
-  auto server_keys = socketwire::crypto::KeyPair::generate();
+TEST_F(ReliableConnectionTest, SecureConnectClientServer) {
+  auto client_keys = socketwire::crypto::KeyPair::Generate();
+  auto server_keys = socketwire::crypto::KeyPair::Generate();
 
-  ReliableConnectionConfig clientCfg = config;
-  clientCfg.crypto.enabled = true;
-  clientCfg.crypto.localKeyPair = client_keys;
-  clientCfg.crypto.expected_server_public_key = server_keys.publicKey;
+  ReliableConnectionConfig client_cfg = config;
+  client_cfg.crypto.enabled = true;
+  client_cfg.crypto.localKeyPair = client_keys;
+  client_cfg.crypto.expected_server_public_key = server_keys.publicKey;
 
-  ReliableConnectionConfig serverCfg = config;
-  serverCfg.crypto.enabled = true;
-  serverCfg.crypto.localKeyPair = server_keys;
+  ReliableConnectionConfig server_cfg = config;
+  server_cfg.crypto.enabled = true;
+  server_cfg.crypto.localKeyPair = server_keys;
 
-  MockSocket clientSocket;
-  MockSocket serverSocket;
-  MockEventHandler clientHandler;
-  MockEventHandler serverHandler;
-  ReliableConnection client(&clientSocket, clientCfg);
-  ReliableConnection server(&serverSocket, serverCfg);
-  auto addr = SocketAddress::fromIPv4(0x7F000001);
+  MockSocket client_socket;
+  MockSocket server_socket;
+  MockEventHandler client_handler;
+  MockEventHandler server_handler;
+  ReliableConnection client(&client_socket, client_cfg);
+  ReliableConnection server(&server_socket, server_cfg);
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
 
-  ASSERT_TRUE(connectSecurePair(client, clientSocket, clientHandler, server, serverSocket, serverHandler, addr));
+  ASSERT_TRUE(ConnectSecurePair(client, client_socket, client_handler, server,
+                                server_socket, server_handler, addr));
 
-  ASSERT_FALSE(clientSocket.sentPackets.empty());
-  EXPECT_EQ(clientSocket.sentPackets.front().data.size(), 6u + socketwire::crypto::k_client_hello_size);
-  ASSERT_FALSE(serverSocket.sentPackets.empty());
-  EXPECT_EQ(serverSocket.sentPackets.front().data.size(), 6u + socketwire::crypto::k_server_hello_size);
+  ASSERT_FALSE(client_socket.sentPackets.empty());
+  EXPECT_EQ(client_socket.sentPackets.front().data.size(),
+            6u + socketwire::crypto::kClientHelloSize);
+  ASSERT_FALSE(server_socket.sentPackets.empty());
+  EXPECT_EQ(server_socket.sentPackets.front().data.size(),
+            6u + socketwire::crypto::kServerHelloSize);
 }
 
-TEST_F(ReliableConnectionTest, SecureConnectRejectsWrongPinnedServerKey)
-{
-  auto client_keys = socketwire::crypto::KeyPair::generate();
-  auto server_keys = socketwire::crypto::KeyPair::generate();
-  auto wrongServerKeys = socketwire::crypto::KeyPair::generate();
+TEST_F(ReliableConnectionTest, SecureConnectRejectsWrongPinnedServerKey) {
+  auto client_keys = socketwire::crypto::KeyPair::Generate();
+  auto server_keys = socketwire::crypto::KeyPair::Generate();
+  auto wrong_server_keys = socketwire::crypto::KeyPair::Generate();
 
-  ReliableConnectionConfig clientCfg = config;
-  clientCfg.crypto.enabled = true;
-  clientCfg.crypto.localKeyPair = client_keys;
-  clientCfg.crypto.expected_server_public_key = wrongServerKeys.publicKey;
+  ReliableConnectionConfig client_cfg = config;
+  client_cfg.crypto.enabled = true;
+  client_cfg.crypto.localKeyPair = client_keys;
+  client_cfg.crypto.expected_server_public_key = wrong_server_keys.publicKey;
 
-  ReliableConnectionConfig serverCfg = config;
-  serverCfg.crypto.enabled = true;
-  serverCfg.crypto.localKeyPair = server_keys;
+  ReliableConnectionConfig server_cfg = config;
+  server_cfg.crypto.enabled = true;
+  server_cfg.crypto.localKeyPair = server_keys;
 
-  MockSocket clientSocket;
-  MockSocket serverSocket;
-  MockEventHandler clientHandler;
-  MockEventHandler serverHandler;
-  ReliableConnection client(&clientSocket, clientCfg);
-  ReliableConnection server(&serverSocket, serverCfg);
-  client.setHandler(&clientHandler);
-  server.setHandler(&serverHandler);
-  auto addr = SocketAddress::fromIPv4(0x7F000001);
+  MockSocket client_socket;
+  MockSocket server_socket;
+  MockEventHandler client_handler;
+  MockEventHandler server_handler;
+  ReliableConnection client(&client_socket, client_cfg);
+  ReliableConnection server(&server_socket, server_cfg);
+  client.SetHandler(&client_handler);
+  server.SetHandler(&server_handler);
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
 
-  ASSERT_TRUE(client.connect(addr, 12345));
-  ASSERT_FALSE(clientSocket.sentPackets.empty());
-  auto connectPacket = clientSocket.sentPackets.back();
-  server.processPacket(connectPacket.data.data(), connectPacket.data.size(), addr, 23456);
+  ASSERT_TRUE(client.Connect(addr, 12345));
+  ASSERT_FALSE(client_socket.sentPackets.empty());
+  auto connect_packet = client_socket.sentPackets.back();
+  server.ProcessPacket(connect_packet.data.data(), connect_packet.data.size(),
+                       addr, 23456);
 
-  ASSERT_FALSE(serverSocket.sentPackets.empty());
-  auto acceptPacket = serverSocket.sentPackets.back();
-  client.processPacket(acceptPacket.data.data(), acceptPacket.data.size(), addr, 12345);
+  ASSERT_FALSE(server_socket.sentPackets.empty());
+  auto accept_packet = server_socket.sentPackets.back();
+  client.ProcessPacket(accept_packet.data.data(), accept_packet.data.size(),
+                       addr, 12345);
 
-  EXPECT_FALSE(clientHandler.connected);
-  EXPECT_FALSE(client.isConnected());
-  EXPECT_FALSE(client.isCryptoReady());
-  EXPECT_EQ(client.getState(), ConnectionState::Disconnected);
+  EXPECT_FALSE(client_handler.connected);
+  EXPECT_FALSE(client.IsConnected());
+  EXPECT_FALSE(client.IsCryptoReady());
+  EXPECT_EQ(client.GetState(), ConnectionState::kDisconnected);
 }
 
-TEST_F(ReliableConnectionTest, SecureConnectionRejectsPlaintextAfterHandshake)
-{
-  auto client_keys = socketwire::crypto::KeyPair::generate();
-  auto server_keys = socketwire::crypto::KeyPair::generate();
+TEST_F(ReliableConnectionTest, SecureConnectionRejectsPlaintextAfterHandshake) {
+  auto client_keys = socketwire::crypto::KeyPair::Generate();
+  auto server_keys = socketwire::crypto::KeyPair::Generate();
 
-  ReliableConnectionConfig clientCfg = config;
-  clientCfg.crypto.enabled = true;
-  clientCfg.crypto.localKeyPair = client_keys;
-  clientCfg.crypto.expected_server_public_key = server_keys.publicKey;
+  ReliableConnectionConfig client_cfg = config;
+  client_cfg.crypto.enabled = true;
+  client_cfg.crypto.localKeyPair = client_keys;
+  client_cfg.crypto.expected_server_public_key = server_keys.publicKey;
 
-  ReliableConnectionConfig serverCfg = config;
-  serverCfg.crypto.enabled = true;
-  serverCfg.crypto.localKeyPair = server_keys;
+  ReliableConnectionConfig server_cfg = config;
+  server_cfg.crypto.enabled = true;
+  server_cfg.crypto.localKeyPair = server_keys;
 
-  MockSocket clientSocket;
-  MockSocket serverSocket;
-  MockEventHandler clientHandler;
-  MockEventHandler serverHandler;
-  ReliableConnection client(&clientSocket, clientCfg);
-  ReliableConnection server(&serverSocket, serverCfg);
-  auto addr = SocketAddress::fromIPv4(0x7F000001);
+  MockSocket client_socket;
+  MockSocket server_socket;
+  MockEventHandler client_handler;
+  MockEventHandler server_handler;
+  ReliableConnection client(&client_socket, client_cfg);
+  ReliableConnection server(&server_socket, server_cfg);
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
 
-  ASSERT_TRUE(connectSecurePair(client, clientSocket, clientHandler, server, serverSocket, serverHandler, addr));
-  serverHandler.reset();
+  ASSERT_TRUE(ConnectSecurePair(client, client_socket, client_handler, server,
+                                server_socket, server_handler, addr));
+  server_handler.Reset();
 
   BitStream plaintext;
-  plaintext.write<uint8_t>(static_cast<uint8_t>(PacketType::Reliable));
-  plaintext.write<uint8_t>(0);
-  plaintext.write<uint32_t>(0);
-  plaintext.writeBytes("plain", 5);
+  plaintext.Write<uint8_t>(static_cast<uint8_t>(PacketType::kReliable));
+  plaintext.Write<uint8_t>(0);
+  plaintext.Write<uint32_t>(0);
+  plaintext.WriteBytes("plain", 5);
 
-  server.processPacket(plaintext.getData(), plaintext.getSizeBytes(), addr, 23456);
-  server.update();
+  server.ProcessPacket(plaintext.GetData(), plaintext.GetSizeBytes(), addr,
+                       23456);
+  server.Update();
 
-  EXPECT_TRUE(serverHandler.reliablePackets.empty());
+  EXPECT_TRUE(server_handler.reliablePackets.empty());
 }
 
-TEST_F(ReliableConnectionTest, SecureReliableAndUnreliablePayloadDelivery)
-{
-  auto client_keys = socketwire::crypto::KeyPair::generate();
-  auto server_keys = socketwire::crypto::KeyPair::generate();
+TEST_F(ReliableConnectionTest, SecureReliableAndUnreliablePayloadDelivery) {
+  auto client_keys = socketwire::crypto::KeyPair::Generate();
+  auto server_keys = socketwire::crypto::KeyPair::Generate();
 
-  ReliableConnectionConfig clientCfg = config;
-  clientCfg.crypto.enabled = true;
-  clientCfg.crypto.localKeyPair = client_keys;
-  clientCfg.crypto.expected_server_public_key = server_keys.publicKey;
+  ReliableConnectionConfig client_cfg = config;
+  client_cfg.crypto.enabled = true;
+  client_cfg.crypto.localKeyPair = client_keys;
+  client_cfg.crypto.expected_server_public_key = server_keys.publicKey;
 
-  ReliableConnectionConfig serverCfg = config;
-  serverCfg.crypto.enabled = true;
-  serverCfg.crypto.localKeyPair = server_keys;
+  ReliableConnectionConfig server_cfg = config;
+  server_cfg.crypto.enabled = true;
+  server_cfg.crypto.localKeyPair = server_keys;
 
-  MockSocket clientSocket;
-  MockSocket serverSocket;
-  MockEventHandler clientHandler;
-  MockEventHandler serverHandler;
-  ReliableConnection client(&clientSocket, clientCfg);
-  ReliableConnection server(&serverSocket, serverCfg);
-  auto addr = SocketAddress::fromIPv4(0x7F000001);
+  MockSocket client_socket;
+  MockSocket server_socket;
+  MockEventHandler client_handler;
+  MockEventHandler server_handler;
+  ReliableConnection client(&client_socket, client_cfg);
+  ReliableConnection server(&server_socket, server_cfg);
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
 
-  ASSERT_TRUE(connectSecurePair(client, clientSocket, clientHandler, server, serverSocket, serverHandler, addr));
-  clientSocket.clearSent();
-  serverHandler.reset();
+  ASSERT_TRUE(ConnectSecurePair(client, client_socket, client_handler, server,
+                                server_socket, server_handler, addr));
+  client_socket.ClearSent();
+  server_handler.Reset();
 
-  const char* reliableMsg = "secure reliable";
-  ASSERT_TRUE(client.sendReliable(0, reliableMsg, std::strlen(reliableMsg)));
-  ASSERT_EQ(clientSocket.sentPackets.size(), 1u);
-  const auto reliablePacket = clientSocket.sentPackets.back();
-  EXPECT_EQ(std::search(reliablePacket.data.begin(), reliablePacket.data.end(),
-                        reliableMsg, reliableMsg + std::strlen(reliableMsg)),
-            reliablePacket.data.end());
+  const char* reliable_msg = "secure reliable";
+  ASSERT_TRUE(client.SendReliable(0, reliable_msg, std::strlen(reliable_msg)));
+  ASSERT_EQ(client_socket.sentPackets.size(), 1u);
+  const auto reliable_packet = client_socket.sentPackets.back();
+  EXPECT_EQ(
+      std::search(reliable_packet.data.begin(), reliable_packet.data.end(),
+                  reliable_msg, reliable_msg + std::strlen(reliable_msg)),
+      reliable_packet.data.end());
 
-  server.processPacket(reliablePacket.data.data(), reliablePacket.data.size(), addr, 23456);
-  server.update();
-  ASSERT_EQ(serverHandler.reliablePackets.size(), 1u);
-  EXPECT_EQ(std::string(serverHandler.reliablePackets[0].begin(), serverHandler.reliablePackets[0].end()),
-            std::string(reliableMsg));
+  server.ProcessPacket(reliable_packet.data.data(), reliable_packet.data.size(),
+                       addr, 23456);
+  server.Update();
+  ASSERT_EQ(server_handler.reliablePackets.size(), 1u);
+  EXPECT_EQ(std::string(server_handler.reliablePackets.at(0).begin(),
+                        server_handler.reliablePackets.at(0).end()),
+            std::string(reliable_msg));
 
-  clientSocket.clearSent();
-  const char* unreliableMsg = "secure unreliable";
-  ASSERT_TRUE(client.sendUnreliable(1, unreliableMsg, std::strlen(unreliableMsg)));
-  ASSERT_EQ(clientSocket.sentPackets.size(), 1u);
-  const auto unreliablePacket = clientSocket.sentPackets.back();
-  EXPECT_EQ(std::search(unreliablePacket.data.begin(), unreliablePacket.data.end(),
-                        unreliableMsg, unreliableMsg + std::strlen(unreliableMsg)),
-            unreliablePacket.data.end());
+  client_socket.ClearSent();
+  const char* unreliable_msg = "secure unreliable";
+  ASSERT_TRUE(
+      client.SendUnreliable(1, unreliable_msg, std::strlen(unreliable_msg)));
+  ASSERT_EQ(client_socket.sentPackets.size(), 1u);
+  const auto unreliable_packet = client_socket.sentPackets.back();
+  EXPECT_EQ(
+      std::search(unreliable_packet.data.begin(), unreliable_packet.data.end(),
+                  unreliable_msg, unreliable_msg + std::strlen(unreliable_msg)),
+      unreliable_packet.data.end());
 
-  server.processPacket(unreliablePacket.data.data(), unreliablePacket.data.size(), addr, 23456);
-  ASSERT_EQ(serverHandler.unreliablePackets.size(), 1u);
-  EXPECT_EQ(std::string(serverHandler.unreliablePackets[0].begin(), serverHandler.unreliablePackets[0].end()),
-            std::string(unreliableMsg));
+  server.ProcessPacket(unreliable_packet.data.data(),
+                       unreliable_packet.data.size(), addr, 23456);
+  ASSERT_EQ(server_handler.unreliablePackets.size(), 1u);
+  EXPECT_EQ(std::string(server_handler.unreliablePackets.at(0).begin(),
+                        server_handler.unreliablePackets.at(0).end()),
+            std::string(unreliable_msg));
 }
 #endif
 
-} // anonymous namespace
+}  // anonymous namespace

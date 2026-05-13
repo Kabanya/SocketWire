@@ -1,58 +1,64 @@
 #include "crypto.hpp"
 
-namespace socketwire::crypto
-{
+namespace socketwire::crypto {
 
-CryptoContext HandshakeState::create_client_crypto_context() const
-{
-  return CryptoContext::from_client(session);
+CryptoContext HandshakeState::CreateClientCryptoContext() const {
+  return CryptoContext::FromClient(session);
 }
 
-CryptoContext HandshakeState::create_server_crypto_context() const
-{
-  return CryptoContext::from_server(session);
+CryptoContext HandshakeState::CreateServerCryptoContext() const {
+  return CryptoContext::FromServer(session);
 }
 
-Result initialize()
-{
+Result Initialize() {
 #if SOCKETWIRE_HAVE_LIBSODIUM
-  if (sodium_init() < 0)
-    return Result::failure(CryptoError::SodiumFailure);
-  return Result::success();
+  if (sodium_init() < 0) return Result::Failure(CryptoError::kSodiumFailure);
+  return Result::Success();
 #else
   return Result::failure(CryptoError::NotInitialized);
 #endif
 }
 
-bool cipher_suite_supported(CipherSuite s)
-{
+bool CipherSuiteSupported(CipherSuite s) {
 #if SOCKETWIRE_HAVE_LIBSODIUM
-  return s == CipherSuite::XChaCha20Poly1305;
+  return s == CipherSuite::kXChaCha20Poly1305;
 #else
   (void)s;
   return false;
 #endif
 }
 
-const char* to_string(CryptoError error) noexcept
-{
-  switch (error)
-  {
-    case CryptoError::None: return "None";
-    case CryptoError::NotInitialized: return "NotInitialized";
-    case CryptoError::UnsupportedSuite: return "UnsupportedSuite";
-    case CryptoError::InvalidState: return "InvalidState";
-    case CryptoError::DecodeError: return "DecodeError";
-    case CryptoError::KeyExchangeFailed: return "KeyExchangeFailed";
-    case CryptoError::SodiumFailure: return "SodiumFailure";
-    case CryptoError::BufferTooSmall: return "BufferTooSmall";
-    case CryptoError::SequenceExpired: return "SequenceExpired";
-    case CryptoError::DecryptFailed: return "DecryptFailed";
-    case CryptoError::NotReady: return "NotReady";
-    case CryptoError::InvalidPeerKey: return "InvalidPeerKey";
-    case CryptoError::ReplayDetected: return "ReplayDetected";
-    default: return "Unknown";
+const char* ToString(CryptoError error) noexcept {
+  switch (error) {
+    case CryptoError::kNone:
+      return "None";
+    case CryptoError::kNotInitialized:
+      return "NotInitialized";
+    case CryptoError::kUnsupportedSuite:
+      return "UnsupportedSuite";
+    case CryptoError::kInvalidState:
+      return "InvalidState";
+    case CryptoError::kDecodeError:
+      return "DecodeError";
+    case CryptoError::kKeyExchangeFailed:
+      return "KeyExchangeFailed";
+    case CryptoError::kSodiumFailure:
+      return "SodiumFailure";
+    case CryptoError::kBufferTooSmall:
+      return "BufferTooSmall";
+    case CryptoError::kSequenceExpired:
+      return "SequenceExpired";
+    case CryptoError::kDecryptFailed:
+      return "DecryptFailed";
+    case CryptoError::kNotReady:
+      return "NotReady";
+    case CryptoError::kInvalidPeerKey:
+      return "InvalidPeerKey";
+    case CryptoError::kReplayDetected:
+      return "ReplayDetected";
+    default:
+      return "Unknown";
   }
 }
 
-} // namespace socketwire::crypto
+}  // namespace socketwire::crypto

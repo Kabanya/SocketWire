@@ -1,9 +1,10 @@
 #include "i_socket.hpp"
-#include "bit_stream.hpp"
+
 #include <atomic>
 
-namespace socketwire
-{
+#include "bit_stream.hpp"
+
+namespace socketwire {
 /*
   BitStream accessor stubs
   Implementation of helper functions used in ISocket::sendBitStream.
@@ -11,43 +12,45 @@ namespace socketwire
   maintain loose coupling between the network layer and serialization.
 */
 
-const std::uint8_t* bitstream_access_data(const BitStream& bs)
-{
-  return bs.getData();
+const std::uint8_t* BitstreamAccessData(const BitStream& bs) {
+  return bs.GetData();
 }
 
-std::size_t bitstream_access_size(const BitStream& bs)
-{
-  return bs.getSizeBytes();
+std::size_t BitstreamAccessSize(const BitStream& bs) {
+  return bs.GetSizeBytes();
 }
 
 // SocketFactoryRegistry
-static std::atomic<ISocketFactory*> g_FactoryInstance{nullptr};
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+static std::atomic<ISocketFactory*> g_factory_instance{nullptr};
 
-void SocketFactoryRegistry::setFactory(ISocketFactory* factory)
-{
-  g_FactoryInstance.store(factory, std::memory_order_release);
+void SocketFactoryRegistry::SetFactory(ISocketFactory* factory) {
+  g_factory_instance.store(factory, std::memory_order_release);
 }
 
-ISocketFactory* SocketFactoryRegistry::getFactory()
-{
-  return g_FactoryInstance.load(std::memory_order_acquire);
+ISocketFactory* SocketFactoryRegistry::GetFactory() {
+  return g_factory_instance.load(std::memory_order_acquire);
 }
 
-const char* to_string(SocketError error) noexcept
-{
-  switch (error)
-  {
-    case SocketError::None: return "None";
-    case SocketError::WouldBlock: return "WouldBlock";
-    case SocketError::Closed: return "Closed";
-    case SocketError::System: return "System";
-    case SocketError::InvalidParam: return "InvalidParam";
-    case SocketError::NotBound: return "NotBound";
-    case SocketError::Unsupported: return "Unsupported";
-    case SocketError::Unknown: return "Unknown";
-    default: return "Unknown";
+const char* ToString(SocketError error) noexcept {
+  switch (error) {
+    case SocketError::kNone:
+      return "None";
+    case SocketError::kWouldBlock:
+      return "WouldBlock";
+    case SocketError::kClosed:
+      return "Closed";
+    case SocketError::kSystem:
+      return "System";
+    case SocketError::kInvalidParam:
+      return "InvalidParam";
+    case SocketError::kNotBound:
+      return "NotBound";
+    case SocketError::kUnsupported:
+      return "Unsupported";
+    default:
+      return "Unknown";
   }
 }
 
-} // namespace socketwire
+}  // namespace socketwire

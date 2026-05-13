@@ -1,77 +1,71 @@
 #include "socket_constants.hpp"
-#include "i_socket.hpp"
+
 #include <optional>
+
+#include "i_socket.hpp"
 
 // Platform-specific includes are isolated here, not exposed to users
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
+
 #include <cstring>
 #else
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
 #include <cstring>
 #endif
 
-namespace socketwire
-{
+namespace socketwire {
 
-SocketAddress SocketConstants::any()
-{
-  return SocketAddress::fromIPv4(IPV4_ANY);
+SocketAddress SocketConstants::Any() {
+  return SocketAddress::FromIPv4(kIpV4Any);
 }
 
-SocketAddress SocketConstants::anyIPv6()
-{
-  return SocketAddress::fromIPv6(IPV6_ANY);
+SocketAddress SocketConstants::AnyIPv6() {
+  return SocketAddress::FromIPv6(kIpV6Any);
 }
 
-SocketAddress SocketConstants::loopback()
-{
-  return SocketAddress::fromIPv4(IPV4_LOOPBACK);
+SocketAddress SocketConstants::Loopback() {
+  return SocketAddress::FromIPv4(kIpV4Loopback);
 }
 
-SocketAddress SocketConstants::loopbackIPv6()
-{
-  return SocketAddress::fromIPv6(IPV6_LOOPBACK);
+SocketAddress SocketConstants::LoopbackIPv6() {
+  return SocketAddress::FromIPv6(kIpV6Loopback);
 }
 
-SocketAddress SocketConstants::broadcast()
-{
-  return SocketAddress::fromIPv4(IPV4_BROADCAST);
+SocketAddress SocketConstants::Broadcast() {
+  return SocketAddress::FromIPv4(kIpV4Broadcast);
 }
 
-bool SocketConstants::parseIPv4(const char* str, std::uint32_t& outAddress)
-{
-  if (str == nullptr)
-    return false;
+bool SocketConstants::ParseIPv4(const char* str, std::uint32_t& out_address) {
+  if (str == nullptr) return false;
 
 #if defined(_WIN32)
   // Windows: use inet_pton
-  struct in_addr addr;
-  if (inet_pton(AF_INET, str, &addr) != 1)
-    return false;
+  struct in_addr addr{};
+  if (inet_pton(AF_INET, str, &addr) != 1) return false;
 
   // Convert from network byte order to host byte order
-  outAddress = ntohl(addr.s_addr);
+  out_address = ntohl(addr.s_addr);
   return true;
 #else
   // POSIX: use inet_pton
-  struct in_addr addr;
-  if (inet_pton(AF_INET, str, &addr) != 1)
-    return false;
+  struct in_addr addr{};
+  if (inet_pton(AF_INET, str, &addr) != 1) return false;
 
   // Convert from network byte order to host byte order
-  outAddress = ntohl(addr.s_addr);
+  out_address = ntohl(addr.s_addr);
   return true;
 #endif
 }
 
-bool SocketConstants::parseIPv6(const char* str, std::array<std::uint8_t, 16>& outAddress, std::uint32_t& scopeId)
-{
-  if (str == nullptr)
-    return false;
+bool SocketConstants::ParseIPv6(const char* str,
+                                std::array<std::uint8_t, 16>& out_address,
+                                std::uint32_t& scope_id) {
+  if (str == nullptr) return false;
 
 #if defined(_WIN32)
   struct in6_addr addr{};
@@ -79,107 +73,100 @@ bool SocketConstants::parseIPv6(const char* str, std::array<std::uint8_t, 16>& o
   struct in6_addr addr{};
 #endif
 
-  if (inet_pton(AF_INET6, str, &addr) != 1)
-    return false;
+  if (inet_pton(AF_INET6, str, &addr) != 1) return false;
 
-  std::memcpy(outAddress.data(), &addr, outAddress.size());
-  scopeId = 0; // inet_pton does not encode scope id
+  std::memcpy(out_address.data(), &addr, out_address.size());
+  scope_id = 0;  // inet_pton does not encode scope id
   return true;
 }
 
-bool SocketConstants::formatIPv4(std::uint32_t address, char* buffer, size_t bufferSize)
-{
-  if (buffer == nullptr || bufferSize < 16) // INET_ADDRSTRLEN = 16
+bool SocketConstants::FormatIPv4(std::uint32_t address, char* buffer,
+                                 size_t buffer_size) {
+  if (buffer == nullptr || buffer_size < 16) {  // INET_ADDRSTRLEN = 16
     return false;
+  }
 
 #if defined(_WIN32)
-  struct in_addr addr;
+  struct in_addr addr{};
   addr.s_addr = htonl(address);
 
-  return inet_ntop(AF_INET, &addr, buffer, static_cast<socklen_t>(bufferSize)) != nullptr;
+  return inet_ntop(AF_INET, &addr, buffer,
+                   static_cast<socklen_t>(buffer_size)) != nullptr;
 #else
-  struct in_addr addr;
+  struct in_addr addr{};
   addr.s_addr = htonl(address);
 
-  return inet_ntop(AF_INET, &addr, buffer, static_cast<socklen_t>(bufferSize)) != nullptr;
+  return inet_ntop(AF_INET, &addr, buffer,
+                   static_cast<socklen_t>(buffer_size)) != nullptr;
 #endif
 }
 
-bool SocketConstants::formatIPv6(const std::array<std::uint8_t, 16>& address,
-                                 std::uint32_t scopeId,
-                                 char* buffer,
-                                 size_t bufferSize)
-{
-  if (buffer == nullptr || bufferSize < 46) // INET6_ADDRSTRLEN = 46
+bool SocketConstants::FormatIPv6(const std::array<std::uint8_t, 16>& address,
+                                 std::uint32_t scope_id, char* buffer,
+                                 size_t buffer_size) {
+  if (buffer == nullptr || buffer_size < 46) {  // INET6_ADDRSTRLEN = 46
     return false;
+  }
 
   struct in6_addr addr{};
   std::memcpy(&addr, address.data(), address.size());
-  (void)scopeId; // Scope not encoded by inet_ntop
-  return inet_ntop(AF_INET6, &addr, buffer, static_cast<socklen_t>(bufferSize)) != nullptr;
+  (void)scope_id;  // Scope not encoded by inet_ntop
+  return inet_ntop(AF_INET6, &addr, buffer,
+                   static_cast<socklen_t>(buffer_size)) != nullptr;
 }
 
-SocketAddress SocketConstants::fromString(const char* ipString)
-{
+SocketAddress SocketConstants::FromString(const char* ip_string) {
   std::uint32_t addr = 0;
-  if (parseIPv4(ipString, addr))
-  {
-    return SocketAddress::fromIPv4(addr);
+  if (ParseIPv4(ip_string, addr)) {
+    return SocketAddress::FromIPv4(addr);
   }
 
   std::array<std::uint8_t, 16> addr6{};
-  std::uint32_t scopeId = 0;
-  if (parseIPv6(ipString, addr6, scopeId))
-  {
-    return SocketAddress::fromIPv6(addr6, scopeId);
+  std::uint32_t scope_id = 0;
+  if (ParseIPv6(ip_string, addr6, scope_id)) {
+    return SocketAddress::FromIPv6(addr6, scope_id);
   }
   // Return 0.0.0.0 on parse failure
-  return SocketAddress::fromIPv4(IPV4_ANY);
+  return SocketAddress::FromIPv4(kIpV4Any);
 }
 
-SocketAddress SocketConstants::fromOctets(std::uint8_t a, std::uint8_t b,
-                                           std::uint8_t c, std::uint8_t d)
-{
+SocketAddress SocketConstants::FromOctets(std::uint8_t a, std::uint8_t b,
+                                          std::uint8_t c, std::uint8_t d) {
   std::uint32_t address = (static_cast<std::uint32_t>(a) << 24) |
                           (static_cast<std::uint32_t>(b) << 16) |
-                          (static_cast<std::uint32_t>(c) << 8)  |
+                          (static_cast<std::uint32_t>(c) << 8) |
                           static_cast<std::uint32_t>(d);
 
-  return SocketAddress::fromIPv4(address);
+  return SocketAddress::FromIPv4(address);
 }
 
-std::optional<SocketAddress> SocketConstants::tryFromString(const char* ipString)
-{
-  if (ipString == nullptr)
-    return std::nullopt;
+std::optional<SocketAddress> SocketConstants::TryFromString(
+    const char* ip_string) {
+  if (ip_string == nullptr) return std::nullopt;
 
   std::uint32_t addr = 0;
-  if (parseIPv4(ipString, addr))
-    return SocketAddress::fromIPv4(addr);
+  if (ParseIPv4(ip_string, addr)) return SocketAddress::FromIPv4(addr);
 
   std::array<std::uint8_t, 16> addr6{};
-  std::uint32_t scopeId = 0;
-  if (parseIPv6(ipString, addr6, scopeId))
-    return SocketAddress::fromIPv6(addr6, scopeId);
+  std::uint32_t scope_id = 0;
+  if (ParseIPv6(ip_string, addr6, scope_id)) {
+    return SocketAddress::FromIPv6(addr6, scope_id);
+  }
 
   return std::nullopt;
 }
 
-std::string SocketConstants::formatIPv4String(std::uint32_t address)
-{
+std::string SocketConstants::FormatIPv4String(std::uint32_t address) {
   char buf[16];
-  if (!formatIPv4(address, buf, sizeof(buf)))
-    return {};
-  return std::string(buf);
+  if (!FormatIPv4(address, buf, sizeof(buf))) return {};
+  return {buf};
 }
 
-std::string SocketConstants::formatIPv6String(const std::array<std::uint8_t, 16>& address,
-                                              std::uint32_t scopeId)
-{
+std::string SocketConstants::FormatIPv6String(
+    const std::array<std::uint8_t, 16>& address, std::uint32_t scope_id) {
   char buf[46];
-  if (!formatIPv6(address, scopeId, buf, sizeof(buf)))
-    return {};
-  return std::string(buf);
+  if (!FormatIPv6(address, scope_id, buf, sizeof(buf))) return {};
+  return {buf};
 }
 
-} // namespace socketwire
+}  // namespace socketwire

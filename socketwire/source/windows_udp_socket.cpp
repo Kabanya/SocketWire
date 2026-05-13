@@ -1,17 +1,16 @@
+#include <cassert>
+#include <cstring>
+
 #include "i_socket.hpp"
 
-#include <cstring>
-#include <cassert>
-
 #ifdef __clangd__
-namespace socketwire
-{
-void register_windows_socket_factory() {}
-} // namespace socketwire
+namespace socketwire {
+void RegisterWindowsSocketFactory() {}
+}  // namespace socketwire
 #else
 
 #if !defined(_WIN32) && !defined(_WIN64)
-  #error "windows_udp_socket.cpp is for Windows platforms only."
+#error "windows_udp_socket.cpp is for Windows platforms only."
 #endif
 
 #define WIN32_LEAN_AND_MEAN
@@ -22,188 +21,161 @@ void register_windows_socket_factory() {}
 
 // Link with Winsock library (MSVC only, GCC uses CMake target_link_libraries)
 #ifdef _MSC_VER
-  #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "ws2_32.lib")
 #endif
 
-namespace socketwire
-{
+namespace socketwire {
 
 // Pull shared address-conversion helpers into this TU's namespace.
-using detail::is_ipv4_mapped;
-using detail::socketaddress_from_sockaddr;
-using detail::fill_sockaddr_storage;
+using detail::FillSockaddrStorage;
+using detail::IsIpv4Mapped;
+using detail::SocketaddressFromSockaddr;
 
 // Global WSA initialization helper
-class WSAInitializer
-{
-public:
-  WSAInitializer()
-  {
-    WSADATA wsaData;
-    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+class WSAInitializer {
+ public:
+  WSAInitializer() {
+    WSADATA wsa_data;
+    int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
     initialized = (result == 0);
   }
 
-  ~WSAInitializer()
-  {
-    if (initialized)
-    {
+  ~WSAInitializer() {
+    if (initialized) {
       WSACleanup();
     }
   }
 
-  bool isInitialized() const { return initialized; }
+  bool IsInitialized() const { return initialized; }
 
-private:
+ private:
   bool initialized = false;
 };
 
-static WSAInitializer& getWSAInitializer()
-{
+static WSAInitializer& GetWsaInitializer() {
   static WSAInitializer instance;
   return instance;
 }
 
 // Error mapping WSAGetLastError -> SocketError
-static SocketError map_wsa_error(int wsaError)
-{
-  switch (wsaError)
-  {
+static SocketError MapWsaError(int wsa_error) {
+  switch (wsa_error) {
     case WSAEWOULDBLOCK:
-      return SocketError::WouldBlock;
+      return SocketError::kWouldBlock;
     case WSAEBADF:
     case WSAENOTSOCK:
     case WSAEINVAL:
-      return SocketError::InvalidParam;
+      return SocketError::kInvalidParam;
     case WSAECONNRESET:
     case WSAENOTCONN:
     case WSAENETRESET:
     case WSAECONNABORTED:
-      return SocketError::Closed;
+      return SocketError::kClosed;
     case WSAENETDOWN:
     case WSAENETUNREACH:
     case WSAEHOSTDOWN:
     case WSAEHOSTUNREACH:
-      return SocketError::System;
+      return SocketError::kSystem;
     default:
-      return SocketError::System;
+      return SocketError::kSystem;
   }
 }
 
-static SocketError map_last_error()
-{
-  return map_wsa_error(WSAGetLastError());
-}
+static SocketError MapLastError() { return MapWsaError(WSAGetLastError()); }
 
 // Windows UDP implementation based on ISocket
-class WindowsUDPSocket final : public ISocket
-{
-public:
+class WindowsUDPSocket final : public ISocket {
+ public:
   explicit WindowsUDPSocket(const SocketConfig& cfg);
   ~WindowsUDPSocket() override;
 
-  SocketError bind(const SocketAddress& address, std::uint16_t port) override;
-  SocketResult sendTo(const void* data,
-                      std::size_t length,
-                      const SocketAddress& toAddr,
-                      std::uint16_t toPort) override;
-  SocketResult receive(void* buffer,
-                       std::size_t capacity,
-                       SocketAddress& fromAddr,
-                       std::uint16_t& fromPort) override;
-  void poll(ISocketEventHandler* handler) override;
-  SocketError setBlocking(bool enable) override;
-  bool isBlocking() const override;
-  std::uint16_t localPort() const override;
-  SocketType type() const override;
-  int nativeHandle() const override;
-  void close() override;
+  SocketError Bind(const SocketAddress& address, std::uint16_t port) override;
+  SocketResult SendTo(const void* data, std::size_t length,
+                      const SocketAddress& to_addr,
+                      std::uint16_t to_port) override;
+  SocketResult Receive(void* buffer, std::size_t capacity,
+                       SocketAddress& from_addr,
+                       std::uint16_t& from_port) override;
+  void Poll(ISocketEventHandler* handler) override;
+  SocketError SetBlocking(bool enable) override;
+  bool IsBlocking() const override;
+  std::uint16_t LocalPort() const override;
+  SocketType Type() const override;
+  int NativeHandle() const override;
+  void Close() override;
 
-private:
+ private:
   SOCKET sock = INVALID_SOCKET;
   bool blocking = false;
-  std::uint16_t boundPort = 0;
+  std::uint16_t bound_port = 0;
   SocketConfig config;
   int family = AF_UNSPEC;
 };
 
-WindowsUDPSocket::WindowsUDPSocket(const SocketConfig& cfg)
-  : config(cfg)
-{
+WindowsUDPSocket::WindowsUDPSocket(const SocketConfig& cfg) : config(cfg) {
   // Ensure WSA is initialized
-  getWSAInitializer();
+  GetWsaInitializer();
 }
 
-WindowsUDPSocket::~WindowsUDPSocket()
-{
-  close();
-}
+WindowsUDPSocket::~WindowsUDPSocket() { Close(); }
 
-SocketError WindowsUDPSocket::bind(const SocketAddress& address, std::uint16_t port)
-{
-  if (!getWSAInitializer().isInitialized())
-    return SocketError::System;
+SocketError WindowsUDPSocket::Bind(const SocketAddress& address,
+                                   std::uint16_t port) {
+  if (!GetWsaInitializer().IsInitialized()) return SocketError::kSystem;
 
-  if (address.isIPv6 && !config.enableIPv6)
-    return SocketError::Unsupported;
+  if (address.isIPv6 && !config.enableIPv6) return SocketError::kUnsupported;
 
   if (sock != INVALID_SOCKET)
-    return SocketError::InvalidParam; // already open
+    return SocketError::kInvalidParam;  // already open
 
   family = address.isIPv6 ? AF_INET6 : AF_INET;
   sock = ::socket(family, SOCK_DGRAM, IPPROTO_UDP);
-  if (sock == INVALID_SOCKET)
-    return map_last_error();
+  if (sock == INVALID_SOCKET) return MapLastError();
 
-  if (family == AF_INET6)
-  {
+  if (family == AF_INET6) {
     // Enable dual-stack if requested so IPv4-mapped addresses are accepted
     BOOL v6only = config.enableIPv6 ? FALSE : TRUE;
     ::setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY,
                  reinterpret_cast<const char*>(&v6only), sizeof(v6only));
   }
 
-  if (config.reuseAddress)
-  {
+  if (config.reuseAddress) {
     BOOL v = TRUE;
-    ::setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&v), sizeof(v));
+    ::setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+                 reinterpret_cast<const char*>(&v), sizeof(v));
   }
-  if (config.sendBufferSize > 0)
-  {
+  if (config.sendBufferSize > 0) {
     int size = config.sendBufferSize;
-    ::setsockopt(sock, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&size), sizeof(size));
+    ::setsockopt(sock, SOL_SOCKET, SO_SNDBUF,
+                 reinterpret_cast<const char*>(&size), sizeof(size));
   }
-  if (config.recvBufferSize > 0)
-  {
+  if (config.recvBufferSize > 0) {
     int size = config.recvBufferSize;
-    ::setsockopt(sock, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&size), sizeof(size));
+    ::setsockopt(sock, SOL_SOCKET, SO_RCVBUF,
+                 reinterpret_cast<const char*>(&size), sizeof(size));
   }
 
-  if (config.nonBlocking)
-  {
+  if (config.nonBlocking) {
     u_long mode = 1;
     ::ioctlsocket(sock, FIONBIO, &mode);
     blocking = false;
-  }
-  else
-  {
+  } else {
     blocking = true;
   }
 
   sockaddr_storage addr{};
-  int addrLen = 0;
-  int targetFamily = AF_UNSPEC;
-  if (!fill_sockaddr_storage(address, port, family == AF_INET6, addr, targetFamily, addrLen))
-  {
+  int addr_len = 0;
+  int target_family = AF_UNSPEC;
+  if (!FillSockaddrStorage(address, port, family == AF_INET6, addr,
+                           target_family, addr_len)) {
     ::closesocket(sock);
     sock = INVALID_SOCKET;
     family = AF_UNSPEC;
-    return SocketError::InvalidParam;
+    return SocketError::kInvalidParam;
   }
 
-  if (::bind(sock, reinterpret_cast<sockaddr*>(&addr), addrLen) != 0)
-  {
-    SocketError err = map_last_error();
+  if (::bind(sock, reinterpret_cast<sockaddr*>(&addr), addr_len) != 0) {
+    SocketError err = MapLastError();
     ::closesocket(sock);
     sock = INVALID_SOCKET;
     family = AF_UNSPEC;
@@ -211,213 +183,162 @@ SocketError WindowsUDPSocket::bind(const SocketAddress& address, std::uint16_t p
   }
 
   // Get the actual assigned port (important when port == 0)
-  sockaddr_storage boundAddr{};
-  int boundLen = sizeof(boundAddr);
-  if (::getsockname(sock, reinterpret_cast<sockaddr*>(&boundAddr), &boundLen) == 0)
-  {
-    if (boundAddr.ss_family == AF_INET)
-    {
-      boundPort = ntohs(reinterpret_cast<sockaddr_in*>(&boundAddr)->sin_port);
+  sockaddr_storage bound_addr{};
+  int bound_len = sizeof(bound_addr);
+  if (::getsockname(sock, reinterpret_cast<sockaddr*>(&bound_addr),
+                    &bound_len) == 0) {
+    if (bound_addr.ss_family == AF_INET) {
+      bound_port = ntohs(reinterpret_cast<sockaddr_in*>(&bound_addr)->sin_port);
+    } else if (bound_addr.ss_family == AF_INET6) {
+      bound_port =
+          ntohs(reinterpret_cast<sockaddr_in6*>(&bound_addr)->sin6_port);
     }
-    else if (boundAddr.ss_family == AF_INET6)
-    {
-      boundPort = ntohs(reinterpret_cast<sockaddr_in6*>(&boundAddr)->sin6_port);
-    }
-  }
-  else
-  {
-    boundPort = port; // fallback
+  } else {
+    bound_port = port;  // fallback
   }
 
-  return SocketError::None;
+  return SocketError::kNone;
 }
 
-SocketResult WindowsUDPSocket::sendTo(const void* data,
-                                      std::size_t length,
-                                      const SocketAddress& toAddr,
-                                      std::uint16_t toPort)
-{
-  if (!getWSAInitializer().isInitialized())
-    return { -1, SocketError::System };
+SocketResult WindowsUDPSocket::SendTo(const void* data, std::size_t length,
+                                      const SocketAddress& to_addr,
+                                      std::uint16_t to_port) {
+  if (!GetWsaInitializer().IsInitialized()) return {-1, SocketError::kSystem};
 
-  if (data == nullptr || length == 0)
-    return { -1, SocketError::InvalidParam };
+  if (data == nullptr || length == 0) return {-1, SocketError::kInvalidParam};
 
-  if (sock != INVALID_SOCKET && toAddr.isIPv6 && family == AF_INET)
-    return { -1, SocketError::Unsupported };
+  if (sock != INVALID_SOCKET && to_addr.isIPv6 && family == AF_INET)
+    return {-1, SocketError::kUnsupported};
 
-  if (toAddr.isIPv6 && !config.enableIPv6)
-    return { -1, SocketError::Unsupported };
+  if (to_addr.isIPv6 && !config.enableIPv6)
+    return {-1, SocketError::kUnsupported};
 
   // Lazy open if socket is not created (UDP allows send without bind)
-  if (sock == INVALID_SOCKET)
-  {
-    family = toAddr.isIPv6 ? AF_INET6 : AF_INET;
+  if (sock == INVALID_SOCKET) {
+    family = to_addr.isIPv6 ? AF_INET6 : AF_INET;
     sock = ::socket(family, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock == INVALID_SOCKET)
-      return { -1, map_last_error() };
+    if (sock == INVALID_SOCKET) return {-1, MapLastError()};
 
-    if (family == AF_INET6)
-    {
+    if (family == AF_INET6) {
       BOOL v6only = config.enableIPv6 ? FALSE : TRUE;
       ::setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY,
                    reinterpret_cast<const char*>(&v6only), sizeof(v6only));
     }
 
-    if (config.nonBlocking)
-    {
+    if (config.nonBlocking) {
       u_long mode = 1;
       ::ioctlsocket(sock, FIONBIO, &mode);
       blocking = false;
-    }
-    else
-    {
+    } else {
       blocking = true;
     }
 
     // reuseAddress for sender — optional
-    if (config.reuseAddress)
-    {
+    if (config.reuseAddress) {
       BOOL v = TRUE;
-      ::setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&v), sizeof(v));
+      ::setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+                   reinterpret_cast<const char*>(&v), sizeof(v));
     }
   }
 
   sockaddr_storage addr{};
-  int addrLen = 0;
-  int targetFamily = AF_UNSPEC;
-  if (!fill_sockaddr_storage(toAddr, toPort, family == AF_INET6, addr, targetFamily, addrLen))
-    return { -1, SocketError::InvalidParam };
+  int addr_len = 0;
+  int target_family = AF_UNSPEC;
+  if (!FillSockaddrStorage(to_addr, to_port, family == AF_INET6, addr,
+                           target_family, addr_len))
+    return {-1, SocketError::kInvalidParam};
 
-  int sent = ::sendto(sock,
-                      reinterpret_cast<const char*>(data),
-                      static_cast<int>(length),
-                      0,
-                      reinterpret_cast<sockaddr*>(&addr),
-                      addrLen);
-  if (sent == SOCKET_ERROR)
-    return { -1, map_last_error() };
+  int sent = ::sendto(sock, reinterpret_cast<const char*>(data),
+                      static_cast<int>(length), 0,
+                      reinterpret_cast<sockaddr*>(&addr), addr_len);
+  if (sent == SOCKET_ERROR) return {-1, MapLastError()};
 
-  return { sent, SocketError::None };
+  return {sent, SocketError::kNone};
 }
 
-SocketResult WindowsUDPSocket::receive(void* buffer,
-                                       std::size_t capacity,
-                                       SocketAddress& fromAddr,
-                                       std::uint16_t& fromPort)
-{
-  if (sock == INVALID_SOCKET)
-    return { -1, SocketError::NotBound };
+SocketResult WindowsUDPSocket::Receive(void* buffer, std::size_t capacity,
+                                       SocketAddress& from_addr,
+                                       std::uint16_t& from_port) {
+  if (sock == INVALID_SOCKET) return {-1, SocketError::kNotBound};
   if (buffer == nullptr || capacity == 0)
-    return { -1, SocketError::InvalidParam };
+    return {-1, SocketError::kInvalidParam};
 
   sockaddr_storage addr{};
   int len = sizeof(addr);
-  int got = ::recvfrom(sock,
-                       reinterpret_cast<char*>(buffer),
-                       static_cast<int>(capacity),
-                       0,
-                       reinterpret_cast<sockaddr*>(&addr),
-                       &len);
-  if (got == SOCKET_ERROR)
-    return { -1, map_last_error() };
+  int got = ::recvfrom(sock, reinterpret_cast<char*>(buffer),
+                       static_cast<int>(capacity), 0,
+                       reinterpret_cast<sockaddr*>(&addr), &len);
+  if (got == SOCKET_ERROR) return {-1, MapLastError()};
 
-  fromAddr = socketaddress_from_sockaddr(addr);
+  from_addr = SocketaddressFromSockaddr(addr);
   if (addr.ss_family == AF_INET)
-    fromPort = ntohs(reinterpret_cast<sockaddr_in*>(&addr)->sin_port);
+    from_port = ntohs(reinterpret_cast<sockaddr_in*>(&addr)->sin_port);
   else if (addr.ss_family == AF_INET6)
-    fromPort = ntohs(reinterpret_cast<sockaddr_in6*>(&addr)->sin6_port);
+    from_port = ntohs(reinterpret_cast<sockaddr_in6*>(&addr)->sin6_port);
   else
-    fromPort = 0;
-  return { got, SocketError::None };
+    from_port = 0;
+  return {got, SocketError::kNone};
 }
 
-void WindowsUDPSocket::poll(ISocketEventHandler* handler)
-{
-  if (handler == nullptr || sock == INVALID_SOCKET)
-    return;
+void WindowsUDPSocket::Poll(ISocketEventHandler* handler) {
+  if (handler == nullptr || sock == INVALID_SOCKET) return;
 
   // Single read loop until WouldBlock
-  for (;;)
-  {
+  for (;;) {
     SocketAddress from;
     std::uint16_t port = 0;
     char temp[2048];
-    SocketResult r = receive(temp, sizeof(temp), from, port);
-    if (!r.succeeded())
-    {
-      if (r.error != SocketError::WouldBlock)
-        handler->onSocketError(r.error);
+    SocketResult r = Receive(temp, sizeof(temp), from, port);
+    if (!r.Succeeded()) {
+      if (r.error != SocketError::kWouldBlock) handler->OnSocketError(r.error);
       break;
     }
-    if (r.bytes <= 0)
-      break;
-    handler->onDataReceived(from, port, temp, static_cast<std::size_t>(r.bytes));
+    if (r.bytes <= 0) break;
+    handler->OnDataReceived(from, port, temp,
+                            static_cast<std::size_t>(r.bytes));
 
     // Heuristic: if received less than full buffer — finish
-    if (r.bytes < static_cast<std::ptrdiff_t>(sizeof(temp)))
-      break;
+    if (r.bytes < static_cast<std::ptrdiff_t>(sizeof(temp))) break;
   }
 }
 
-SocketError WindowsUDPSocket::setBlocking(bool enable)
-{
-  if (sock == INVALID_SOCKET)
-    return SocketError::NotBound;
+SocketError WindowsUDPSocket::SetBlocking(bool enable) {
+  if (sock == INVALID_SOCKET) return SocketError::kNotBound;
 
   u_long mode = enable ? 0 : 1;
-  if (::ioctlsocket(sock, FIONBIO, &mode) != 0)
-    return map_last_error();
+  if (::ioctlsocket(sock, FIONBIO, &mode) != 0) return MapLastError();
 
   blocking = enable;
-  return SocketError::None;
+  return SocketError::kNone;
 }
 
-bool WindowsUDPSocket::isBlocking() const
-{
-  return blocking;
-}
+bool WindowsUDPSocket::IsBlocking() const { return blocking; }
 
-std::uint16_t WindowsUDPSocket::localPort() const
-{
-  return boundPort;
-}
+std::uint16_t WindowsUDPSocket::LocalPort() const { return bound_port; }
 
-SocketType WindowsUDPSocket::type() const
-{
-  return SocketType::UDP;
-}
+SocketType WindowsUDPSocket::Type() const { return SocketType::kUdp; }
 
-int WindowsUDPSocket::nativeHandle() const
-{
-  return static_cast<int>(sock);
-}
+int WindowsUDPSocket::NativeHandle() const { return static_cast<int>(sock); }
 
-void WindowsUDPSocket::close()
-{
-  if (sock != INVALID_SOCKET)
-  {
+void WindowsUDPSocket::Close() {
+  if (sock != INVALID_SOCKET) {
     ::closesocket(sock);
     sock = INVALID_SOCKET;
-    boundPort = 0;
+    bound_port = 0;
     family = AF_UNSPEC;
   }
 }
 
-
 // Windows Socket Factory
-class WindowsSocketFactory : public ISocketFactory
-{
-public:
-  std::unique_ptr<ISocket> createSocket(SocketType type,
-                                        const SocketConfig& cfg) override
-  {
-    switch (type)
-    {
-      case SocketType::UDP:
+class WindowsSocketFactory : public ISocketFactory {
+ public:
+  std::unique_ptr<ISocket> CreateSocket(SocketType type,
+                                        const SocketConfig& cfg) override {
+    switch (type) {
+      case SocketType::kUdp:
         return std::make_unique<WindowsUDPSocket>(cfg);
-      case SocketType::TCP:
-        // TODO: add TCP socket implementation (WindowsTCPSocket)
+      case SocketType::kTcp:
+        // TODO(kabanya): add TCP socket implementation (WindowsTCPSocket)
         return nullptr;
       default:
         return nullptr;
@@ -425,14 +346,13 @@ public:
   }
 };
 
-
-// Public function to register the factory. Call once during network layer initialization.
-void register_windows_socket_factory()
-{
+// Public function to register the factory. Call once during network layer
+// initialization.
+void RegisterWindowsSocketFactory() {
   static WindowsSocketFactory factory;
-  SocketFactoryRegistry::setFactory(&factory);
+  SocketFactoryRegistry::SetFactory(&factory);
 }
 
-} // namespace socketwire
+}  // namespace socketwire
 
-#endif // __clangd__
+#endif  // __clangd__

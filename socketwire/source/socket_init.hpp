@@ -14,12 +14,11 @@
     socketwire::shutdown_sockets();
 */
 
-namespace socketwire
-{
+namespace socketwire {
 
 // Forward declarations
-void register_windows_socket_factory();
-void register_posix_socket_factory();
+void RegisterWindowsSocketFactory();
+void RegisterPosixSocketFactory();
 
 /*
   Initialize the socket subsystem.
@@ -29,7 +28,7 @@ void register_posix_socket_factory();
   This function is safe to call multiple times (idempotent).
   Returns true on success, false on failure.
 */
-bool initialize_sockets();
+bool InitializeSockets();
 
 /*
   Shutdown the socket subsystem.
@@ -39,41 +38,37 @@ bool initialize_sockets();
   This function is optional as cleanup happens automatically,
   but can be called explicitly for deterministic resource cleanup.
 */
-void shutdown_sockets();
+void ShutdownSockets();
 
-} // namespace socketwire
+}  // namespace socketwire
 
 // Implementation
 #if defined(_WIN32) || defined(_WIN64)
-  #define SOCKETWIRE_PLATFORM_WINDOWS 1
+#define SOCKETWIRE_PLATFORM_WINDOWS 1
 #else
-  #define SOCKETWIRE_PLATFORM_WINDOWS 0
+#define SOCKETWIRE_PLATFORM_WINDOWS 0
 #endif
 
-namespace socketwire
-{
+namespace socketwire {
 
-inline bool initialize_sockets()
-{
+inline bool InitializeSockets() {
   static bool initialized = false;
-  if (initialized)
-    return true;
+  if (initialized) return true;
 
 #if SOCKETWIRE_PLATFORM_WINDOWS
   register_windows_socket_factory();
 #else
-  register_posix_socket_factory();
+  RegisterPosixSocketFactory();
 #endif
 
   initialized = true;
   return true;
 }
 
-inline void shutdown_sockets()
-{
-  // On Windows, WSACleanup is called automatically by WSAInitializer destructor.
-  // On POSIX, no cleanup needed.
-  // This function exists for symmetry and explicit cleanup if needed.
+inline void ShutdownSockets() {
+  // On Windows, WSACleanup is called automatically by WSAInitializer
+  // destructor. On POSIX, no cleanup needed. This function exists for symmetry
+  // and explicit cleanup if needed.
 }
 
-} // namespace socketwire
+}  // namespace socketwire

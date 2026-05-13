@@ -1,7 +1,8 @@
 /*
   Test suite for UDP Socket implementation (Cross-platform)
   This file contains comprehensive unit tests for the UDP Socket implementation,
-  which provides UDP socket functionality on all supported platforms (Windows, Linux, macOS, BSD).
+  which provides UDP socket functionality on all supported platforms (Windows,
+  Linux, macOS, BSD).
 
   Test Categories:
   - Constructor and Factory Tests: Socket creation and configuration
@@ -17,46 +18,43 @@
   Note: These tests use Google Test and Google Mock frameworks.
 */
 
-#include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
+#include <chrono>
+#include <cstring>
+#include <thread>
+
 #include "i_socket.hpp"
 #include "socket_init.hpp"
 
-#include <thread>
-#include <chrono>
-#include <cstring>
-
-using namespace socketwire; //NOLINT
+using namespace socketwire;  // NOLINT
 
 // Mock event handler for testing
-class MockSocketEventHandler : public ISocketEventHandler
-{
-public:
-  MOCK_METHOD(void, onDataReceived,
-              (const SocketAddress& from, std::uint16_t fromPort,
-               const void* data, std::size_t bytesRead),
+class MockSocketEventHandler : public ISocketEventHandler {
+ public:
+  MOCK_METHOD(void, OnDataReceived,
+              (const SocketAddress& from, std::uint16_t from_port,
+               const void* data, std::size_t bytes_read),
               (override));
-  MOCK_METHOD(void, onSocketError, (SocketError error), (override));
+  MOCK_METHOD(void, OnSocketError, (SocketError error), (override));
 };
 
-class UDPSocketTest : public ::testing::Test
-{
-protected:
-  void SetUp() override
-  {
+class UDPSocketTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
     // Initialize platform-specific socket factory
-    bool result = initialize_sockets();
+    const bool result = InitializeSockets();
     ASSERT_TRUE(result) << "Socket initialization should succeed";
 
     // Get factory instance
-    factory = SocketFactoryRegistry::getFactory();
+    factory = SocketFactoryRegistry::GetFactory();
     ASSERT_NE(factory, nullptr) << "Socket factory should be registered";
   }
 
-  void TearDown() override
-  {
+  void TearDown() override {
     // Cleanup
-    shutdown_sockets();
+    ShutdownSockets();
   }
 
   ISocketFactory* factory = nullptr;
@@ -64,537 +62,520 @@ protected:
 
 // ========== Constructor and Factory Tests ==========
 
-TEST_F(UDPSocketTest, CreateUDPSocket)
-{
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, CreateUDPSocket) {
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
 
   ASSERT_NE(socket, nullptr) << "Should create UDP socket";
-  EXPECT_EQ(socket->type(), SocketType::UDP);
+  EXPECT_EQ(socket->Type(), SocketType::kUdp);
 }
 
-TEST_F(UDPSocketTest, CreateWithCustomConfig)
-{
+TEST_F(UDPSocketTest, CreateWithCustomConfig) {
   SocketConfig config;
   config.nonBlocking = false;
   config.reuseAddress = true;
   config.sendBufferSize = 65536;
   config.recvBufferSize = 65536;
 
-  auto socket = factory->createSocket(SocketType::UDP, config);
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
 
   ASSERT_NE(socket, nullptr);
-  EXPECT_FALSE(socket->isBlocking()) << "Should respect nonBlocking=false in config";
+  EXPECT_FALSE(socket->IsBlocking())
+      << "Should respect nonBlocking=false in config";
 }
 
-
-TEST_F(UDPSocketTest, BindToAnyPort) //bind test
+TEST_F(UDPSocketTest, BindToAnyPort)  // bind test
 {
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001); // 127.0.0.1
-  SocketError err = socket->bind(addr, 0); // Port 0 = any available port
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
+  const SocketError err = socket->Bind(addr, 0);  // Port 0 = any available port
 
-  EXPECT_EQ(err, SocketError::None) << "Bind should succeed";
-  EXPECT_GT(socket->localPort(), 0) << "Should assign a valid port";
+  EXPECT_EQ(err, SocketError::kNone) << "Bind should succeed";
+  EXPECT_GT(socket->LocalPort(), 0) << "Should assign a valid port";
 }
 
-TEST_F(UDPSocketTest, BindToSpecificPort)
-{
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, BindToSpecificPort) {
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001); // 127.0.0.1
-  std::uint16_t port = 0; // Will be assigned by OS
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
+  std::uint16_t port = 0;  // Will be assigned by OS
 
-  SocketError err = socket->bind(addr, port);
-  EXPECT_EQ(err, SocketError::None);
+  const SocketError err = socket->Bind(addr, port);
+  EXPECT_EQ(err, SocketError::kNone);
 
-  std::uint16_t assignedPort = socket->localPort();
-  EXPECT_GT(assignedPort, 0);
+  std::uint16_t assigned_port = socket->LocalPort();
+  EXPECT_GT(assigned_port, 0);
 }
 
-TEST_F(UDPSocketTest, BindTwiceReturnsError)
-{
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, BindTwiceReturnsError) {
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
 
-  SocketError err1 = socket->bind(addr, 0);
-  EXPECT_EQ(err1, SocketError::None);
+  const SocketError err1 = socket->Bind(addr, 0);
+  EXPECT_EQ(err1, SocketError::kNone);
 
   // Try to bind again
-  SocketError err2 = socket->bind(addr, 0);
-  EXPECT_NE(err2, SocketError::None) << "Second bind should fail";
+  const SocketError err2 = socket->Bind(addr, 0);
+  EXPECT_NE(err2, SocketError::kNone) << "Second bind should fail";
 }
 
-TEST_F(UDPSocketTest, BindMultipleSocketsDifferentPorts)
-{
-  SocketConfig config;
-  auto socket1 = factory->createSocket(SocketType::UDP, config);
-  auto socket2 = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, BindMultipleSocketsDifferentPorts) {
+  const SocketConfig config;
+  auto socket1 = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket2 = factory->CreateSocket(SocketType::kUdp, config);
 
   ASSERT_NE(socket1, nullptr);
   ASSERT_NE(socket2, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
 
-  EXPECT_EQ(socket1->bind(addr, 0), SocketError::None);
-  EXPECT_EQ(socket2->bind(addr, 0), SocketError::None);
+  EXPECT_EQ(socket1->Bind(addr, 0), SocketError::kNone);
+  EXPECT_EQ(socket2->Bind(addr, 0), SocketError::kNone);
 
-  EXPECT_NE(socket1->localPort(), socket2->localPort())
-    << "Different sockets should get different ports";
+  EXPECT_NE(socket1->LocalPort(), socket2->LocalPort())
+      << "Different sockets should get different ports";
 }
 
 // SEND AND RECEIVE
-TEST_F(UDPSocketTest, SendAndReceive)
-{
-  SocketConfig config;
-  auto sender = factory->createSocket(SocketType::UDP, config);
-  auto receiver = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, SendAndReceive) {
+  const SocketConfig config;
+  auto sender = factory->CreateSocket(SocketType::kUdp, config);
+  auto receiver = factory->CreateSocket(SocketType::kUdp, config);
 
   ASSERT_NE(sender, nullptr);
   ASSERT_NE(receiver, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001); // 127.0.0.1
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
 
   // Bind receiver to specific port
-  ASSERT_EQ(receiver->bind(addr, 0), SocketError::None);
-  std::uint16_t receiverPort = receiver->localPort();
-  ASSERT_GT(receiverPort, 0);
+  ASSERT_EQ(receiver->Bind(addr, 0), SocketError::kNone);
+  std::uint16_t receiver_port = receiver->LocalPort();
+  ASSERT_GT(receiver_port, 0);
 
   // Send data
   const char* message = "Hello, UDP!";
-  size_t messageLen = std::strlen(message);
+  const size_t message_len = std::strlen(message);
 
-  SocketResult sendResult = sender->sendTo(message, messageLen, addr, receiverPort);
+  const SocketResult send_result =
+      sender->SendTo(message, message_len, addr, receiver_port);
 
-  EXPECT_TRUE(sendResult.succeeded()) << "Send should succeed";
-  EXPECT_EQ(sendResult.bytes, static_cast<std::ptrdiff_t>(messageLen))
-    << "Should send all bytes";
+  EXPECT_TRUE(send_result.Succeeded()) << "Send should succeed";
+  EXPECT_EQ(send_result.bytes, static_cast<std::ptrdiff_t>(message_len))
+      << "Should send all bytes";
 
   // Small delay to ensure packet arrives
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
   // Receive data
   char buffer[1024];
-  SocketAddress fromAddr;
-  std::uint16_t fromPort;
+  SocketAddress from_addr;
+  std::uint16_t from_port = 0;
 
-  SocketResult recvResult = receiver->receive(buffer, sizeof(buffer), fromAddr, fromPort);
+  const SocketResult recv_result =
+      receiver->Receive(buffer, sizeof(buffer), from_addr, from_port);
 
-  EXPECT_TRUE(recvResult.succeeded()) << "Receive should succeed";
-  EXPECT_EQ(recvResult.bytes, static_cast<std::ptrdiff_t>(messageLen));
-  EXPECT_EQ(std::string(buffer, static_cast<std::size_t>(recvResult.bytes)), std::string(message));
+  EXPECT_TRUE(recv_result.Succeeded()) << "Receive should succeed";
+  EXPECT_EQ(recv_result.bytes, static_cast<std::ptrdiff_t>(message_len));
+  EXPECT_EQ(std::string(buffer, static_cast<std::size_t>(recv_result.bytes)),
+            std::string(message));
 }
 
-TEST_F(UDPSocketTest, SendWithoutBind)
-{
-  SocketConfig config;
-  auto sender = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, SendWithoutBind) {
+  const SocketConfig config;
+  auto sender = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(sender, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   const char* message = "Test";
 
   // UDP allows sending without explicit bind (lazy open)
-  SocketResult result = sender->sendTo(message, std::strlen(message), addr, 12345);
+  const SocketResult result =
+      sender->SendTo(message, std::strlen(message), addr, 12345);
 
-  // Should succeed or fail gracefully (depending on whether port 12345 is listening)
-  EXPECT_TRUE(result.error == SocketError::None || 
-              result.error == SocketError::System);
+  // Should succeed or fail gracefully (depending on whether port 12345 is
+  // listening)
+  EXPECT_TRUE(result.error == SocketError::kNone ||
+              result.error == SocketError::kSystem);
 }
 
-TEST_F(UDPSocketTest, SendNullDataReturnsError)
-{
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, SendNullDataReturnsError) {
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
 
-  SocketResult result = socket->sendTo(nullptr, 100, addr, 12345);
+  const SocketResult result = socket->SendTo(nullptr, 100, addr, 12345);
 
-  EXPECT_FALSE(result.succeeded());
-  EXPECT_EQ(result.error, SocketError::InvalidParam);
+  EXPECT_FALSE(result.Succeeded());
+  EXPECT_EQ(result.error, SocketError::kInvalidParam);
 }
 
-TEST_F(UDPSocketTest, SendZeroLengthReturnsError)
-{
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, SendZeroLengthReturnsError) {
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   const char* data = "test";
 
-  SocketResult result = socket->sendTo(data, 0, addr, 12345);
+  const SocketResult result = socket->SendTo(data, 0, addr, 12345);
 
-  EXPECT_FALSE(result.succeeded());
-  EXPECT_EQ(result.error, SocketError::InvalidParam);
+  EXPECT_FALSE(result.Succeeded());
+  EXPECT_EQ(result.error, SocketError::kInvalidParam);
 }
 
-TEST_F(UDPSocketTest, ReceiveWithoutBindReturnsError)
-{
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, ReceiveWithoutBindReturnsError) {
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
   char buffer[1024];
-  SocketAddress fromAddr;
-  std::uint16_t fromPort;
+  SocketAddress from_addr;
+  std::uint16_t from_port = 0;
 
-  SocketResult result = socket->receive(buffer, sizeof(buffer), fromAddr, fromPort);
+  const SocketResult result =
+      socket->Receive(buffer, sizeof(buffer), from_addr, from_port);
 
-  EXPECT_FALSE(result.succeeded());
-  EXPECT_EQ(result.error, SocketError::NotBound);
+  EXPECT_FALSE(result.Succeeded());
+  EXPECT_EQ(result.error, SocketError::kNotBound);
 }
 
-TEST_F(UDPSocketTest, ReceiveNullBufferReturnsError)
-{
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, ReceiveNullBufferReturnsError) {
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  ASSERT_EQ(socket->bind(addr, 0), SocketError::None);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(socket->Bind(addr, 0), SocketError::kNone);
 
-  SocketAddress fromAddr;
-  std::uint16_t fromPort;
+  SocketAddress from_addr;
+  std::uint16_t from_port = 0;
 
-  SocketResult result = socket->receive(nullptr, 1024, fromAddr, fromPort);
+  const SocketResult result = socket->Receive(nullptr, 1024, from_addr, from_port);
 
-  EXPECT_FALSE(result.succeeded());
-  EXPECT_EQ(result.error, SocketError::InvalidParam);
+  EXPECT_FALSE(result.Succeeded());
+  EXPECT_EQ(result.error, SocketError::kInvalidParam);
 }
 
-TEST_F(UDPSocketTest, MultipleMessages)
-{
-  SocketConfig config;
-  auto sender = factory->createSocket(SocketType::UDP, config);
-  auto receiver = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, MultipleMessages) {
+  const SocketConfig config;
+  auto sender = factory->CreateSocket(SocketType::kUdp, config);
+  auto receiver = factory->CreateSocket(SocketType::kUdp, config);
 
   ASSERT_NE(sender, nullptr);
   ASSERT_NE(receiver, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  ASSERT_EQ(receiver->bind(addr, 0), SocketError::None);
-  std::uint16_t receiverPort = receiver->localPort();
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(receiver->Bind(addr, 0), SocketError::kNone);
+  std::uint16_t receiver_port = receiver->LocalPort();
 
   // Send multiple messages
-  const int numMessages = 5;
-  for (int i = 0; i < numMessages; ++i)
-  {
-    std::string message = "Message " + std::to_string(i);
-    SocketResult result = sender->sendTo(message.c_str(), message.length(), 
-                                         addr, receiverPort);
-    EXPECT_TRUE(result.succeeded());
+  const int num_messages = 5;
+  for (int i = 0; i < num_messages; ++i) {
+    const std::string message = "Message " + std::to_string(i);
+    const SocketResult result =
+        sender->SendTo(message.c_str(), message.length(), addr, receiver_port);
+    EXPECT_TRUE(result.Succeeded());
   }
 
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
   // Receive messages
-  for (int i = 0; i < numMessages; ++i)
-  {
+  for (int i = 0; i < num_messages; ++i) {
     char buffer[1024];
-    SocketAddress fromAddr;
-    std::uint16_t fromPort;
+    SocketAddress from_addr;
+    std::uint16_t from_port = 0;
 
-    SocketResult result = receiver->receive(buffer, sizeof(buffer), fromAddr, fromPort);
-    EXPECT_TRUE(result.succeeded());
+    const SocketResult result =
+        receiver->Receive(buffer, sizeof(buffer), from_addr, from_port);
+    EXPECT_TRUE(result.Succeeded());
     EXPECT_GT(result.bytes, 0);
   }
 }
 
 // ========== Blocking Mode Tests ==========
 
-TEST_F(UDPSocketTest, DefaultNonBlocking)
-{
+TEST_F(UDPSocketTest, DefaultNonBlocking) {
   SocketConfig config;
   config.nonBlocking = true;
 
-  auto socket = factory->createSocket(SocketType::UDP, config);
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  ASSERT_EQ(socket->bind(addr, 0), SocketError::None);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(socket->Bind(addr, 0), SocketError::kNone);
 
-  EXPECT_FALSE(socket->isBlocking()) << "Should be non-blocking by default";
+  EXPECT_FALSE(socket->IsBlocking()) << "Should be non-blocking by default";
 }
 
-TEST_F(UDPSocketTest, NonBlockingReceive)
-{
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, NonBlockingReceive) {
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  ASSERT_EQ(socket->bind(addr, 0), SocketError::None);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(socket->Bind(addr, 0), SocketError::kNone);
 
   // Set to blocking
-  SocketError err = socket->setBlocking(true);
-  EXPECT_EQ(err, SocketError::None);
-  EXPECT_TRUE(socket->isBlocking());
+  SocketError err = socket->SetBlocking(true);
+  EXPECT_EQ(err, SocketError::kNone);
+  EXPECT_TRUE(socket->IsBlocking());
 
   // Set back to non-blocking
-  err = socket->setBlocking(false);
-  EXPECT_EQ(err, SocketError::None);
-  EXPECT_FALSE(socket->isBlocking());
+  err = socket->SetBlocking(false);
+  EXPECT_EQ(err, SocketError::kNone);
+  EXPECT_FALSE(socket->IsBlocking());
 }
 
-TEST_F(UDPSocketTest, SetBlockingWithoutBindReturnsError)
-{
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, SetBlockingWithoutBindReturnsError) {
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
-  SocketError err = socket->setBlocking(true);
-  EXPECT_EQ(err, SocketError::NotBound);
+  const SocketError err = socket->SetBlocking(true);
+  EXPECT_EQ(err, SocketError::kNotBound);
 }
 
-TEST_F(UDPSocketTest, NonBlockingReceiveReturnsWouldBlock)
-{
+TEST_F(UDPSocketTest, NonBlockingReceiveReturnsWouldBlock) {
   SocketConfig config;
   config.nonBlocking = true;
 
-  auto socket = factory->createSocket(SocketType::UDP, config);
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  ASSERT_EQ(socket->bind(addr, 0), SocketError::None);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(socket->Bind(addr, 0), SocketError::kNone);
 
   char buffer[1024];
-  SocketAddress fromAddr;
-  std::uint16_t fromPort;
+  SocketAddress from_addr;
+  std::uint16_t from_port = 0;
 
   // Should return WouldBlock when no data available
-  SocketResult result = socket->receive(buffer, sizeof(buffer), fromAddr, fromPort);
+  const SocketResult result =
+      socket->Receive(buffer, sizeof(buffer), from_addr, from_port);
 
-  EXPECT_FALSE(result.succeeded());
-  EXPECT_EQ(result.error, SocketError::WouldBlock);
+  EXPECT_FALSE(result.Succeeded());
+  EXPECT_EQ(result.error, SocketError::kWouldBlock);
 }
 
 // POLL TEST
-TEST_F(UDPSocketTest, PollWithHandler)
-{
-  SocketConfig config;
-  auto sender = factory->createSocket(SocketType::UDP, config);
-  auto receiver = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, PollWithHandler) {
+  const SocketConfig config;
+  auto sender = factory->CreateSocket(SocketType::kUdp, config);
+  auto receiver = factory->CreateSocket(SocketType::kUdp, config);
 
   ASSERT_NE(sender, nullptr);
   ASSERT_NE(receiver, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  ASSERT_EQ(receiver->bind(addr, 0), SocketError::None);
-  std::uint16_t receiverPort = receiver->localPort();
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(receiver->Bind(addr, 0), SocketError::kNone);
+  std::uint16_t receiver_port = receiver->LocalPort();
 
   // Setup mock handler
-  MockSocketEventHandler mockHandler;
+  MockSocketEventHandler mock_handler;
 
   // Send message
   const char* message = "Poll test";
-  size_t messageLen = std::strlen(message);
+  const size_t message_len = std::strlen(message);
 
-  ASSERT_TRUE(sender->sendTo(message, messageLen, addr, receiverPort).succeeded());
+  ASSERT_TRUE(
+      sender->SendTo(message, message_len, addr, receiver_port).Succeeded());
 
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
   // Expect onDataReceived to be called
-  EXPECT_CALL(mockHandler, onDataReceived(::testing::_, ::testing::_, ::testing::_, messageLen))
-    .Times(1)
-    .WillOnce(::testing::Invoke([message, messageLen](
-        const SocketAddress& /*from*/, std::uint16_t /*port*/,
-        const void* data, std::size_t bytes)
-    {
-      EXPECT_EQ(bytes, messageLen);
-      EXPECT_EQ(std::memcmp(data, message, messageLen), 0);
-    }));
+  EXPECT_CALL(mock_handler, OnDataReceived(::testing::_, ::testing::_,
+                                           ::testing::_, message_len))
+      .Times(1)
+      .WillOnce(::testing::Invoke(
+          [message, message_len](const SocketAddress& /*from*/,
+                                 std::uint16_t /*port*/, const void* data,
+                                 std::size_t bytes) {
+            EXPECT_EQ(bytes, message_len);
+            EXPECT_EQ(std::memcmp(data, message, message_len), 0);
+          }));
 
-  receiver->poll(&mockHandler);
+  receiver->Poll(&mock_handler);
 
-  ::testing::Mock::VerifyAndClearExpectations(&mockHandler);
+  ::testing::Mock::VerifyAndClearExpectations(&mock_handler);
 }
 
-TEST_F(UDPSocketTest, PollWithoutData)
-{
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, PollWithoutData) {
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  ASSERT_EQ(socket->bind(addr, 0), SocketError::None);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(socket->Bind(addr, 0), SocketError::kNone);
 
   // Should not crash
-  socket->poll(nullptr);
+  socket->Poll(nullptr);
 }
 
-TEST_F(UDPSocketTest, PollMultiplePackets)
-{
-  SocketConfig config;
-  auto sender = factory->createSocket(SocketType::UDP, config);
-  auto receiver = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, PollMultiplePackets) {
+  const SocketConfig config;
+  auto sender = factory->CreateSocket(SocketType::kUdp, config);
+  auto receiver = factory->CreateSocket(SocketType::kUdp, config);
 
   ASSERT_NE(sender, nullptr);
   ASSERT_NE(receiver, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  ASSERT_EQ(receiver->bind(addr, 0), SocketError::None);
-  std::uint16_t receiverPort = receiver->localPort();
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(receiver->Bind(addr, 0), SocketError::kNone);
+  std::uint16_t receiver_port = receiver->LocalPort();
 
   // Send multiple packets
-  const int numPackets = 3;
-  for (int i = 0; i < numPackets; ++i)
-  {
-    std::string msg = "Packet " + std::to_string(i);
-    sender->sendTo(msg.c_str(), msg.length(), addr, receiverPort);
+  const int num_packets = 3;
+  for (int i = 0; i < num_packets; ++i) {
+    const std::string msg = "Packet " + std::to_string(i);
+    sender->SendTo(msg.c_str(), msg.length(), addr, receiver_port);
   }
 
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
-  MockSocketEventHandler mockHandler;
+  MockSocketEventHandler mock_handler;
 
   // Poll may receive packets in one or multiple calls depending on timing
   // and internal heuristics. We just verify at least one packet is received.
-  EXPECT_CALL(mockHandler, onDataReceived(::testing::_, ::testing::_,
-                                          ::testing::_, ::testing::_))
-    .Times(::testing::AtLeast(1));
+  EXPECT_CALL(mock_handler, OnDataReceived(::testing::_, ::testing::_,
+                                           ::testing::_, ::testing::_))
+      .Times(::testing::AtLeast(1));
 
   // Poll multiple times to ensure all packets are read
-  for (int i = 0; i < numPackets; ++i)
-  {
-    receiver->poll(&mockHandler);
+  for (int i = 0; i < num_packets; ++i) {
+    receiver->Poll(&mock_handler);
   }
 
-  ::testing::Mock::VerifyAndClearExpectations(&mockHandler);
+  ::testing::Mock::VerifyAndClearExpectations(&mock_handler);
 }
 
 // CLOSE TEST
 
-TEST_F(UDPSocketTest, CloseSocket)
-{
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, CloseSocket) {
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  ASSERT_EQ(socket->bind(addr, 0), SocketError::None);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(socket->Bind(addr, 0), SocketError::kNone);
 
-  std::uint16_t port = socket->localPort();
+  std::uint16_t port = socket->LocalPort();
   EXPECT_GT(port, 0);
 
-  socket->close();
+  socket->Close();
 
-  EXPECT_EQ(socket->localPort(), 0) << "Port should be reset after close";
-  EXPECT_EQ(socket->nativeHandle(), -1) << "Handle should be invalid after close";
+  EXPECT_EQ(socket->LocalPort(), 0) << "Port should be reset after close";
+  EXPECT_EQ(socket->NativeHandle(), -1)
+      << "Handle should be invalid after close";
 }
 
-TEST_F(UDPSocketTest, CloseMultipleTimes)
-{
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, CloseMultipleTimes) {
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  ASSERT_EQ(socket->bind(addr, 0), SocketError::None);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(socket->Bind(addr, 0), SocketError::kNone);
 
   // Close multiple times should not crash
-  socket->close();
-  socket->close();
-  socket->close();
+  socket->Close();
+  socket->Close();
+  socket->Close();
 }
 
-TEST_F(UDPSocketTest, DestructorClosesSocket)
-{
-  SocketConfig config;
+TEST_F(UDPSocketTest, DestructorClosesSocket) {
+  const SocketConfig config;
   std::uint16_t port = 0;
 
   {
-    auto socket = factory->createSocket(SocketType::UDP, config);
-    SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-    ASSERT_EQ(socket->bind(addr, 0), SocketError::None);
-    port = socket->localPort();
+    auto socket = factory->CreateSocket(SocketType::kUdp, config);
+    const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+    ASSERT_EQ(socket->Bind(addr, 0), SocketError::kNone);
+    port = socket->LocalPort();
     EXPECT_GT(port, 0);
     // Socket destroyed here
   }
 
   // Should be able to bind to the same port again
-  auto socket2 = factory->createSocket(SocketType::UDP, config);
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
+  auto socket2 = factory->CreateSocket(SocketType::kUdp, config);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
 
   // Port should be available (may get same or different port from OS)
-  EXPECT_EQ(socket2->bind(addr, 0), SocketError::None);
+  EXPECT_EQ(socket2->Bind(addr, 0), SocketError::kNone);
 }
 
 // NATIVE HANDLE TEST
-TEST_F(UDPSocketTest, NativeHandle)
-{
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, NativeHandle) {
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
   // Before bind, handle might be -1
-  EXPECT_EQ(socket->nativeHandle(), -1);
+  EXPECT_EQ(socket->NativeHandle(), -1);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  ASSERT_EQ(socket->bind(addr, 0), SocketError::None);
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(socket->Bind(addr, 0), SocketError::kNone);
 
   // After bind, should have valid handle
-  EXPECT_GE(socket->nativeHandle(), 0) << "Should have valid file descriptor";
+  EXPECT_GE(socket->NativeHandle(), 0) << "Should have valid file descriptor";
 }
 
 // ========== Large Data Tests ==========
 
-TEST_F(UDPSocketTest, LargePacket)
-{
-  SocketConfig config;
-  auto sender = factory->createSocket(SocketType::UDP, config);
-  auto receiver = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, LargePacket) {
+  const SocketConfig config;
+  auto sender = factory->CreateSocket(SocketType::kUdp, config);
+  auto receiver = factory->CreateSocket(SocketType::kUdp, config);
 
   ASSERT_NE(sender, nullptr);
   ASSERT_NE(receiver, nullptr);
 
-  SocketAddress addr = SocketAddress::fromIPv4(0x7F000001);
-  ASSERT_EQ(receiver->bind(addr, 0), SocketError::None);
-  std::uint16_t receiverPort = receiver->localPort();
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(receiver->Bind(addr, 0), SocketError::kNone);
+  std::uint16_t receiver_port = receiver->LocalPort();
 
-  // Create large buffer (but not too large for UDP - typical MTU is ~1500 bytes)
-  const size_t dataSize = 1400;
-  std::vector<char> data(dataSize);
-  for (size_t i = 0; i < dataSize; ++i)
-  {
-    data[i] = static_cast<char>(i % 256);
+  // Create large buffer (but not too large for UDP - typical MTU is ~1500
+  // bytes)
+  const size_t data_size = 1400;
+  std::vector<char> data(data_size);
+  for (size_t i = 0; i < data_size; ++i) {
+    data.at(i) = static_cast<char>(i % 256);
   }
 
-  SocketResult sendResult = sender->sendTo(data.data(), data.size(), addr, receiverPort);
+  const SocketResult send_result =
+      sender->SendTo(data.data(), data.size(), addr, receiver_port);
 
-  EXPECT_TRUE(sendResult.succeeded());
-  EXPECT_EQ(sendResult.bytes, static_cast<std::ptrdiff_t>(dataSize));
+  EXPECT_TRUE(send_result.Succeeded());
+  EXPECT_EQ(send_result.bytes, static_cast<std::ptrdiff_t>(data_size));
 
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
   std::vector<char> buffer(2048);
-  SocketAddress fromAddr;
-  std::uint16_t fromPort;
+  SocketAddress from_addr;
+  std::uint16_t from_port = 0;
 
-  SocketResult recvResult = receiver->receive(buffer.data(), buffer.size(),
-                                              fromAddr, fromPort);
+  const SocketResult recv_result =
+      receiver->Receive(buffer.data(), buffer.size(), from_addr, from_port);
 
-  EXPECT_TRUE(recvResult.succeeded());
-  EXPECT_EQ(recvResult.bytes, static_cast<std::ptrdiff_t>(dataSize));
-  EXPECT_EQ(std::memcmp(buffer.data(), data.data(), dataSize), 0);
+  EXPECT_TRUE(recv_result.Succeeded());
+  EXPECT_EQ(recv_result.bytes, static_cast<std::ptrdiff_t>(data_size));
+  EXPECT_EQ(std::memcmp(buffer.data(), data.data(), data_size), 0);
 }
 
 // TYPE TEST
-TEST_F(UDPSocketTest, SocketType)
-{
-  SocketConfig config;
-  auto socket = factory->createSocket(SocketType::UDP, config);
+TEST_F(UDPSocketTest, SocketType) {
+  const SocketConfig config;
+  auto socket = factory->CreateSocket(SocketType::kUdp, config);
   ASSERT_NE(socket, nullptr);
 
-  EXPECT_EQ(socket->type(), SocketType::UDP);
+  EXPECT_EQ(socket->Type(), SocketType::kUdp);
 }
