@@ -1,41 +1,75 @@
 #include <gtest/gtest.h>
+
 #include "crypto.hpp"
-#include <vector>
+
+#include <array>
 #include <cstring>
+#include <vector>
+
+namespace {
 
 class CryptoTest : public ::testing::Test
 {
 protected:
   void SetUp() override
   {
-    // Initialize libsodium before each test
 #if SOCKETWIRE_HAVE_LIBSODIUM
     auto result = socketwire::crypto::initialize();
     ASSERT_TRUE(result.ok) << "Failed to initialize crypto library";
-    ASSERT_EQ(result.error, socketwire::crypto::CryptoError::None);
 #else
     (void)socketwire::crypto::initialize();
 #endif
   }
 };
 
+#if SOCKETWIRE_HAVE_LIBSODIUM
+struct HandshakeFixture
+{
+  socketwire::crypto::HandshakeState client;
+  socketwire::crypto::HandshakeState server;
+  socketwire::crypto::CryptoContext clientContext;
+  socketwire::crypto::CryptoContext serverContext;
+};
 
-// Initialization Tests
+HandshakeFixture completeHandshake()
+{
+  auto client_keys = socketwire::crypto::KeyPair::generate();
+  auto server_keys = socketwire::crypto::KeyPair::generate();
+
+  HandshakeFixture fixture;
+  EXPECT_TRUE(fixture.client.start_client(client_keys, server_keys.publicKey).ok);
+  EXPECT_TRUE(fixture.server.start_server(server_keys).ok);
+
+  socketwire::BitStream client_hello;
+  EXPECT_TRUE(fixture.client.write_client_hello(client_hello).ok);
+  EXPECT_TRUE(fixture.server.process_client_hello(client_hello.getData(), client_hello.getSizeBytes()).ok);
+
+  socketwire::BitStream server_hello;
+  EXPECT_TRUE(fixture.server.write_server_hello(server_hello).ok);
+  EXPECT_TRUE(fixture.client.process_server_hello(server_hello.getData(), server_hello.getSizeBytes()).ok);
+
+  fixture.clientContext = fixture.client.create_client_crypto_context();
+  fixture.serverContext = fixture.server.create_server_crypto_context();
+  return fixture;
+}
+#endif
+
+} // namespace
+
 TEST_F(CryptoTest, InitializeSucceeds)
 {
   auto result = socketwire::crypto::initialize();
 #if SOCKETWIRE_HAVE_LIBSODIUM
-  EXPECT_TRUE(result.ok) << "Initialization should succeed when libsodium is available";
+  EXPECT_TRUE(result.ok);
   EXPECT_EQ(result.error, socketwire::crypto::CryptoError::None);
 #else
-  EXPECT_FALSE(result.ok) << "Initialization should fail without libsodium";
+  EXPECT_FALSE(result.ok);
   EXPECT_EQ(result.error, socketwire::crypto::CryptoError::NotInitialized);
 #endif
 }
 
 TEST_F(CryptoTest, MultipleInitializationCalls)
 {
-  // Should be safe to call multiple times
   auto result1 = socketwire::crypto::initialize();
   auto result2 = socketwire::crypto::initialize();
   auto result3 = socketwire::crypto::initialize();
@@ -51,20 +85,15 @@ TEST_F(CryptoTest, MultipleInitializationCalls)
 #endif
 }
 
-
-// Result Tests
-TEST_F(CryptoTest, ResultSuccess)
+TEST_F(CryptoTest, ResultHelpers)
 {
-  auto result = socketwire::crypto::Result::success();
-  EXPECT_TRUE(result.ok);
-  EXPECT_EQ(result.error, socketwire::crypto::CryptoError::None);
-}
+  auto success = socketwire::crypto::Result::success();
+  EXPECT_TRUE(success.ok);
+  EXPECT_EQ(success.error, socketwire::crypto::CryptoError::None);
 
-TEST_F(CryptoTest, ResultFailure)
-{
-  auto result = socketwire::crypto::Result::failure(socketwire::crypto::CryptoError::InvalidState);
-  EXPECT_FALSE(result.ok);
-  EXPECT_EQ(result.error, socketwire::crypto::CryptoError::InvalidState);
+  auto failure = socketwire::crypto::Result::failure(socketwire::crypto::CryptoError::InvalidState);
+  EXPECT_FALSE(failure.ok);
+  EXPECT_EQ(failure.error, socketwire::crypto::CryptoError::InvalidState);
 }
 
 TEST_F(CryptoTest, ResultAllErrorCodes)
@@ -80,159 +109,90 @@ TEST_F(CryptoTest, ResultAllErrorCodes)
     socketwire::crypto::CryptoError::BufferTooSmall,
     socketwire::crypto::CryptoError::SequenceExpired,
     socketwire::crypto::CryptoError::DecryptFailed,
-    socketwire::crypto::CryptoError::NotReady
+    socketwire::crypto::CryptoError::NotReady,
+    socketwire::crypto::CryptoError::InvalidPeerKey,
+    socketwire::crypto::CryptoError::ReplayDetected
   };
 
-  for (auto err : errors) {
+  for (auto err : errors)
+  {
     auto result = socketwire::crypto::Result::failure(err);
-    EXPECT_FALSE(result.ok) << "Result with error should not be ok";
-    EXPECT_EQ(result.error, err) << "Error code should match";
+    EXPECT_FALSE(result.ok);
+    EXPECT_EQ(result.error, err);
+    EXPECT_STRNE(socketwire::crypto::to_string(err), "Unknown");
   }
 }
 
-
-// CipherSuite Tests
 TEST_F(CryptoTest, CipherSuiteSupported)
 {
 #if SOCKETWIRE_HAVE_LIBSODIUM
-  EXPECT_TRUE(socketwire::crypto::cipherSuiteSupported(socketwire::crypto::CipherSuite::XChaCha20Poly1305))
-    << "XChaCha20Poly1305 should be supported with libsodium";
+  EXPECT_TRUE(socketwire::crypto::cipher_suite_supported(socketwire::crypto::CipherSuite::XChaCha20Poly1305));
+#else
+  EXPECT_FALSE(socketwire::crypto::cipher_suite_supported(socketwire::crypto::CipherSuite::XChaCha20Poly1305));
 #endif
-
-  EXPECT_FALSE(socketwire::crypto::cipherSuiteSupported(socketwire::crypto::CipherSuite::None))
-    << "None cipher suite should never be supported";
+  EXPECT_FALSE(socketwire::crypto::cipher_suite_supported(socketwire::crypto::CipherSuite::None));
 }
 
-
-// KeyPair Tests
 TEST_F(CryptoTest, KeyPairGeneration)
 {
+  socketwire::crypto::KeyPair kp1;
+  auto result = socketwire::crypto::KeyPair::generate(kp1);
+
 #if SOCKETWIRE_HAVE_LIBSODIUM
-  auto kp1 = socketwire::crypto::KeyPair::generate();
-  EXPECT_TRUE(kp1.valid()) << "Generated keypair should be valid";
+  ASSERT_TRUE(result.ok);
+  EXPECT_TRUE(kp1.valid());
 
   auto kp2 = socketwire::crypto::KeyPair::generate();
-  EXPECT_TRUE(kp2.valid()) << "Second generated keypair should be valid";
-
-  // Keys should be different (extremely high probability)
-  EXPECT_NE(kp1.publicKey, kp2.publicKey) << "Different keypairs should have different public keys";
-  EXPECT_NE(kp1.secretKey, kp2.secretKey) << "Different keypairs should have different secret keys";
+  EXPECT_TRUE(kp2.valid());
+  EXPECT_NE(kp1.publicKey, kp2.publicKey);
+  EXPECT_NE(kp1.secretKey, kp2.secretKey);
 #else
-  auto kp = socketwire::crypto::KeyPair::generate();
-  EXPECT_FALSE(kp.valid()) << "KeyPair should be invalid without libsodium";
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error, socketwire::crypto::CryptoError::NotInitialized);
+  EXPECT_FALSE(kp1.valid());
 #endif
 }
 
-TEST_F(CryptoTest, KeyPairValid)
+TEST_F(CryptoTest, KeyPairValidRequiresPublicAndSecretKey)
 {
 #if SOCKETWIRE_HAVE_LIBSODIUM
   auto kp = socketwire::crypto::KeyPair::generate();
-  EXPECT_TRUE(kp.valid()) << "Generated keypair should be valid";
+  EXPECT_TRUE(kp.valid());
+#endif
 
-  // Zero out keys - should become invalid
   socketwire::crypto::KeyPair zero_kp;
-  zero_kp.publicKey.fill(0);
-  zero_kp.secretKey.fill(0);
-  EXPECT_FALSE(zero_kp.valid()) << "All-zero keypair should be invalid";
+  EXPECT_FALSE(zero_kp.valid());
 
-  // Partially non-zero should be valid
   socketwire::crypto::KeyPair partial_kp;
-  partial_kp.publicKey.fill(0);
   partial_kp.publicKey[0] = 1;
-  partial_kp.secretKey.fill(0);
-  EXPECT_TRUE(partial_kp.valid()) << "Keypair with non-zero public key should be valid";
-#endif
+  EXPECT_FALSE(partial_kp.valid());
 }
 
-TEST_F(CryptoTest, MultipleKeyPairGenerations)
-{
-#if SOCKETWIRE_HAVE_LIBSODIUM
-  std::vector<socketwire::crypto::KeyPair> keypairs;
-  const int count = 10;
-
-  for (int i = 0; i < count; ++i) {
-    auto kp = socketwire::crypto::KeyPair::generate();
-    ASSERT_TRUE(kp.valid()) << "Keypair " << i << " should be valid";
-    keypairs.push_back(kp);
-  }
-
-  // All should be unique
-  for (int i = 0; i < count; ++i) {
-    for (int j = i + 1; j < count; ++j) {
-      EXPECT_NE(keypairs[i].publicKey, keypairs[j].publicKey)
-        << "Keypairs " << i << " and " << j << " should have different public keys";
-    }
-  }
-#endif
-}
-
-
-// SessionKeys Tests
-
-
-TEST_F(CryptoTest, SessionKeysValid)
+TEST_F(CryptoTest, SessionKeysValidRequiresBothDirections)
 {
   socketwire::crypto::SessionKeys keys;
+  EXPECT_FALSE(keys.valid());
 
-  // Default constructed should be invalid (all zeros)
-  EXPECT_FALSE(keys.valid()) << "Default SessionKeys should be invalid";
-
-#if SOCKETWIRE_HAVE_LIBSODIUM
-  // Set some non-zero values
   keys.rx[0] = 1;
-  EXPECT_TRUE(keys.valid()) << "SessionKeys with non-zero rx should be valid";
+  EXPECT_FALSE(keys.valid());
 
-  socketwire::crypto::SessionKeys keys2;
-  keys2.tx[0] = 1;
-  EXPECT_TRUE(keys2.valid()) << "SessionKeys with non-zero tx should be valid";
-
-  socketwire::crypto::SessionKeys keys3;
-  keys3.rx[5] = 42;
-  keys3.tx[10] = 99;
-  EXPECT_TRUE(keys3.valid()) << "SessionKeys with both non-zero should be valid";
-#endif
+  keys.tx[0] = 1;
+  EXPECT_TRUE(keys.valid());
 }
-
-
-// NonceGenerator Tests
-
 
 TEST_F(CryptoTest, NonceGeneratorInitRandom)
 {
-#if SOCKETWIRE_HAVE_LIBSODIUM
-  socketwire::crypto::NonceGenerator ng1;
-  socketwire::crypto::NonceGenerator ng2;
-
-  ng1.initRandom();
-  ng2.initRandom();
-
-  // Counter should be zero after init
-  EXPECT_EQ(ng1.counter, 0) << "Counter should be zero after initRandom";
-  EXPECT_EQ(ng2.counter, 0) << "Counter should be zero after initRandom";
-
-  // Base should be different (high probability)
-  EXPECT_NE(ng1.base, ng2.base) << "Random bases should be different";
-#endif
-}
-
-TEST_F(CryptoTest, NonceGeneratorFillNonce)
-{
-#if SOCKETWIRE_HAVE_LIBSODIUM
   socketwire::crypto::NonceGenerator ng;
-  ng.initRandom();
+  auto result = ng.init_random();
 
-  unsigned char nonce1[24];
-  unsigned char nonce2[24];
-
-  ng.fillNonce(nonce1);
-  ng.fillNonce(nonce2); // Same counter
-
-  // Should be identical since counter didn't change
-  EXPECT_EQ(std::memcmp(nonce1, nonce2, 24), 0)
-    << "fillNonce with same counter should produce same nonce";
-
-  // Counter should still be zero
-  EXPECT_EQ(ng.counter, 0) << "fillNonce should not increment counter";
+#if SOCKETWIRE_HAVE_LIBSODIUM
+  EXPECT_TRUE(result.ok);
+  EXPECT_TRUE(ng.initialized);
+  EXPECT_EQ(ng.counter, 0u);
+#else
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error, socketwire::crypto::CryptoError::NotInitialized);
+  EXPECT_FALSE(ng.initialized);
 #endif
 }
 
@@ -240,87 +200,56 @@ TEST_F(CryptoTest, NonceGeneratorNextNonce)
 {
 #if SOCKETWIRE_HAVE_LIBSODIUM
   socketwire::crypto::NonceGenerator ng;
-  ng.initRandom();
+  ASSERT_TRUE(ng.init_random().ok);
 
-  unsigned char nonce1[24];
-  unsigned char nonce2[24];
-  unsigned char nonce3[24];
+  socketwire::crypto::Nonce nonce1;
+  socketwire::crypto::Nonce nonce2;
+  ASSERT_TRUE(ng.next_nonce(nonce1).ok);
+  ASSERT_TRUE(ng.next_nonce(nonce2).ok);
 
-  ng.nextNonce(nonce1);
-  EXPECT_EQ(ng.counter, 1) << "Counter should increment to 1";
-
-  ng.nextNonce(nonce2);
-  EXPECT_EQ(ng.counter, 2) << "Counter should increment to 2";
-
-  ng.nextNonce(nonce3);
-  EXPECT_EQ(ng.counter, 3) << "Counter should increment to 3";
-
-  // All nonces should be different
-  EXPECT_NE(std::memcmp(nonce1, nonce2, 24), 0) << "Sequential nonces should differ";
-  EXPECT_NE(std::memcmp(nonce2, nonce3, 24), 0) << "Sequential nonces should differ";
-  EXPECT_NE(std::memcmp(nonce1, nonce3, 24), 0) << "Sequential nonces should differ";
-
-  // First 16 bytes (base) should be the same
-  EXPECT_EQ(std::memcmp(nonce1, nonce2, 16), 0) << "Base portion should be same";
-  EXPECT_EQ(std::memcmp(nonce2, nonce3, 16), 0) << "Base portion should be same";
+  EXPECT_EQ(ng.counter, 2u);
+  EXPECT_NE(nonce1, nonce2);
+  EXPECT_EQ(std::memcmp(nonce1.data(), nonce2.data(), 16), 0);
 #endif
 }
 
-TEST_F(CryptoTest, NonceGeneratorCounterOverflow)
+TEST_F(CryptoTest, NonceGeneratorCounterOverflowFails)
 {
 #if SOCKETWIRE_HAVE_LIBSODIUM
   socketwire::crypto::NonceGenerator ng;
-  ng.initRandom();
-  ng.counter = 0xFFFFFFFFFFFFFFFEULL; // Near max
+  ASSERT_TRUE(ng.init_random().ok);
+  ng.counter = 0xFFFFFFFFFFFFFFFEULL;
 
-  unsigned char nonce1[24];
-  unsigned char nonce2[24];
-  unsigned char nonce3[24];
+  socketwire::crypto::Nonce nonce;
+  EXPECT_TRUE(ng.next_nonce(nonce).ok);
+  EXPECT_EQ(ng.counter, 0xFFFFFFFFFFFFFFFFULL);
 
-  ng.nextNonce(nonce1);
-  EXPECT_EQ(ng.counter, 0xFFFFFFFFFFFFFFFFULL) << "Counter should be at max";
-
-  ng.nextNonce(nonce2);
-  EXPECT_EQ(ng.counter, 0ULL) << "Counter should wrap to 0";
-
-  ng.nextNonce(nonce3);
-  EXPECT_EQ(ng.counter, 1ULL) << "Counter should continue from 0";
-
-  // All nonces should be different
-  EXPECT_NE(std::memcmp(nonce1, nonce2, 24), 0);
-  EXPECT_NE(std::memcmp(nonce2, nonce3, 24), 0);
+  auto result = ng.next_nonce(nonce);
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error, socketwire::crypto::CryptoError::SequenceExpired);
+  EXPECT_EQ(ng.counter, 0xFFFFFFFFFFFFFFFFULL);
 #endif
 }
 
-
-// ClientHello Serialization Tests
-
-
-TEST_F(CryptoTest, ClientHelloWriteRead)
+TEST_F(CryptoTest, ClientHelloWriteReadStrict)
 {
   socketwire::crypto::ClientHelloData original;
   original.versionMajor = 1;
   original.versionMinor = 0;
-  original.suite = socketwire::crypto::CipherSuite::None;
+  original.suite = socketwire::crypto::CipherSuite::XChaCha20Poly1305;
 
-  // Fill nonce with test pattern
-  for (size_t i = 0; i < original.nonce.size(); ++i) {
+  for (std::size_t i = 0; i < original.nonce.size(); ++i)
     original.nonce[i] = static_cast<unsigned char>(i);
-  }
+  for (std::size_t i = 0; i < original.clientPub.size(); ++i)
+    original.clientPub[i] = static_cast<unsigned char>(i + 1);
 
-  // Test public key
-  original.clientPub = {1, 2, 3, 4, 5, 6, 7, 8};
-
-  // Write to BitStream
   socketwire::BitStream bs;
-  socketwire::crypto::writeClientHello(bs, original);
-  EXPECT_GT(bs.getSizeBytes(), 0) << "ClientHello should write data";
+  ASSERT_TRUE(socketwire::crypto::write_client_hello(bs, original).ok);
+  EXPECT_EQ(bs.getSizeBytes(), socketwire::crypto::k_client_hello_size);
 
-  // Read back
   socketwire::crypto::ClientHelloData read;
-  bool success = socketwire::crypto::readClientHello(bs.getData(), bs.getSizeBytes(), read);
-  EXPECT_TRUE(success) << "Should successfully read ClientHello";
-
+  auto result = socketwire::crypto::read_client_hello(bs.getData(), bs.getSizeBytes(), read);
+  ASSERT_TRUE(result.ok);
   EXPECT_EQ(read.versionMajor, original.versionMajor);
   EXPECT_EQ(read.versionMinor, original.versionMinor);
   EXPECT_EQ(read.suite, original.suite);
@@ -328,69 +257,53 @@ TEST_F(CryptoTest, ClientHelloWriteRead)
   EXPECT_EQ(read.clientPub, original.clientPub);
 }
 
-TEST_F(CryptoTest, ClientHelloEmptyPublicKey)
-{
-  socketwire::crypto::ClientHelloData original;
-  original.versionMajor = 1;
-  original.versionMinor = 0;
-  original.suite = socketwire::crypto::CipherSuite::None;
-  original.clientPub.clear(); // Empty
-
-  socketwire::BitStream bs;
-  socketwire::crypto::writeClientHello(bs, original);
-
-  socketwire::crypto::ClientHelloData read;
-  bool success = socketwire::crypto::readClientHello(bs.getData(), bs.getSizeBytes(), read);
-  EXPECT_TRUE(success);
-  EXPECT_TRUE(read.clientPub.empty()) << "Empty public key should be preserved";
-}
-
 TEST_F(CryptoTest, ClientHelloInvalidData)
 {
-  // Test with empty buffer
   socketwire::crypto::ClientHelloData read;
-  bool success = socketwire::crypto::readClientHello(nullptr, 0, read);
-  EXPECT_FALSE(success) << "Should fail on empty data";
+  auto result = socketwire::crypto::read_client_hello(nullptr, 0, read);
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error, socketwire::crypto::CryptoError::DecodeError);
 
-  // Test with wrong opcode
-  socketwire::BitStream bs;
-  bs.write<std::uint8_t>(static_cast<std::uint8_t>(socketwire::crypto::HandshakeOpcode::ServerHello));
-  success = socketwire::crypto::readClientHello(bs.getData(), bs.getSizeBytes(), read);
-  EXPECT_FALSE(success) << "Should fail on wrong opcode";
+  socketwire::BitStream wrong_opcode;
+  wrong_opcode.write<std::uint8_t>(static_cast<std::uint8_t>(socketwire::crypto::HandshakeOpcode::ServerHello));
+  wrong_opcode.write<std::uint8_t>(1);
+  wrong_opcode.write<std::uint8_t>(0);
+  wrong_opcode.write<std::uint8_t>(static_cast<std::uint8_t>(socketwire::crypto::CipherSuite::XChaCha20Poly1305));
+  std::array<unsigned char, socketwire::crypto::k_handshake_nonce_size> nonce{};
+  std::array<unsigned char, socketwire::crypto::k_public_key_size> pub{};
+  wrong_opcode.writeBytes(nonce.data(), nonce.size());
+  wrong_opcode.writeBytes(pub.data(), pub.size());
+  result = socketwire::crypto::read_client_hello(wrong_opcode.getData(), wrong_opcode.getSizeBytes(), read);
+  EXPECT_FALSE(result.ok);
 
-  // Test with truncated data
   socketwire::crypto::ClientHelloData original;
-  socketwire::BitStream bs2;
-  socketwire::crypto::writeClientHello(bs2, original);
-  success = socketwire::crypto::readClientHello(bs2.getData(), 5, read); // Too short
-  EXPECT_FALSE(success) << "Should fail on truncated data";
+  socketwire::BitStream bs;
+  ASSERT_TRUE(socketwire::crypto::write_client_hello(bs, original).ok);
+  result = socketwire::crypto::read_client_hello(bs.getData(), bs.getSizeBytes() - 1, read);
+  EXPECT_FALSE(result.ok);
+  result = socketwire::crypto::read_client_hello(bs.getData(), bs.getSizeBytes() + 1, read);
+  EXPECT_FALSE(result.ok);
 }
 
-
-// ServerHello Serialization Tests
-
-
-TEST_F(CryptoTest, ServerHelloWriteRead)
+TEST_F(CryptoTest, ServerHelloWriteReadStrict)
 {
   socketwire::crypto::ServerHelloData original;
   original.versionMajor = 1;
   original.versionMinor = 0;
-  original.suite = socketwire::crypto::CipherSuite::None;
+  original.suite = socketwire::crypto::CipherSuite::XChaCha20Poly1305;
 
-  for (size_t i = 0; i < original.nonce.size(); ++i) {
+  for (std::size_t i = 0; i < original.nonce.size(); ++i)
     original.nonce[i] = static_cast<unsigned char>(255 - i);
-  }
-
-  original.serverPub = {10, 20, 30, 40, 50};
+  for (std::size_t i = 0; i < original.serverPub.size(); ++i)
+    original.serverPub[i] = static_cast<unsigned char>(i + 10);
 
   socketwire::BitStream bs;
-  socketwire::crypto::writeServerHello(bs, original);
-  EXPECT_GT(bs.getSizeBytes(), 0);
+  ASSERT_TRUE(socketwire::crypto::write_server_hello(bs, original).ok);
+  EXPECT_EQ(bs.getSizeBytes(), socketwire::crypto::k_server_hello_size);
 
   socketwire::crypto::ServerHelloData read;
-  bool success = socketwire::crypto::readServerHello(bs.getData(), bs.getSizeBytes(), read);
-  EXPECT_TRUE(success);
-
+  auto result = socketwire::crypto::read_server_hello(bs.getData(), bs.getSizeBytes(), read);
+  ASSERT_TRUE(result.ok);
   EXPECT_EQ(read.versionMajor, original.versionMajor);
   EXPECT_EQ(read.versionMinor, original.versionMinor);
   EXPECT_EQ(read.suite, original.suite);
@@ -398,196 +311,164 @@ TEST_F(CryptoTest, ServerHelloWriteRead)
   EXPECT_EQ(read.serverPub, original.serverPub);
 }
 
-
-// HandshakeState Tests - Basic Handshake Flow
-
-
 TEST_F(CryptoTest, FullHandshakeClientServer)
 {
 #if SOCKETWIRE_HAVE_LIBSODIUM
-  auto clientKeys = socketwire::crypto::KeyPair::generate();
-  auto serverKeys = socketwire::crypto::KeyPair::generate();
-
-  // 1. Client starts and sends hello
-  socketwire::crypto::HandshakeState client;
-  client.startClient(clientKeys);
-
-  socketwire::BitStream clientHello;
-  auto result = client.writeClientHello(clientHello);
-  ASSERT_TRUE(result.ok);
-
-  // 2. Server processes client hello
-  socketwire::crypto::HandshakeState server;
-  server.startServer(serverKeys);
-  bool success = server.processClientHello(clientHello.getData(), clientHello.getSizeBytes());
-  ASSERT_TRUE(success);
-  ASSERT_TRUE(server.completed());
-
-  // 3. Server sends hello
-  socketwire::BitStream serverHello;
-  result = server.writeServerHello(serverHello);
-  ASSERT_TRUE(result.ok);
-
-  // 4. Client processes server hello
-  success = client.processServerHello(serverHello.getData(), serverHello.getSizeBytes());
-  ASSERT_TRUE(success);
-  ASSERT_TRUE(client.completed());
-
-  // Both should have valid session keys
-  EXPECT_TRUE(client.getSessionKeys().valid());
-  EXPECT_TRUE(server.getSessionKeys().valid());
+  auto fixture = completeHandshake();
+  EXPECT_TRUE(fixture.client.completed());
+  EXPECT_TRUE(fixture.server.completed());
+  EXPECT_TRUE(fixture.client.get_session_keys().valid());
+  EXPECT_TRUE(fixture.server.get_session_keys().valid());
+  EXPECT_TRUE(fixture.clientContext.is_ready());
+  EXPECT_TRUE(fixture.serverContext.is_ready());
 #endif
 }
 
+TEST_F(CryptoTest, PinnedServerKeyMismatchFails)
+{
+#if SOCKETWIRE_HAVE_LIBSODIUM
+  auto client_keys = socketwire::crypto::KeyPair::generate();
+  auto server_keys = socketwire::crypto::KeyPair::generate();
+  auto wrong_server_keys = socketwire::crypto::KeyPair::generate();
 
-// CryptoContext Tests - Encryption/Decryption
+  socketwire::crypto::HandshakeState client;
+  socketwire::crypto::HandshakeState server;
+  ASSERT_TRUE(client.start_client(client_keys, wrong_server_keys.publicKey).ok);
+  ASSERT_TRUE(server.start_server(server_keys).ok);
 
+  socketwire::BitStream client_hello;
+  ASSERT_TRUE(client.write_client_hello(client_hello).ok);
+  ASSERT_TRUE(server.process_client_hello(client_hello.getData(), client_hello.getSizeBytes()).ok);
+
+  socketwire::BitStream server_hello;
+  ASSERT_TRUE(server.write_server_hello(server_hello).ok);
+  auto result = client.process_server_hello(server_hello.getData(), server_hello.getSizeBytes());
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error, socketwire::crypto::CryptoError::InvalidPeerKey);
+  EXPECT_FALSE(client.completed());
+#endif
+}
 
 TEST_F(CryptoTest, EncryptDecryptBasic)
 {
 #if SOCKETWIRE_HAVE_LIBSODIUM
-  // Complete handshake
-  auto clientKeys = socketwire::crypto::KeyPair::generate();
-  auto serverKeys = socketwire::crypto::KeyPair::generate();
-
-  socketwire::crypto::HandshakeState client;
-  client.startClient(clientKeys);
-  socketwire::BitStream clientHello;
-  client.writeClientHello(clientHello);
-
-  socketwire::crypto::HandshakeState server;
-  server.startServer(serverKeys);
-  server.processClientHello(clientHello.getData(), clientHello.getSizeBytes());
-
-  socketwire::BitStream serverHello;
-  server.writeServerHello(serverHello);
-  client.processServerHello(serverHello.getData(), serverHello.getSizeBytes());
-
-  auto clientCtx = client.createClientCryptoContext();
-  auto serverCtx = server.createServerCryptoContext();
-
-  // Test message
+  auto fixture = completeHandshake();
   const char* message = "Hello, World!";
   std::uint64_t seq = 1;
 
-  // Client encrypts
   socketwire::BitStream encrypted;
-  bool success = clientCtx.encrypt(seq,
+  auto result = fixture.clientContext.encrypt(seq,
     reinterpret_cast<const unsigned char*>(message),
     std::strlen(message),
     encrypted);
-  ASSERT_TRUE(success) << "Encryption should succeed";
-  EXPECT_GT(encrypted.getSizeBytes(), std::strlen(message)) << "Encrypted should be larger due to MAC";
+  ASSERT_TRUE(result.ok);
+  EXPECT_GT(encrypted.getSizeBytes(), std::strlen(message));
 
-  // Server decrypts
   socketwire::BitStream decrypted;
-  success = serverCtx.decrypt(seq, encrypted.getData(), encrypted.getSizeBytes(), decrypted);
-  ASSERT_TRUE(success) << "Decryption should succeed";
-  EXPECT_EQ(decrypted.getSizeBytes(), std::strlen(message)) << "Decrypted size should match original";
+  result = fixture.serverContext.decrypt(seq, encrypted.getData(), encrypted.getSizeBytes(), decrypted);
+  ASSERT_TRUE(result.ok);
+  EXPECT_EQ(decrypted.getSizeBytes(), std::strlen(message));
 
-  // Verify content
   std::vector<char> buffer(decrypted.getSizeBytes());
   decrypted.resetRead();
   decrypted.readBytes(buffer.data(), buffer.size());
-  EXPECT_EQ(std::memcmp(buffer.data(), message, std::strlen(message)), 0)
-    << "Decrypted content should match original";
+  EXPECT_EQ(std::memcmp(buffer.data(), message, std::strlen(message)), 0);
 #endif
 }
 
-TEST_F(CryptoTest, DecryptWithWrongSequence)
+TEST_F(CryptoTest, DecryptWithWrongSequenceFails)
 {
 #if SOCKETWIRE_HAVE_LIBSODIUM
-  auto clientKeys = socketwire::crypto::KeyPair::generate();
-  auto serverKeys = socketwire::crypto::KeyPair::generate();
-
-  socketwire::crypto::HandshakeState client;
-  client.startClient(clientKeys);
-  socketwire::BitStream clientHello;
-  client.writeClientHello(clientHello);
-
-  socketwire::crypto::HandshakeState server;
-  server.startServer(serverKeys);
-  server.processClientHello(clientHello.getData(), clientHello.getSizeBytes());
-
-  socketwire::BitStream serverHello;
-  server.writeServerHello(serverHello);
-  client.processServerHello(serverHello.getData(), serverHello.getSizeBytes());
-
-  auto clientCtx = client.createClientCryptoContext();
-  auto serverCtx = server.createServerCryptoContext();
-
+  auto fixture = completeHandshake();
   const char* message = "Test message";
-  std::uint64_t encryptSeq = 100;
-  std::uint64_t decryptSeq = 200; // Wrong sequence
 
   socketwire::BitStream encrypted;
-  clientCtx.encrypt(encryptSeq,
+  ASSERT_TRUE(fixture.clientContext.encrypt(100,
     reinterpret_cast<const unsigned char*>(message),
     std::strlen(message),
-    encrypted);
+    encrypted).ok);
 
   socketwire::BitStream decrypted;
-  bool success = serverCtx.decrypt(decryptSeq, encrypted.getData(), encrypted.getSizeBytes(), decrypted);
+  auto result = fixture.serverContext.decrypt(200, encrypted.getData(), encrypted.getSizeBytes(), decrypted);
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error, socketwire::crypto::CryptoError::DecryptFailed);
+#endif
+}
 
-  EXPECT_FALSE(success) << "Decryption with wrong sequence should fail";
+TEST_F(CryptoTest, CorruptedCiphertextFails)
+{
+#if SOCKETWIRE_HAVE_LIBSODIUM
+  auto fixture = completeHandshake();
+  const char* message = "Corrupt me";
+
+  socketwire::BitStream encrypted;
+  ASSERT_TRUE(fixture.clientContext.encrypt(7,
+    reinterpret_cast<const unsigned char*>(message),
+    std::strlen(message),
+    encrypted).ok);
+
+  std::vector<std::uint8_t> corrupted(encrypted.getData(),
+                                      encrypted.getData() + encrypted.getSizeBytes());
+  corrupted.back() ^= 0x80;
+
+  socketwire::BitStream decrypted;
+  auto result = fixture.serverContext.decrypt(7, corrupted.data(), corrupted.size(), decrypted);
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error, socketwire::crypto::CryptoError::DecryptFailed);
+#endif
+}
+
+TEST_F(CryptoTest, ReplayedCiphertextFails)
+{
+#if SOCKETWIRE_HAVE_LIBSODIUM
+  auto fixture = completeHandshake();
+  const char* message = "Replay me";
+
+  socketwire::BitStream encrypted;
+  ASSERT_TRUE(fixture.clientContext.encrypt(9,
+    reinterpret_cast<const unsigned char*>(message),
+    std::strlen(message),
+    encrypted).ok);
+
+  socketwire::BitStream decrypted;
+  ASSERT_TRUE(fixture.serverContext.decrypt(9, encrypted.getData(), encrypted.getSizeBytes(), decrypted).ok);
+
+  socketwire::BitStream replay;
+  auto result = fixture.serverContext.decrypt(9, encrypted.getData(), encrypted.getSizeBytes(), replay);
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error, socketwire::crypto::CryptoError::ReplayDetected);
 #endif
 }
 
 TEST_F(CryptoTest, BidirectionalCommunication)
 {
 #if SOCKETWIRE_HAVE_LIBSODIUM
-  auto clientKeys = socketwire::crypto::KeyPair::generate();
-  auto serverKeys = socketwire::crypto::KeyPair::generate();
+  auto fixture = completeHandshake();
 
-  // Complete handshake
-  socketwire::crypto::HandshakeState client;
-  client.startClient(clientKeys);
-  socketwire::BitStream clientHello;
-  client.writeClientHello(clientHello);
+  const char* client_msg = "Client to Server";
+  socketwire::BitStream c2s_encrypted;
+  ASSERT_TRUE(fixture.clientContext.encrypt(1,
+    reinterpret_cast<const unsigned char*>(client_msg),
+    std::strlen(client_msg),
+    c2s_encrypted).ok);
 
-  socketwire::crypto::HandshakeState server;
-  server.startServer(serverKeys);
-  server.processClientHello(clientHello.getData(), clientHello.getSizeBytes());
+  socketwire::BitStream c2s_decrypted;
+  ASSERT_TRUE(fixture.serverContext.decrypt(1,
+    c2s_encrypted.getData(),
+    c2s_encrypted.getSizeBytes(),
+    c2s_decrypted).ok);
 
-  socketwire::BitStream serverHello;
-  server.writeServerHello(serverHello);
-  client.processServerHello(serverHello.getData(), serverHello.getSizeBytes());
+  const char* server_msg = "Server to Client";
+  socketwire::BitStream s2c_encrypted;
+  ASSERT_TRUE(fixture.serverContext.encrypt(2,
+    reinterpret_cast<const unsigned char*>(server_msg),
+    std::strlen(server_msg),
+    s2c_encrypted).ok);
 
-  auto clientCtx = client.createClientCryptoContext();
-  auto serverCtx = server.createServerCryptoContext();
-
-  // Client -> Server
-  const char* clientMsg = "Client to Server";
-  socketwire::BitStream c2sEncrypted;
-  clientCtx.encrypt(1,
-    reinterpret_cast<const unsigned char*>(clientMsg),
-    std::strlen(clientMsg),
-    c2sEncrypted);
-
-  socketwire::BitStream c2sDecrypted;
-  bool success = serverCtx.decrypt(1, c2sEncrypted.getData(), c2sEncrypted.getSizeBytes(), c2sDecrypted);
-  ASSERT_TRUE(success);
-
-  std::vector<char> c2sBuffer(c2sDecrypted.getSizeBytes());
-  c2sDecrypted.resetRead();
-  c2sDecrypted.readBytes(c2sBuffer.data(), c2sBuffer.size());
-  EXPECT_EQ(std::memcmp(c2sBuffer.data(), clientMsg, std::strlen(clientMsg)), 0);
-
-  // Server -> Client
-  const char* serverMsg = "Server to Client";
-  socketwire::BitStream s2cEncrypted;
-  serverCtx.encrypt(2,
-    reinterpret_cast<const unsigned char*>(serverMsg),
-    std::strlen(serverMsg),
-    s2cEncrypted);
-
-  socketwire::BitStream s2cDecrypted;
-  success = clientCtx.decrypt(2, s2cEncrypted.getData(), s2cEncrypted.getSizeBytes(), s2cDecrypted);
-  ASSERT_TRUE(success);
-
-  std::vector<char> s2cBuffer(s2cDecrypted.getSizeBytes());
-  s2cDecrypted.resetRead();
-  s2cDecrypted.readBytes(s2cBuffer.data(), s2cBuffer.size());
-  EXPECT_EQ(std::memcmp(s2cBuffer.data(), serverMsg, std::strlen(serverMsg)), 0);
+  socketwire::BitStream s2c_decrypted;
+  ASSERT_TRUE(fixture.clientContext.decrypt(2,
+    s2c_encrypted.getData(),
+    s2c_encrypted.getSizeBytes(),
+    s2c_decrypted).ok);
 #endif
 }

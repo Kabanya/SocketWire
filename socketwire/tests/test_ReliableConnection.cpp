@@ -2,6 +2,7 @@
 #include <gmock/gmock.h>
 #include "reliable_connection.hpp"
 #include "i_socket.hpp"
+#include <algorithm>
 #include <vector>
 #include <thread>
 #include <chrono>
@@ -952,5 +953,213 @@ TEST_F(ConnectionManagerTest, ConnectionManagerOwnsClients)
   // Destroying the manager should not leak or crash
   EXPECT_NO_THROW(manager.reset());
 }
+
+TEST_F(ReliableConnectionTest, SecureConnectFailsWithoutValidCryptoConfig)
+{
+  config.crypto.enabled = true;
+
+  ReliableConnection conn(&socket, config);
+  auto addr = SocketAddress::fromIPv4(0x7F000001);
+
+  const bool result = conn.connect(addr, 12345);
+
+  EXPECT_FALSE(result);
+  EXPECT_EQ(conn.getState(), ConnectionState::Disconnected);
+  EXPECT_EQ(socket.getSentCount(), 0u);
+}
+
+#if SOCKETWIRE_HAVE_LIBSODIUM
+bool connectSecurePair(ReliableConnection& client,
+                       MockSocket& clientSocket,
+                       MockEventHandler& clientHandler,
+                       ReliableConnection& server,
+                       MockSocket& serverSocket,
+                       MockEventHandler& serverHandler,
+                       const SocketAddress& serverAddr)
+{
+  client.setHandler(&clientHandler);
+  server.setHandler(&serverHandler);
+
+  if (!client.connect(serverAddr, 12345) || clientSocket.sentPackets.empty())
+    return false;
+
+  const auto connectPacket = clientSocket.sentPackets.back();
+  server.processPacket(connectPacket.data.data(), connectPacket.data.size(), serverAddr, 23456);
+  if (serverSocket.sentPackets.empty())
+    return false;
+
+  const auto acceptPacket = serverSocket.sentPackets.back();
+  client.processPacket(acceptPacket.data.data(), acceptPacket.data.size(), serverAddr, 12345);
+
+  return client.isConnected() &&
+         server.isConnected() &&
+         client.isCryptoReady() &&
+         server.isCryptoReady() &&
+         clientHandler.connected &&
+         serverHandler.connected;
+}
+
+TEST_F(ReliableConnectionTest, SecureConnectClientServer)
+{
+  auto client_keys = socketwire::crypto::KeyPair::generate();
+  auto server_keys = socketwire::crypto::KeyPair::generate();
+
+  ReliableConnectionConfig clientCfg = config;
+  clientCfg.crypto.enabled = true;
+  clientCfg.crypto.localKeyPair = client_keys;
+  clientCfg.crypto.expected_server_public_key = server_keys.publicKey;
+
+  ReliableConnectionConfig serverCfg = config;
+  serverCfg.crypto.enabled = true;
+  serverCfg.crypto.localKeyPair = server_keys;
+
+  MockSocket clientSocket;
+  MockSocket serverSocket;
+  MockEventHandler clientHandler;
+  MockEventHandler serverHandler;
+  ReliableConnection client(&clientSocket, clientCfg);
+  ReliableConnection server(&serverSocket, serverCfg);
+  auto addr = SocketAddress::fromIPv4(0x7F000001);
+
+  ASSERT_TRUE(connectSecurePair(client, clientSocket, clientHandler, server, serverSocket, serverHandler, addr));
+
+  ASSERT_FALSE(clientSocket.sentPackets.empty());
+  EXPECT_EQ(clientSocket.sentPackets.front().data.size(), 6u + socketwire::crypto::k_client_hello_size);
+  ASSERT_FALSE(serverSocket.sentPackets.empty());
+  EXPECT_EQ(serverSocket.sentPackets.front().data.size(), 6u + socketwire::crypto::k_server_hello_size);
+}
+
+TEST_F(ReliableConnectionTest, SecureConnectRejectsWrongPinnedServerKey)
+{
+  auto client_keys = socketwire::crypto::KeyPair::generate();
+  auto server_keys = socketwire::crypto::KeyPair::generate();
+  auto wrongServerKeys = socketwire::crypto::KeyPair::generate();
+
+  ReliableConnectionConfig clientCfg = config;
+  clientCfg.crypto.enabled = true;
+  clientCfg.crypto.localKeyPair = client_keys;
+  clientCfg.crypto.expected_server_public_key = wrongServerKeys.publicKey;
+
+  ReliableConnectionConfig serverCfg = config;
+  serverCfg.crypto.enabled = true;
+  serverCfg.crypto.localKeyPair = server_keys;
+
+  MockSocket clientSocket;
+  MockSocket serverSocket;
+  MockEventHandler clientHandler;
+  MockEventHandler serverHandler;
+  ReliableConnection client(&clientSocket, clientCfg);
+  ReliableConnection server(&serverSocket, serverCfg);
+  client.setHandler(&clientHandler);
+  server.setHandler(&serverHandler);
+  auto addr = SocketAddress::fromIPv4(0x7F000001);
+
+  ASSERT_TRUE(client.connect(addr, 12345));
+  ASSERT_FALSE(clientSocket.sentPackets.empty());
+  auto connectPacket = clientSocket.sentPackets.back();
+  server.processPacket(connectPacket.data.data(), connectPacket.data.size(), addr, 23456);
+
+  ASSERT_FALSE(serverSocket.sentPackets.empty());
+  auto acceptPacket = serverSocket.sentPackets.back();
+  client.processPacket(acceptPacket.data.data(), acceptPacket.data.size(), addr, 12345);
+
+  EXPECT_FALSE(clientHandler.connected);
+  EXPECT_FALSE(client.isConnected());
+  EXPECT_FALSE(client.isCryptoReady());
+  EXPECT_EQ(client.getState(), ConnectionState::Disconnected);
+}
+
+TEST_F(ReliableConnectionTest, SecureConnectionRejectsPlaintextAfterHandshake)
+{
+  auto client_keys = socketwire::crypto::KeyPair::generate();
+  auto server_keys = socketwire::crypto::KeyPair::generate();
+
+  ReliableConnectionConfig clientCfg = config;
+  clientCfg.crypto.enabled = true;
+  clientCfg.crypto.localKeyPair = client_keys;
+  clientCfg.crypto.expected_server_public_key = server_keys.publicKey;
+
+  ReliableConnectionConfig serverCfg = config;
+  serverCfg.crypto.enabled = true;
+  serverCfg.crypto.localKeyPair = server_keys;
+
+  MockSocket clientSocket;
+  MockSocket serverSocket;
+  MockEventHandler clientHandler;
+  MockEventHandler serverHandler;
+  ReliableConnection client(&clientSocket, clientCfg);
+  ReliableConnection server(&serverSocket, serverCfg);
+  auto addr = SocketAddress::fromIPv4(0x7F000001);
+
+  ASSERT_TRUE(connectSecurePair(client, clientSocket, clientHandler, server, serverSocket, serverHandler, addr));
+  serverHandler.reset();
+
+  BitStream plaintext;
+  plaintext.write<uint8_t>(static_cast<uint8_t>(PacketType::Reliable));
+  plaintext.write<uint8_t>(0);
+  plaintext.write<uint32_t>(0);
+  plaintext.writeBytes("plain", 5);
+
+  server.processPacket(plaintext.getData(), plaintext.getSizeBytes(), addr, 23456);
+  server.update();
+
+  EXPECT_TRUE(serverHandler.reliablePackets.empty());
+}
+
+TEST_F(ReliableConnectionTest, SecureReliableAndUnreliablePayloadDelivery)
+{
+  auto client_keys = socketwire::crypto::KeyPair::generate();
+  auto server_keys = socketwire::crypto::KeyPair::generate();
+
+  ReliableConnectionConfig clientCfg = config;
+  clientCfg.crypto.enabled = true;
+  clientCfg.crypto.localKeyPair = client_keys;
+  clientCfg.crypto.expected_server_public_key = server_keys.publicKey;
+
+  ReliableConnectionConfig serverCfg = config;
+  serverCfg.crypto.enabled = true;
+  serverCfg.crypto.localKeyPair = server_keys;
+
+  MockSocket clientSocket;
+  MockSocket serverSocket;
+  MockEventHandler clientHandler;
+  MockEventHandler serverHandler;
+  ReliableConnection client(&clientSocket, clientCfg);
+  ReliableConnection server(&serverSocket, serverCfg);
+  auto addr = SocketAddress::fromIPv4(0x7F000001);
+
+  ASSERT_TRUE(connectSecurePair(client, clientSocket, clientHandler, server, serverSocket, serverHandler, addr));
+  clientSocket.clearSent();
+  serverHandler.reset();
+
+  const char* reliableMsg = "secure reliable";
+  ASSERT_TRUE(client.sendReliable(0, reliableMsg, std::strlen(reliableMsg)));
+  ASSERT_EQ(clientSocket.sentPackets.size(), 1u);
+  const auto reliablePacket = clientSocket.sentPackets.back();
+  EXPECT_EQ(std::search(reliablePacket.data.begin(), reliablePacket.data.end(),
+                        reliableMsg, reliableMsg + std::strlen(reliableMsg)),
+            reliablePacket.data.end());
+
+  server.processPacket(reliablePacket.data.data(), reliablePacket.data.size(), addr, 23456);
+  server.update();
+  ASSERT_EQ(serverHandler.reliablePackets.size(), 1u);
+  EXPECT_EQ(std::string(serverHandler.reliablePackets[0].begin(), serverHandler.reliablePackets[0].end()),
+            std::string(reliableMsg));
+
+  clientSocket.clearSent();
+  const char* unreliableMsg = "secure unreliable";
+  ASSERT_TRUE(client.sendUnreliable(1, unreliableMsg, std::strlen(unreliableMsg)));
+  ASSERT_EQ(clientSocket.sentPackets.size(), 1u);
+  const auto unreliablePacket = clientSocket.sentPackets.back();
+  EXPECT_EQ(std::search(unreliablePacket.data.begin(), unreliablePacket.data.end(),
+                        unreliableMsg, unreliableMsg + std::strlen(unreliableMsg)),
+            unreliablePacket.data.end());
+
+  server.processPacket(unreliablePacket.data.data(), unreliablePacket.data.size(), addr, 23456);
+  ASSERT_EQ(serverHandler.unreliablePackets.size(), 1u);
+  EXPECT_EQ(std::string(serverHandler.unreliablePackets[0].begin(), serverHandler.unreliablePackets[0].end()),
+            std::string(unreliableMsg));
+}
+#endif
 
 } // anonymous namespace

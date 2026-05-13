@@ -1,18 +1,20 @@
 #pragma once
 /*
   Lightweight authenticated encryption and client/server handshake built on top
-  of libsodium. Provides:
-    - Key generation (static keypair for identity + session shared keys)
-    - Client/Server handshake messages (Hello -> Hello/Reject)
-    - Derivation of per-direction session keys (rx / tx)
-    - AEAD (XChaCha20-Poly1305) encryption helpers for datagrams
-    - Simple replay protection / sequence numbering skeleton
+  of libsodium. The public types keep fixed sizes even when libsodium support is
+  disabled, so callers can configure crypto without conditional type branches.
 */
 
-#include <cstdint>
+#include <algorithm>
 #include <array>
-#include <vector>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <deque>
+#include <expected>
+#include <limits>
+#include <optional>
+#include <vector>
 
 #include "bit_stream.hpp"
 
@@ -36,31 +38,37 @@
 namespace socketwire::crypto
 {
 
-// Protocol Constants
-constexpr std::uint8_t kProtocolVersionMajor = 1;
-constexpr std::uint8_t kProtocolVersionMinor = 0;
+constexpr std::uint8_t k_protocol_version_major = 1;
+constexpr std::uint8_t k_protocol_version_minor = 0;
 
-// Maximum size sanity for handshake messages
-constexpr std::size_t kMaxHandshakeMessageSize = 512;
+constexpr std::size_t k_public_key_size = 32;
+constexpr std::size_t k_secret_key_size = 32;
+constexpr std::size_t k_session_key_size = 32;
+constexpr std::size_t k_nonce_size = 24;
+constexpr std::size_t k_mac_size = 16;
+constexpr std::size_t k_handshake_nonce_size = 32;
+constexpr std::size_t k_max_handshake_message_size = 512;
+constexpr std::size_t k_replay_window_size = 1024;
 
-// AEAD algorithm selection (enum for extensibility)
+using PublicKey = std::array<unsigned char, k_public_key_size>;
+using SecretKey = std::array<unsigned char, k_secret_key_size>;
+using SessionKey = std::array<unsigned char, k_session_key_size>;
+using Nonce = std::array<unsigned char, k_nonce_size>;
+using HandshakeNonce = std::array<unsigned char, k_handshake_nonce_size>;
+
 enum class CipherSuite : std::uint8_t
 {
   None = 0,
-#if SOCKETWIRE_HAVE_LIBSODIUM
   XChaCha20Poly1305 = 1
-#endif
 };
 
-// Handshake opcodes
 enum class HandshakeOpcode : std::uint8_t
 {
-  ClientHello   = 1,
-  ServerHello   = 2,
-  ServerReject  = 3
+  ClientHello  = 1,
+  ServerHello  = 2,
+  ServerReject = 3
 };
 
-// Error codes for handshake / crypto operations
 enum class CryptoError : std::uint8_t
 {
   None = 0,
@@ -73,126 +81,151 @@ enum class CryptoError : std::uint8_t
   BufferTooSmall,
   SequenceExpired,
   DecryptFailed,
-  NotReady
+  NotReady,
+  InvalidPeerKey,
+  ReplayDetected
 };
 
-// Convert CryptoError to human-readable string
 [[nodiscard]] const char* to_string(CryptoError error) noexcept;
 
-// Simple result wrapper
 struct Result
 {
   bool ok;
   CryptoError error;
-  static Result success() { return {true, CryptoError::None}; }
-  static Result failure(CryptoError e) { return {false, e}; }
+
+  static constexpr Result success() noexcept { return {true, CryptoError::None}; }
+  static constexpr Result failure(CryptoError e) noexcept { return {false, e}; }
 };
 
-// Key Structures
-#if SOCKETWIRE_HAVE_LIBSODIUM
+Result initialize();
+bool cipher_suite_supported(CipherSuite s);
+
+template<std::size_t N>
+[[nodiscard]] inline bool all_zero(const std::array<unsigned char, N>& bytes) noexcept
+{
+  return std::all_of(bytes.begin(), bytes.end(), [](unsigned char b) { return b == 0; });
+}
+
+[[nodiscard]] inline bool valid_public_key(const PublicKey& key) noexcept
+{
+  return !all_zero(key);
+}
+
+[[nodiscard]] inline bool valid_secret_key(const SecretKey& key) noexcept
+{
+  return !all_zero(key);
+}
+
 struct KeyPair
 {
-  std::array<unsigned char, crypto_kx_PUBLICKEYBYTES> publicKey{};
-  std::array<unsigned char, crypto_kx_SECRETKEYBYTES> secretKey{};
+  PublicKey publicKey{};
+  SecretKey secretKey{};
+
+  [[nodiscard]] bool valid() const noexcept
+  {
+    return valid_public_key(publicKey) && valid_secret_key(secretKey);
+  }
+
+  static Result generate(KeyPair& out)
+  {
+#if SOCKETWIRE_HAVE_LIBSODIUM
+    if (!initialize().ok)
+      return Result::failure(CryptoError::SodiumFailure);
+    if (crypto_kx_keypair(out.publicKey.data(), out.secretKey.data()) != 0)
+    {
+      out = {};
+      return Result::failure(CryptoError::SodiumFailure);
+    }
+    return Result::success();
+#else
+    out = {};
+    return Result::failure(CryptoError::NotInitialized);
+#endif
+  }
+
+  static std::expected<KeyPair, CryptoError> try_generate()
+  {
+    KeyPair kp;
+    const auto result = generate(kp);
+    if (!result.ok)
+      return std::unexpected(result.error);
+    return kp;
+  }
 
   static KeyPair generate()
   {
     KeyPair kp;
-    if (crypto_kx_keypair(kp.publicKey.data(), kp.secretKey.data()) != 0)
-    {
-      // Fallback: zeroed keys indicate generation failure
-      kp.publicKey.fill(0);
-      kp.secretKey.fill(0);
-    }
+    (void)generate(kp);
     return kp;
   }
-
-  bool valid() const
-  {
-    // Very basic validity check: not all zeros
-    for (auto c : publicKey)
-      if (c != 0) return true;
-    return false;
-  }
 };
 
 struct SessionKeys
 {
-  std::array<unsigned char, crypto_kx_SESSIONKEYBYTES> rx{};
-  std::array<unsigned char, crypto_kx_SESSIONKEYBYTES> tx{};
+  SessionKey rx{};
+  SessionKey tx{};
 
-  bool valid() const
+  [[nodiscard]] bool valid() const noexcept
   {
-    bool nonZero = false;
-    for (auto c : rx) if (c != 0) { nonZero = true; break; }
-    for (auto c : tx) if (c != 0) { nonZero = true; break; }
-    return nonZero;
+    return !all_zero(rx) && !all_zero(tx);
   }
 };
-#else
-struct KeyPair
-{
-  static KeyPair generate() { return {}; }
-  bool valid() const { return false; }
-};
 
-struct SessionKeys
-{
-  bool valid() const { return false; }
-};
-#endif
-
-/*Nonce Generator
-  For XChaCha20-Poly1305 we need 24-byte nonces.
-  We combine a random "base" (first 16 bytes) + 8-byte counter (little-endian).
-  NOTE: Ensure monotonic increment per direction to avoid nonce reuse.
- */
 struct NonceGenerator
 {
-#if SOCKETWIRE_HAVE_LIBSODIUM
-  std::array<unsigned char, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES> base{};
-#else
-  std::array<unsigned char, 24> base{};
-#endif
+  Nonce base{};
   std::uint64_t counter = 0;
+  bool initialized = false;
 
-  void initRandom()
+  Result init_random()
   {
 #if SOCKETWIRE_HAVE_LIBSODIUM
+    if (!initialize().ok)
+      return Result::failure(CryptoError::SodiumFailure);
     randombytes_buf(base.data(), base.size());
-#else
-    // Non-crypto random fallback (not secure). Production code should fail.
-    for (auto& b : base) b = static_cast<unsigned char>(std::rand() & 0xFF);
-#endif
     counter = 0;
+    initialized = true;
+    return Result::success();
+#else
+    base.fill(0);
+    counter = 0;
+    initialized = false;
+    return Result::failure(CryptoError::NotInitialized);
+#endif
   }
 
-  void fillNonce(unsigned char* out24)
+  [[nodiscard]] Result fill_nonce(Nonce& out) const noexcept
   {
-    std::memcpy(out24, base.data(), base.size());
-    // Overwrite last 8 bytes with counter (little-endian)
-    unsigned char* tail = out24 + (base.size() - 8);
+    if (!initialized)
+      return Result::failure(CryptoError::NotReady);
+
+    out = base;
     std::uint64_t c = counter;
-    for (int i = 0; i < 8; ++i)
+    for (std::size_t i = 0; i < 8; ++i)
     {
-      tail[i] = static_cast<unsigned char>(c & 0xFF);
+      out[k_nonce_size - 8 + i] = static_cast<unsigned char>(c & 0xFFu);
       c >>= 8;
     }
+    return Result::success();
   }
 
-  void nextNonce(unsigned char* out24)
+  Result next_nonce(Nonce& out) noexcept
   {
-    fillNonce(out24);
-    counter++;
+    if (counter == std::numeric_limits<std::uint64_t>::max())
+      return Result::failure(CryptoError::SequenceExpired);
+
+    const auto result = fill_nonce(out);
+    if (!result.ok)
+      return result;
+
+    ++counter;
+    return Result::success();
   }
 };
 
-
-//  Handshake State
-//  Tracks progress and stores derived keys.
 enum class HandshakeRole : std::uint8_t
 {
-  None  = 0,
+  None = 0,
   Client = 1,
   Server = 2
 };
@@ -208,222 +241,266 @@ enum class HandshakePhase : std::uint8_t
 
 struct ClientHelloData
 {
-  std::uint8_t versionMajor = kProtocolVersionMajor;
-  std::uint8_t versionMinor = kProtocolVersionMinor;
-#if SOCKETWIRE_HAVE_LIBSODIUM
+  std::uint8_t versionMajor = k_protocol_version_major;
+  std::uint8_t versionMinor = k_protocol_version_minor;
   CipherSuite suite = CipherSuite::XChaCha20Poly1305;
-#else
-  CipherSuite suite = CipherSuite::None;
-#endif
-  std::array<unsigned char, 32> nonce{}; // arbitrary handshake nonce
-  std::vector<unsigned char> clientPub;  // variable to avoid compile-time libsodium check
+  HandshakeNonce nonce{};
+  PublicKey clientPub{};
 };
 
 struct ServerHelloData
 {
-  std::uint8_t versionMajor = kProtocolVersionMajor;
-  std::uint8_t versionMinor = kProtocolVersionMinor;
-#if SOCKETWIRE_HAVE_LIBSODIUM
+  std::uint8_t versionMajor = k_protocol_version_major;
+  std::uint8_t versionMinor = k_protocol_version_minor;
   CipherSuite suite = CipherSuite::XChaCha20Poly1305;
-#else
-  CipherSuite suite = CipherSuite::None;
-#endif
-  std::array<unsigned char, 32> nonce{};
-  std::vector<unsigned char> serverPub;
+  HandshakeNonce nonce{};
+  PublicKey serverPub{};
 };
 
-// Serialization helpers for handshake messages into BitStream
-inline void writeClientHello(BitStream& bs, const ClientHelloData& d)
+constexpr std::size_t k_client_hello_size =
+  1 + 1 + 1 + 1 + k_handshake_nonce_size + k_public_key_size;
+constexpr std::size_t k_server_hello_size =
+  1 + 1 + 1 + 1 + k_handshake_nonce_size + k_public_key_size;
+
+inline Result write_client_hello(BitStream& bs, const ClientHelloData& d)
 {
   bs.write<std::uint8_t>(static_cast<std::uint8_t>(HandshakeOpcode::ClientHello));
   bs.write<std::uint8_t>(d.versionMajor);
   bs.write<std::uint8_t>(d.versionMinor);
   bs.write<std::uint8_t>(static_cast<std::uint8_t>(d.suite));
   bs.writeBytes(d.nonce.data(), d.nonce.size());
-  std::uint16_t pkLen = static_cast<std::uint16_t>(d.clientPub.size());
-  bs.write<std::uint16_t>(pkLen);
-  if (pkLen != 0u)
-    bs.writeBytes(d.clientPub.data(), pkLen);
+  bs.writeBytes(d.clientPub.data(), d.clientPub.size());
+  return Result::success();
 }
 
-inline bool readClientHello(const unsigned char* data, std::size_t len, ClientHelloData& out)
+inline Result read_client_hello(const unsigned char* data, std::size_t len, ClientHelloData& out)
 {
+  if (data == nullptr || len != k_client_hello_size || len > k_max_handshake_message_size)
+    return Result::failure(CryptoError::DecodeError);
+
   try
   {
     BitStream bs(data, len);
-    std::uint8_t opcode;
+    std::uint8_t opcode = 0;
     bs.read<std::uint8_t>(opcode);
     if (opcode != static_cast<std::uint8_t>(HandshakeOpcode::ClientHello))
-      return false;
+      return Result::failure(CryptoError::DecodeError);
+
     bs.read<std::uint8_t>(out.versionMajor);
     bs.read<std::uint8_t>(out.versionMinor);
-    std::uint8_t suiteByte;
-    bs.read<std::uint8_t>(suiteByte);
-    out.suite = static_cast<CipherSuite>(suiteByte);
+
+    std::uint8_t suite_byte = 0;
+    bs.read<std::uint8_t>(suite_byte);
+    out.suite = static_cast<CipherSuite>(suite_byte);
+
     bs.readBytes(out.nonce.data(), out.nonce.size());
-    std::uint16_t pkLen;
-    bs.read<std::uint16_t>(pkLen);
-    if (pkLen > 1024) return false;
-    out.clientPub.resize(pkLen);
-    if (pkLen != 0u)
-      bs.readBytes(out.clientPub.data(), pkLen);
-    return true;
+    bs.readBytes(out.clientPub.data(), out.clientPub.size());
+    return Result::success();
   }
   catch (...)
   {
-    return false;
+    return Result::failure(CryptoError::DecodeError);
   }
 }
 
-inline void writeServerHello(BitStream& bs, const ServerHelloData& d)
+inline Result write_server_hello(BitStream& bs, const ServerHelloData& d)
 {
   bs.write<std::uint8_t>(static_cast<std::uint8_t>(HandshakeOpcode::ServerHello));
   bs.write<std::uint8_t>(d.versionMajor);
   bs.write<std::uint8_t>(d.versionMinor);
   bs.write<std::uint8_t>(static_cast<std::uint8_t>(d.suite));
   bs.writeBytes(d.nonce.data(), d.nonce.size());
-  std::uint16_t pkLen = static_cast<std::uint16_t>(d.serverPub.size());
-  bs.write<std::uint16_t>(pkLen);
-  if (pkLen != 0u)
-    bs.writeBytes(d.serverPub.data(), pkLen);
+  bs.writeBytes(d.serverPub.data(), d.serverPub.size());
+  return Result::success();
 }
 
-inline bool readServerHello(const unsigned char* data, std::size_t len, ServerHelloData& out)
+inline Result read_server_hello(const unsigned char* data, std::size_t len, ServerHelloData& out)
 {
+  if (data == nullptr || len != k_server_hello_size || len > k_max_handshake_message_size)
+    return Result::failure(CryptoError::DecodeError);
+
   try
   {
     BitStream bs(data, len);
-    std::uint8_t opcode;
+    std::uint8_t opcode = 0;
     bs.read<std::uint8_t>(opcode);
     if (opcode != static_cast<std::uint8_t>(HandshakeOpcode::ServerHello))
-      return false;
+      return Result::failure(CryptoError::DecodeError);
+
     bs.read<std::uint8_t>(out.versionMajor);
     bs.read<std::uint8_t>(out.versionMinor);
-    std::uint8_t suiteByte;
-    bs.read<std::uint8_t>(suiteByte);
-    out.suite = static_cast<CipherSuite>(suiteByte);
+
+    std::uint8_t suite_byte = 0;
+    bs.read<std::uint8_t>(suite_byte);
+    out.suite = static_cast<CipherSuite>(suite_byte);
+
     bs.readBytes(out.nonce.data(), out.nonce.size());
-    std::uint16_t pkLen;
-    bs.read<std::uint16_t>(pkLen);
-    if (pkLen > 1024) return false;
-    out.serverPub.resize(pkLen);
-    if (pkLen != 0u)
-      bs.readBytes(out.serverPub.data(), pkLen);
-    return true;
+    bs.readBytes(out.serverPub.data(), out.serverPub.size());
+    return Result::success();
   }
   catch (...)
   {
-    return false;
+    return Result::failure(CryptoError::DecodeError);
   }
 }
 
-// Main handshake state machine
 class HandshakeState
 {
 public:
   HandshakeState() = default;
 
-  void startClient(const KeyPair& clientKeys)
+  Result start_client(const KeyPair& client_keys,
+                     const PublicKey& expected_server_public_key = {})
   {
+    reset();
     role = HandshakeRole::Client;
-    phase = HandshakePhase::Empty;
-    staticKeys = clientKeys;
-    randomHandshakeNonce(clientHello.nonce);
-#if SOCKETWIRE_HAVE_LIBSODIUM
-    clientHello.clientPub.assign(staticKeys.publicKey.begin(), staticKeys.publicKey.end());
-#else
-    clientHello.clientPub.clear();
-#endif
+    staticKeys = client_keys;
+    if (!staticKeys.valid())
+    {
+      phase = HandshakePhase::Rejected;
+      return Result::failure(CryptoError::InvalidState);
+    }
+
+    if (!all_zero(expected_server_public_key))
+      expectedServerPub = expected_server_public_key;
+
+    random_handshake_nonce(clientHello.nonce);
+    clientHello.clientPub = staticKeys.publicKey;
+    return Result::success();
   }
 
-  void startServer(const KeyPair& serverKeys)
+  Result start_server(const KeyPair& server_keys)
   {
+    reset();
     role = HandshakeRole::Server;
-    phase = HandshakePhase::Empty;
-    staticKeys = serverKeys;
+    staticKeys = server_keys;
+    if (!staticKeys.valid())
+    {
+      phase = HandshakePhase::Rejected;
+      return Result::failure(CryptoError::InvalidState);
+    }
+    return Result::success();
   }
 
-  Result writeClientHello(BitStream& out)
+  Result write_client_hello(BitStream& out)
   {
     if (role != HandshakeRole::Client || !staticKeys.valid())
       return Result::failure(CryptoError::InvalidState);
-    clientHello.versionMajor = kProtocolVersionMajor;
-    clientHello.versionMinor = kProtocolVersionMinor;
-    clientHello.suite = defaultSuite();
-    ::socketwire::crypto::writeClientHello(out, clientHello);
-    phase = HandshakePhase::ClientHelloSent;
-    return Result::success();
+    if (!cipher_suite_supported(CipherSuite::XChaCha20Poly1305))
+      return Result::failure(CryptoError::UnsupportedSuite);
+
+    clientHello.versionMajor = k_protocol_version_major;
+    clientHello.versionMinor = k_protocol_version_minor;
+    clientHello.suite = CipherSuite::XChaCha20Poly1305;
+    out.clear();
+    const auto result = ::socketwire::crypto::write_client_hello(out, clientHello);
+    if (result.ok)
+      phase = HandshakePhase::ClientHelloSent;
+    return result;
   }
 
-  Result writeServerHello(BitStream& out)
+  Result write_server_hello(BitStream& out)
+  {
+    if (role != HandshakeRole::Server || !staticKeys.valid() || !session.valid())
+      return Result::failure(CryptoError::InvalidState);
+    if (!cipher_suite_supported(CipherSuite::XChaCha20Poly1305))
+      return Result::failure(CryptoError::UnsupportedSuite);
+
+    serverHello.versionMajor = k_protocol_version_major;
+    serverHello.versionMinor = k_protocol_version_minor;
+    serverHello.suite = CipherSuite::XChaCha20Poly1305;
+    serverHello.serverPub = staticKeys.publicKey;
+    random_handshake_nonce(serverHello.nonce);
+    out.clear();
+    const auto result = ::socketwire::crypto::write_server_hello(out, serverHello);
+    if (result.ok)
+      phase = HandshakePhase::Completed;
+    return result;
+  }
+
+  Result process_client_hello(const unsigned char* data, std::size_t len)
   {
     if (role != HandshakeRole::Server || !staticKeys.valid())
       return Result::failure(CryptoError::InvalidState);
-    serverHello.versionMajor = kProtocolVersionMajor;
-    serverHello.versionMinor = kProtocolVersionMinor;
-    serverHello.suite = defaultSuite();
-    randomHandshakeNonce(serverHello.nonce);
-#if SOCKETWIRE_HAVE_LIBSODIUM
-    serverHello.serverPub.assign(staticKeys.publicKey.begin(), staticKeys.publicKey.end());
-#endif
-    ::socketwire::crypto::writeServerHello(out, serverHello);
-    phase = HandshakePhase::ServerHelloSent;
-    return Result::success();
-  }
 
-  bool processClientHello(const unsigned char* data, std::size_t len)
-  {
-    if (role != HandshakeRole::Server) return false;
     ClientHelloData tmp;
-    if (!readClientHello(data, len, tmp)) return false;
-    if (!versionSupported(tmp.versionMajor, tmp.versionMinor)) return false;
-#if SOCKETWIRE_HAVE_LIBSODIUM
-    if (tmp.clientPub.size() != crypto_kx_PUBLICKEYBYTES) return false;
-#endif
+    auto result = read_client_hello(data, len, tmp);
+    if (!result.ok)
+      return result;
+    result = validate_peer_hello(tmp.versionMajor, tmp.versionMinor, tmp.suite, tmp.clientPub);
+    if (!result.ok)
+      return result;
+
     clientHello = tmp;
-    // Derive session keys (server side)
 #if SOCKETWIRE_HAVE_LIBSODIUM
     if (crypto_kx_server_session_keys(session.rx.data(), session.tx.data(),
                                       staticKeys.publicKey.data(), staticKeys.secretKey.data(),
                                       clientHello.clientPub.data()) != 0)
     {
-      return false;
+      phase = HandshakePhase::Rejected;
+      session = {};
+      return Result::failure(CryptoError::KeyExchangeFailed);
     }
-#endif
     phase = HandshakePhase::Completed;
-    return true;
+    return Result::success();
+#else
+    phase = HandshakePhase::Rejected;
+    return Result::failure(CryptoError::NotInitialized);
+#endif
   }
 
-  bool processServerHello(const unsigned char* data, std::size_t len)
+  Result process_server_hello(const unsigned char* data, std::size_t len)
   {
-    if (role != HandshakeRole::Client) return false;
+    if (role != HandshakeRole::Client || !staticKeys.valid())
+      return Result::failure(CryptoError::InvalidState);
+
     ServerHelloData tmp;
-    if (!readServerHello(data, len, tmp)) return false;
-    if (!versionSupported(tmp.versionMajor, tmp.versionMinor)) return false;
-#if SOCKETWIRE_HAVE_LIBSODIUM
-    if (tmp.serverPub.size() != crypto_kx_PUBLICKEYBYTES) return false;
-#endif
+    auto result = read_server_hello(data, len, tmp);
+    if (!result.ok)
+      return result;
+    result = validate_peer_hello(tmp.versionMajor, tmp.versionMinor, tmp.suite, tmp.serverPub);
+    if (!result.ok)
+      return result;
+
+    if (expectedServerPub.has_value() && *expectedServerPub != tmp.serverPub)
+    {
+      phase = HandshakePhase::Rejected;
+      return Result::failure(CryptoError::InvalidPeerKey);
+    }
+
     serverHello = tmp;
 #if SOCKETWIRE_HAVE_LIBSODIUM
     if (crypto_kx_client_session_keys(session.rx.data(), session.tx.data(),
                                       staticKeys.publicKey.data(), staticKeys.secretKey.data(),
                                       serverHello.serverPub.data()) != 0)
     {
-      return false;
+      phase = HandshakePhase::Rejected;
+      session = {};
+      return Result::failure(CryptoError::KeyExchangeFailed);
     }
-#endif
     phase = HandshakePhase::Completed;
-    return true;
+    return Result::success();
+#else
+    phase = HandshakePhase::Rejected;
+    return Result::failure(CryptoError::NotInitialized);
+#endif
   }
 
-  bool completed() const { return phase == HandshakePhase::Completed && session.valid(); }
-  HandshakeRole getRole() const { return role; }
+  [[nodiscard]] bool completed() const noexcept
+  {
+    return phase == HandshakePhase::Completed && session.valid();
+  }
 
-  /* Create CryptoContext after successful handshake */
-  class CryptoContext createClientCryptoContext() const;
-  class CryptoContext createServerCryptoContext() const;
+  [[nodiscard]] HandshakeRole get_role() const noexcept { return role; }
+  [[nodiscard]] HandshakePhase get_phase() const noexcept { return phase; }
+  [[nodiscard]] const SessionKeys& get_session_keys() const noexcept { return session; }
+  [[nodiscard]] const PublicKey& remote_public_key() const noexcept
+  {
+    return role == HandshakeRole::Client ? serverHello.serverPub : clientHello.clientPub;
+  }
 
-  const SessionKeys& getSessionKeys() const { return session; }
+  class CryptoContext create_client_crypto_context() const;
+  class CryptoContext create_server_crypto_context() const;
 
 private:
   HandshakeRole role = HandshakeRole::None;
@@ -432,138 +509,174 @@ private:
   SessionKeys session{};
   ClientHelloData clientHello{};
   ServerHelloData serverHello{};
+  std::optional<PublicKey> expectedServerPub{};
 
-  static CipherSuite defaultSuite()
+  void reset()
   {
-#if SOCKETWIRE_HAVE_LIBSODIUM
-    return CipherSuite::XChaCha20Poly1305;
-#else
-    return CipherSuite::None;
-#endif
+    role = HandshakeRole::None;
+    phase = HandshakePhase::Empty;
+    staticKeys = {};
+    session = {};
+    clientHello = {};
+    serverHello = {};
+    expectedServerPub.reset();
   }
 
-  static bool versionSupported(std::uint8_t maj, std::uint8_t min)
+  static Result validate_peer_hello(std::uint8_t maj,
+                                  std::uint8_t min,
+                                  CipherSuite suite,
+                                  const PublicKey& peer_key)
   {
-    // Strategy: accept same major, min <= current minor
-    return maj == kProtocolVersionMajor && min <= kProtocolVersionMinor;
+    if (maj != k_protocol_version_major || min > k_protocol_version_minor)
+      return Result::failure(CryptoError::DecodeError);
+    if (suite != CipherSuite::XChaCha20Poly1305 || !cipher_suite_supported(suite))
+      return Result::failure(CryptoError::UnsupportedSuite);
+    if (!valid_public_key(peer_key))
+      return Result::failure(CryptoError::InvalidPeerKey);
+    return Result::success();
   }
 
-  static void randomHandshakeNonce(std::array<unsigned char, 32>& out)
+  static void random_handshake_nonce(HandshakeNonce& out)
   {
 #if SOCKETWIRE_HAVE_LIBSODIUM
     randombytes_buf(out.data(), out.size());
 #else
-    for (auto& b : out) b = static_cast<unsigned char>(std::rand() & 0xFF);
+    out.fill(0);
 #endif
   }
 };
 
-/*
-  CryptoContext
-  Uses session keys to provide encryption/decryption of datagrams.
-  Each direction has its own NonceGenerator (txNonce / rxNonce).
-  Sequence numbers are external (provided by transport or reliability layer).
- */
 class CryptoContext
 {
 public:
   CryptoContext() = default;
 
-  bool isReady() const
+  [[nodiscard]] bool is_ready() const noexcept
   {
-#if SOCKETWIRE_HAVE_LIBSODIUM
     return suite == CipherSuite::XChaCha20Poly1305 && haveKeys;
-#else
-    return false;
-#endif
   }
 
-  /*
-    Encryption: produce ciphertext (BitStream) from plaintext buffer.
-    AD (Associated Data) can include sequence number, channel id, etc.
-    For simplicity, we treat seq as AD (little-endian 64-bit).
-  */
-  bool encrypt(std::uint64_t seq,
-               const unsigned char* plain,
-               std::size_t plainLen,
-               BitStream& out)
+  Result encrypt(const unsigned char* plain,
+                 std::size_t plain_len,
+                 const unsigned char* associated_data,
+                 std::size_t associated_data_len,
+                 BitStream& out)
   {
 #if SOCKETWIRE_HAVE_LIBSODIUM
-    if (!isReady()) return false;
-    unsigned char ad[8];
-    encodeLE64(seq, ad);
+    if (!is_ready())
+      return Result::failure(CryptoError::NotReady);
+    if ((plain_len > 0 && plain == nullptr) ||
+        (associated_data_len > 0 && associated_data == nullptr))
+      return Result::failure(CryptoError::InvalidState);
 
-    unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
-    txNonce.nextNonce(nonce);
+    Nonce nonce;
+    auto result = txNonce.next_nonce(nonce);
+    if (!result.ok)
+      return result;
 
-    std::vector<unsigned char> cipher(plainLen + crypto_aead_xchacha20poly1305_ietf_ABYTES);
-    unsigned long long outLen = 0; //NOLINT
+    std::vector<unsigned char> cipher(plain_len + k_mac_size);
+    unsigned long long outLen = 0; // NOLINT
     if (crypto_aead_xchacha20poly1305_ietf_encrypt(cipher.data(), &outLen,
-                                                   plain, plainLen,
-                                                   ad, sizeof(ad),
-                                                   nullptr, nonce, keyTx.data()) != 0)
-      return false;
+                                                   plain, plain_len,
+                                                   associated_data, associated_data_len,
+                                                   nullptr, nonce.data(), keyTx.data()) != 0)
+    {
+      return Result::failure(CryptoError::SodiumFailure);
+    }
 
-    // Serialize: [nonce(24)] [cipher bytes]
     out.clear();
-    out.writeBytes(nonce, sizeof(nonce));
+    out.writeBytes(nonce.data(), nonce.size());
     out.writeBytes(cipher.data(), static_cast<std::size_t>(outLen));
-    return true;
+    return Result::success();
 #else
-    (void)seq; (void)plain; (void)plainLen; (void)out;
-    return false;
+    (void)plain;
+    (void)plain_len;
+    (void)associated_data;
+    (void)associated_data_len;
+    (void)out;
+    return Result::failure(CryptoError::NotInitialized);
 #endif
   }
 
-  bool decrypt(std::uint64_t seq,
-               const unsigned char* data,
-               std::size_t len,
-               BitStream& outPlain) const
+  Result decrypt(const unsigned char* data,
+                 std::size_t len,
+                 const unsigned char* associated_data,
+                 std::size_t associated_data_len,
+                 BitStream& out_plain)
   {
 #if SOCKETWIRE_HAVE_LIBSODIUM
-    if (!isReady()) return false;
-    if (len < crypto_aead_xchacha20poly1305_ietf_NPUBBYTES +
-              crypto_aead_xchacha20poly1305_ietf_ABYTES)
-      return false;
+    if (!is_ready())
+      return Result::failure(CryptoError::NotReady);
+    if (data == nullptr || len < k_nonce_size + k_mac_size ||
+        (associated_data_len > 0 && associated_data == nullptr))
+      return Result::failure(CryptoError::DecodeError);
 
-    unsigned char ad[8];
-    encodeLE64(seq, ad);
+    Nonce nonce;
+    std::memcpy(nonce.data(), data, nonce.size());
+    if (nonce_seen(nonce))
+      return Result::failure(CryptoError::ReplayDetected);
 
-    const unsigned char* nonce = data;
-    const unsigned char* cipher = data + crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
-    std::size_t cipherLen = len - crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
-
-    std::vector<unsigned char> plain(cipherLen); // allocate max; will shrink to actual
-    unsigned long long plainOut = 0; //NOLINT
+    const unsigned char* cipher = data + k_nonce_size;
+    const std::size_t cipher_len = len - k_nonce_size;
+    std::vector<unsigned char> plain(cipher_len);
+    unsigned long long plainOut = 0; // NOLINT
     if (crypto_aead_xchacha20poly1305_ietf_decrypt(plain.data(), &plainOut,
                                                    nullptr,
-                                                   cipher, cipherLen,
-                                                   ad, sizeof(ad),
-                                                   nonce, keyRx.data()) != 0)
-      return false;
+                                                   cipher, cipher_len,
+                                                   associated_data, associated_data_len,
+                                                   nonce.data(), keyRx.data()) != 0)
+    {
+      return Result::failure(CryptoError::DecryptFailed);
+    }
 
-    outPlain.clear();
-    outPlain.writeBytes(plain.data(), static_cast<std::size_t>(plainOut));
-    return true;
+    remember_nonce(nonce);
+    out_plain.clear();
+    out_plain.writeBytes(plain.data(), static_cast<std::size_t>(plainOut));
+    return Result::success();
 #else
-    (void)seq; (void)data; (void)len; (void)outPlain;
-    return false;
+    (void)data;
+    (void)len;
+    (void)associated_data;
+    (void)associated_data_len;
+    (void)out_plain;
+    return Result::failure(CryptoError::NotInitialized);
 #endif
   }
 
-  // Internal setup from handshake (role-specific direction mapping)
-  static CryptoContext fromClient(const SessionKeys& keys)
+  Result encrypt(std::uint64_t seq,
+                 const unsigned char* plain,
+                 std::size_t plain_len,
+                 BitStream& out)
+  {
+    unsigned char ad[8];
+    encode_le64(seq, ad);
+    return encrypt(plain, plain_len, ad, sizeof(ad), out);
+  }
+
+  Result decrypt(std::uint64_t seq,
+                 const unsigned char* data,
+                 std::size_t len,
+                 BitStream& out_plain)
+  {
+    unsigned char ad[8];
+    encode_le64(seq, ad);
+    return decrypt(data, len, ad, sizeof(ad), out_plain);
+  }
+
+  static CryptoContext from_client(const SessionKeys& keys)
   {
     CryptoContext ctx;
 #if SOCKETWIRE_HAVE_LIBSODIUM
     if (keys.valid())
     {
-      ctx.keyRx = keys.rx; // client receives with rx, sends with tx
+      ctx.keyRx = keys.rx;
       ctx.keyTx = keys.tx;
-      ctx.txNonce.initRandom();
-      ctx.rxNonce.initRandom();
-      ctx.haveKeys = true;
-      ctx.suite = CipherSuite::XChaCha20Poly1305;
+      const auto tx_ready = ctx.txNonce.init_random();
+      if (tx_ready.ok)
+      {
+        ctx.haveKeys = true;
+        ctx.suite = CipherSuite::XChaCha20Poly1305;
+      }
     }
 #else
     (void)keys;
@@ -571,19 +684,20 @@ public:
     return ctx;
   }
 
-  static CryptoContext fromServer(const SessionKeys& keys)
+  static CryptoContext from_server(const SessionKeys& keys)
   {
     CryptoContext ctx;
 #if SOCKETWIRE_HAVE_LIBSODIUM
     if (keys.valid())
     {
-      // libsodium docs: crypto_kx_server_session_keys: server uses rx to receive, tx to send (same mapping)
       ctx.keyRx = keys.rx;
       ctx.keyTx = keys.tx;
-      ctx.txNonce.initRandom();
-      ctx.rxNonce.initRandom();
-      ctx.haveKeys = true;
-      ctx.suite = CipherSuite::XChaCha20Poly1305;
+      const auto tx_ready = ctx.txNonce.init_random();
+      if (tx_ready.ok)
+      {
+        ctx.haveKeys = true;
+        ctx.suite = CipherSuite::XChaCha20Poly1305;
+      }
     }
 #else
     (void)keys;
@@ -592,39 +706,34 @@ public:
   }
 
 private:
-  [[maybe_unused]] CipherSuite suite = CipherSuite::None;
-  [[maybe_unused]] bool haveKeys = false;
-#if SOCKETWIRE_HAVE_LIBSODIUM
-  std::array<unsigned char, crypto_kx_SESSIONKEYBYTES> keyRx{};
-  std::array<unsigned char, crypto_kx_SESSIONKEYBYTES> keyTx{};
-#else
-  [[maybe_unused]] std::array<unsigned char, 32> keyRx{};
-  [[maybe_unused]] std::array<unsigned char, 32> keyTx{};
-#endif
-  [[maybe_unused]] NonceGenerator txNonce{};
-  [[maybe_unused]] NonceGenerator rxNonce{}; // reserved for future (e.g., verifying remote nonce space)
+  CipherSuite suite = CipherSuite::None;
+  bool haveKeys = false;
+  [[maybe_unused]] SessionKey keyRx{};
+  [[maybe_unused]] SessionKey keyTx{};
+  NonceGenerator txNonce{};
+  std::deque<Nonce> receivedNonces{};
 
-  static void encodeLE64(std::uint64_t v, unsigned char out[8])
+  [[nodiscard]] bool nonce_seen(const Nonce& nonce) const
+  {
+    return std::find(receivedNonces.begin(), receivedNonces.end(), nonce) != receivedNonces.end();
+  }
+
+  void remember_nonce(const Nonce& nonce)
+  {
+    receivedNonces.push_back(nonce);
+    while (receivedNonces.size() > k_replay_window_size)
+      receivedNonces.pop_front();
+  }
+
+  static void encode_le64(std::uint64_t v, unsigned char out[8])
   {
     for (int i = 0; i < 8; ++i)
     {
-      out[i] = static_cast<unsigned char>(v & 0xFF);
+      out[i] = static_cast<unsigned char>(v & 0xFFu);
       v >>= 8;
     }
   }
 };
-
-// Implementations that depend on HandshakeState (declared earlier)
-// (defined in crypto.cpp)
-
-// Initialization
-Result initialize();
-
-/* Helper: report suite availability */
-bool cipherSuiteSupported(CipherSuite s);
-
-// Optional Utility: Identity Signature
-// Placeholder: In future, we can use Ed25519 for identity signatures.
 
 struct IdentitySignature
 {

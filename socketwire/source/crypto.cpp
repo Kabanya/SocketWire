@@ -3,14 +3,14 @@
 namespace socketwire::crypto
 {
 
-CryptoContext HandshakeState::createClientCryptoContext() const
+CryptoContext HandshakeState::create_client_crypto_context() const
 {
-  return CryptoContext::fromClient(session);
+  return CryptoContext::from_client(session);
 }
 
-CryptoContext HandshakeState::createServerCryptoContext() const
+CryptoContext HandshakeState::create_server_crypto_context() const
 {
-  return CryptoContext::fromServer(session);
+  return CryptoContext::from_server(session);
 }
 
 Result initialize()
@@ -24,7 +24,7 @@ Result initialize()
 #endif
 }
 
-bool cipherSuiteSupported(CipherSuite s)
+bool cipher_suite_supported(CipherSuite s)
 {
 #if SOCKETWIRE_HAVE_LIBSODIUM
   return s == CipherSuite::XChaCha20Poly1305;
@@ -49,6 +49,8 @@ const char* to_string(CryptoError error) noexcept
     case CryptoError::SequenceExpired: return "SequenceExpired";
     case CryptoError::DecryptFailed: return "DecryptFailed";
     case CryptoError::NotReady: return "NotReady";
+    case CryptoError::InvalidPeerKey: return "InvalidPeerKey";
+    case CryptoError::ReplayDetected: return "ReplayDetected";
     default: return "Unknown";
   }
 }

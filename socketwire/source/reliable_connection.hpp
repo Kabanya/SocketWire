@@ -13,6 +13,7 @@
 
 #include "i_socket.hpp"
 #include "bit_stream.hpp"
+#include "crypto.hpp"
 #include <cstdint>
 #include <vector>
 #include <deque>
@@ -55,6 +56,13 @@ enum class ConnectionState : std::uint8_t
 // Configuration for reliable connection
 struct ReliableConnectionConfig
 {
+  struct CryptoConfig
+  {
+    bool enabled = false;
+    crypto::KeyPair localKeyPair{};
+    crypto::PublicKey expected_server_public_key{};
+  };
+
   std::uint32_t maxRetries = 10;
   std::uint32_t retryTimeoutMs = 100;
   std::uint32_t pingIntervalMs = 1000;
@@ -69,6 +77,7 @@ struct ReliableConnectionConfig
   /// When > 0, enables AIMD congestion avoidance: window halves on packet loss,
   /// grows by 1 per ACK up to this maximum.
   std::uint32_t sendWindowSize = 0;
+  CryptoConfig crypto{};
 };
 
 // Pending packet waiting for acknowledgment
@@ -131,10 +140,11 @@ public:
   ~ReliableConnection();
 
   // Connection management
-  void connect(const SocketAddress& addr, std::uint16_t port);
+  bool connect(const SocketAddress& addr, std::uint16_t port);
   void disconnect();
   bool isConnected() const { return state == ConnectionState::Connected; }
   ConnectionState getState() const { return state; }
+  bool isCryptoReady() const { return cryptoReady; }
 
   // Set remote address (for server-side connections that start connected)
   void setRemoteAddress(const SocketAddress& addr, std::uint16_t port);
@@ -221,8 +231,13 @@ private:
   /// Incomplete fragment groups indexed by [channel][groupId]
   std::vector<std::unordered_map<std::uint16_t, FragmentGroup>> fragmentGroups;
 
+  // Optional secure transport state
+  crypto::HandshakeState cryptoHandshake{};
+  crypto::CryptoContext cryptoContext{};
+  bool cryptoReady = false;
+
   // Internal methods
-  void sendPacket(PacketType type, std::uint8_t channel,
+  bool sendPacket(PacketType type, std::uint8_t channel,
                  const void* data, std::size_t size,
                  std::uint32_t sequence = 0);
   /// Split a large payload into Fragment packets and enqueue each for reliable delivery.
@@ -234,6 +249,11 @@ private:
   void checkTimeout();
   /// Discard fragment groups that have been waiting longer than fragmentTimeoutMs.
   void cleanupFragments();
+  bool secureMode() const { return config.crypto.enabled; }
+  bool canUseCrypto() const;
+  bool shouldEncryptPacket(PacketType type) const;
+  std::size_t cryptoEnvelopeOverhead() const;
+  std::size_t maxPayloadForPacket(std::size_t headerExtra = 0) const;
 
   bool isDuplicateSequence(std::uint8_t channel, std::uint32_t seq) const;
   void markSequenceReceived(std::uint8_t channel, std::uint32_t seq);

@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <algorithm>
+#include <array>
 #include <limits>
 
 
@@ -9,11 +10,23 @@ namespace socketwire
 {
 
 // ---------------------------------- Helpers ----------------------------------
+static constexpr std::size_t kPacketHeaderSize = 6;
+
 static void writePacketHeader(BitStream& bs, PacketType type, std::uint8_t channel, std::uint32_t sequence)
 {
   bs.write<std::uint8_t>(static_cast<std::uint8_t>(type));
   bs.write<std::uint8_t>(channel);
   bs.write<std::uint32_t>(sequence);
+}
+
+static std::array<std::uint8_t, kPacketHeaderSize>
+makePacketHeaderData(PacketType type, std::uint8_t channel, std::uint32_t sequence)
+{
+  std::array<std::uint8_t, kPacketHeaderSize> header{};
+  header[0] = static_cast<std::uint8_t>(type);
+  header[1] = channel;
+  std::memcpy(header.data() + 2, &sequence, sizeof(sequence));
+  return header;
 }
 
 // Helper to read packet header
@@ -56,21 +69,55 @@ ReliableConnection::ReliableConnection(ISocket* socket, const ReliableConnection
   lastPingTime = std::chrono::steady_clock::now();
 }
 
-void ReliableConnection::connect(const SocketAddress& addr, std::uint16_t port)
+bool ReliableConnection::connect(const SocketAddress& addr, std::uint16_t port)
 {
   remoteAddr = addr;
   remotePort = port;
+
+  if (secureMode())
+  {
+    if (!canUseCrypto() || !crypto::valid_public_key(config.crypto.expected_server_public_key))
+    {
+      state = ConnectionState::Disconnected;
+      return false;
+    }
+
+    auto result = cryptoHandshake.start_client(config.crypto.localKeyPair,
+                                             config.crypto.expected_server_public_key);
+    if (!result.ok)
+    {
+      state = ConnectionState::Disconnected;
+      return false;
+    }
+
+    BitStream clientHello;
+    result = cryptoHandshake.write_client_hello(clientHello);
+    if (!result.ok)
+    {
+      state = ConnectionState::Disconnected;
+      return false;
+    }
+
+    state = ConnectionState::Connecting;
+    if (!sendPacket(PacketType::Connect, 0, clientHello.getData(), clientHello.getSizeBytes()))
+    {
+      state = ConnectionState::Disconnected;
+      return false;
+    }
+    return true;
+  }
+
   state = ConnectionState::Connecting;
 
   // Send connection request
-  sendPacket(PacketType::Connect, 0, nullptr, 0);
+  return sendPacket(PacketType::Connect, 0, nullptr, 0);
 }
 
 void ReliableConnection::disconnect()
 {
   if (state == ConnectionState::Connected || state == ConnectionState::Connecting)
   {
-    sendPacket(PacketType::Disconnect, 0, nullptr, 0);
+    (void)sendPacket(PacketType::Disconnect, 0, nullptr, 0);
     state = ConnectionState::Disconnecting;
 
     if (eventHandler != nullptr)
@@ -100,25 +147,31 @@ bool ReliableConnection::sendReliable(const std::uint8_t channel, const void* da
   if (currentSendWindow > 0 && pendingPackets.size() >= currentSendWindow)
     return false; // window full — caller must retry later
 
-  // Maximum payload for a single Reliable packet (subtract base 6-byte header)
-  const std::size_t maxPayload = (config.maxPacketSize > 6) ? (config.maxPacketSize - 6) : 512;
+  const std::size_t maxPayload = maxPayloadForPacket();
+
+  if (maxPayload == 0)
+    return false;
 
   if (size > maxPayload)
   {
-    // Too large for one packet — split into Fragment packets
+    // Too large for one packet, split into Fragment packets.
     if (channel >= nextFragmentGroupId.size())
       return false;
     return sendFragmented(channel, data, size);
   }
 
   std::uint32_t seq = getNextSequence(channel);
-  sendPacket(PacketType::Reliable, channel, data, size, seq);
+  if (!sendPacket(PacketType::Reliable, channel, data, size, seq))
+    return false;
 
   // Store for retransmission
   PendingPacket pending;
   pending.sequence = seq;
-  pending.data.assign(static_cast<const std::uint8_t*>(data),
-  static_cast<const std::uint8_t*>(data) + size);
+  if (data != nullptr && size > 0)
+  {
+    pending.data.assign(static_cast<const std::uint8_t*>(data),
+                        static_cast<const std::uint8_t*>(data) + size);
+  }
   pending.sendTime = std::chrono::steady_clock::now();
   pending.channel = channel;
   pending.type = PacketType::Reliable;
@@ -132,10 +185,12 @@ bool ReliableConnection::sendUnreliable(const std::uint8_t channel, const void* 
   if (state != ConnectionState::Connected)
     return false;
 
-  if (size > config.maxPacketSize)
+  const std::size_t maxPayload = maxPayloadForPacket();
+  if (maxPayload == 0 || size > maxPayload)
     return false;
 
-  sendPacket(PacketType::Unreliable, channel, data, size, 0);
+  if (!sendPacket(PacketType::Unreliable, channel, data, size, 0))
+    return false;
   return true;
 }
 
@@ -144,17 +199,22 @@ bool ReliableConnection::sendUnsequenced(const std::uint8_t channel, const void*
   if (state != ConnectionState::Connected)
     return false;
 
-  if (size > config.maxPacketSize)
+  const std::size_t maxPayload = maxPayloadForPacket();
+  if (maxPayload == 0 || size > maxPayload)
     return false;
 
   std::uint32_t seq = getNextSequence(channel);
-  sendPacket(PacketType::Unsequenced, channel, data, size, seq);
+  if (!sendPacket(PacketType::Unsequenced, channel, data, size, seq))
+    return false;
 
   // Store for retransmission but don't require ordering
   PendingPacket pending;
   pending.sequence = seq;
-  pending.data.assign(static_cast<const std::uint8_t*>(data),
-                     static_cast<const std::uint8_t*>(data) + size);
+  if (data != nullptr && size > 0)
+  {
+    pending.data.assign(static_cast<const std::uint8_t*>(data),
+                        static_cast<const std::uint8_t*>(data) + size);
+  }
   pending.sendTime = std::chrono::steady_clock::now();
   pending.channel = channel;
   pending.type = PacketType::Unsequenced;
@@ -208,10 +268,11 @@ void ReliableConnection::update()
 void ReliableConnection::processPacket(const void* data, std::size_t size,
                                       const SocketAddress& from, std::uint16_t fromPort)
 {
-  if (size < 6) // Minimum packet size (type + channel + sequence)
+  if (size < kPacketHeaderSize)
     return;
 
-  BitStream bs(static_cast<const std::uint8_t*>(data), size);
+  const auto* packetData = static_cast<const std::uint8_t*>(data);
+  BitStream bs(packetData, size);
 
   PacketType type;
   std::uint8_t channel;
@@ -219,6 +280,28 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
 
   if (!readPacketHeader(bs, type, channel, sequence))
     return;
+
+  auto headerData = makePacketHeaderData(type, channel, sequence);
+  const std::uint8_t* payloadData = packetData + kPacketHeaderSize;
+  std::size_t payloadSize = size - kPacketHeaderSize;
+  BitStream decryptedPayload;
+
+  if (secureMode() && type != PacketType::Connect && type != PacketType::Accept)
+  {
+    if (!cryptoReady)
+      return;
+
+    const auto decryptResult = cryptoContext.decrypt(payloadData,
+                                                     payloadSize,
+                                                     headerData.data(),
+                                                     headerData.size(),
+                                                     decryptedPayload);
+    if (!decryptResult.ok)
+      return;
+
+    payloadData = decryptedPayload.getData();
+    payloadSize = decryptedPayload.getSizeBytes();
+  }
 
   lastReceiveTime = std::chrono::steady_clock::now();
   statsReceivedPackets++;
@@ -232,10 +315,48 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
       {
         remoteAddr = from;
         remotePort = fromPort;
-        state = ConnectionState::Connected;
 
-        // Send accept
-        sendPacket(PacketType::Accept, 0, nullptr, 0);
+        if (secureMode())
+        {
+          if (!canUseCrypto())
+            return;
+
+          auto result = cryptoHandshake.start_server(config.crypto.localKeyPair);
+          if (!result.ok)
+            return;
+
+          result = cryptoHandshake.process_client_hello(payloadData, payloadSize);
+          if (!result.ok)
+          {
+            state = ConnectionState::Disconnected;
+            return;
+          }
+
+          cryptoContext = cryptoHandshake.create_server_crypto_context();
+          cryptoReady = cryptoContext.is_ready();
+          if (!cryptoReady)
+          {
+            state = ConnectionState::Disconnected;
+            return;
+          }
+
+          BitStream serverHello;
+          result = cryptoHandshake.write_server_hello(serverHello);
+          if (!result.ok)
+          {
+            cryptoReady = false;
+            state = ConnectionState::Disconnected;
+            return;
+          }
+
+          state = ConnectionState::Connected;
+          (void)sendPacket(PacketType::Accept, 0, serverHello.getData(), serverHello.getSizeBytes());
+        }
+        else
+        {
+          state = ConnectionState::Connected;
+          (void)sendPacket(PacketType::Accept, 0, nullptr, 0);
+        }
 
         if (eventHandler != nullptr)
           eventHandler->onConnected();
@@ -247,6 +368,25 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
     {
       if (state == ConnectionState::Connecting)
       {
+        if (secureMode())
+        {
+          auto result = cryptoHandshake.process_server_hello(payloadData, payloadSize);
+          if (!result.ok)
+          {
+            cryptoReady = false;
+            state = ConnectionState::Disconnected;
+            return;
+          }
+
+          cryptoContext = cryptoHandshake.create_client_crypto_context();
+          cryptoReady = cryptoContext.is_ready();
+          if (!cryptoReady)
+          {
+            state = ConnectionState::Disconnected;
+            return;
+          }
+        }
+
         state = ConnectionState::Connected;
 
         if (eventHandler != nullptr)
@@ -267,7 +407,7 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
     case PacketType::Ping:
     {
       // Send pong with same sequence
-      sendPacket(PacketType::Pong, 0, nullptr, 0, sequence);
+      (void)sendPacket(PacketType::Pong, 0, nullptr, 0, sequence);
       break;
     }
 
@@ -315,10 +455,9 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
 
       markSequenceReceived(channel, sequence);
 
-      // Read payload
-      std::size_t payloadSize = size - 6; // subtract header
       std::vector<std::uint8_t> payload(payloadSize);
-      bs.readBytes(payload.data(), payloadSize);
+      if (payloadSize > 0)
+        std::memcpy(payload.data(), payloadData, payloadSize);
 
       // Store for ordered processing
       ReceivedPacket received;
@@ -342,10 +481,9 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
 
       markSequenceReceived(channel, sequence);
 
-      // Process immediately (no ordering required)
-      std::size_t payloadSize = size - 6;
       std::vector<std::uint8_t> payload(payloadSize);
-      bs.readBytes(payload.data(), payloadSize);
+      if (payloadSize > 0)
+        std::memcpy(payload.data(), payloadData, payloadSize);
 
       if (eventHandler != nullptr)
         eventHandler->onReliableReceived(channel, payload.data(), payload.size());
@@ -356,9 +494,9 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
     case PacketType::Unreliable:
     {
       // No ACK needed
-      std::size_t payloadSize = size - 6;
       std::vector<std::uint8_t> payload(payloadSize);
-      bs.readBytes(payload.data(), payloadSize);
+      if (payloadSize > 0)
+        std::memcpy(payload.data(), payloadData, payloadSize);
 
       if (eventHandler != nullptr)
         eventHandler->onUnreliableReceived(channel, payload.data(), payload.size());
@@ -378,18 +516,19 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
       // Fragment metadata is embedded in the payload after the base header:
       // [groupId:2][fragIndex:2][fragTotal:2][data...]
       static constexpr std::size_t kFragMeta = 6;
-      if (size < 6 + kFragMeta)
+      if (payloadSize < kFragMeta)
         break;
 
+      BitStream fragBs(payloadData, payloadSize);
       std::uint16_t groupId = 0, fragIndex = 0, fragTotal = 0;
-      bs.readBytes(&groupId, 2);
-      bs.readBytes(&fragIndex, 2);
-      bs.readBytes(&fragTotal, 2);
+      fragBs.readBytes(&groupId, 2);
+      fragBs.readBytes(&fragIndex, 2);
+      fragBs.readBytes(&fragTotal, 2);
 
-      const std::size_t payloadSize = size - 6 - kFragMeta;
-      std::vector<std::uint8_t> payload(payloadSize);
-      if (payloadSize > 0)
-        bs.readBytes(payload.data(), payloadSize);
+      const std::size_t fragmentPayloadSize = payloadSize - kFragMeta;
+      std::vector<std::uint8_t> payload(fragmentPayloadSize);
+      if (fragmentPayloadSize > 0)
+        fragBs.readBytes(payload.data(), fragmentPayloadSize);
 
       if (channel >= fragmentGroups.size() || fragTotal == 0 || fragIndex >= fragTotal)
         break;
@@ -417,7 +556,7 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
       {
         // All fragments received — reassemble and deliver
         std::vector<std::uint8_t> full;
-        full.reserve(fg.total * payloadSize + payloadSize);
+        full.reserve(fg.total * fragmentPayloadSize + fragmentPayloadSize);
         for (auto& piece : fg.pieces)
           if (piece.has_value())
             full.insert(full.end(), piece->begin(), piece->end());
@@ -438,19 +577,36 @@ void ReliableConnection::processPacket(const void* data, std::size_t size,
   }
 }
 
-void ReliableConnection::sendPacket(PacketType type, std::uint8_t channel,
+bool ReliableConnection::sendPacket(PacketType type, std::uint8_t channel,
                                    const void* data, std::size_t size,
                                    std::uint32_t sequence)
 {
   BitStream bs;
   writePacketHeader(bs, type, channel, sequence);
 
-  if (data != nullptr && size > 0)
+  if (shouldEncryptPacket(type))
+  {
+    const auto headerData = makePacketHeaderData(type, channel, sequence);
+    BitStream encrypted;
+    const auto* payload = static_cast<const std::uint8_t*>(data);
+    const auto result = cryptoContext.encrypt(payload,
+                                              size,
+                                              headerData.data(),
+                                              headerData.size(),
+                                              encrypted);
+    if (!result.ok)
+      return false;
+    bs.writeBytes(encrypted.getData(), encrypted.getSizeBytes());
+  }
+  else if (data != nullptr && size > 0)
+  {
     bs.writeBytes(data, size);
+  }
 
   socket->sendTo(bs.getData(), bs.getSizeBytes(), remoteAddr, remotePort);
   lastSendTime = std::chrono::steady_clock::now();
   statsSentPackets++;
+  return true;
 }
 
 bool ReliableConnection::sendFragmented(std::uint8_t channel, const void* data, std::size_t size)
@@ -458,8 +614,9 @@ bool ReliableConnection::sendFragmented(std::uint8_t channel, const void* data, 
   if (channel >= nextFragmentGroupId.size())
     return false;
 
-  // Max payload per fragment: maxPacketSize − base header (6) − frag metadata (6)
-  const std::size_t maxFragPayload = (config.maxPacketSize > 12) ? (config.maxPacketSize - 12) : 64;
+  const std::size_t maxFragPayload = maxPayloadForPacket(kFragmentHeaderExtra);
+  if (maxFragPayload == 0)
+    return false;
   const std::size_t fragTotalSize = (size + maxFragPayload - 1) / maxFragPayload;
   if (fragTotalSize > std::numeric_limits<std::uint16_t>::max())
     return false;
@@ -481,7 +638,8 @@ bool ReliableConnection::sendFragmented(std::uint8_t channel, const void* data, 
     std::memcpy(fragPayload.data() + 6, src + offset, fragSize);
 
     const std::uint32_t seq = getNextSequence(channel);
-    sendPacket(PacketType::Fragment, channel, fragPayload.data(), fragPayload.size(), seq);
+    if (!sendPacket(PacketType::Fragment, channel, fragPayload.data(), fragPayload.size(), seq))
+      return false;
 
     // Store for retransmission
     PendingPacket pending;
@@ -510,15 +668,48 @@ void ReliableConnection::cleanupFragments()
   }
 }
 
+bool ReliableConnection::canUseCrypto() const
+{
+  if (!secureMode())
+    return true;
+
+  const auto initResult = crypto::initialize();
+  return initResult.ok &&
+         crypto::cipher_suite_supported(crypto::CipherSuite::XChaCha20Poly1305) &&
+         config.crypto.localKeyPair.valid();
+}
+
+bool ReliableConnection::shouldEncryptPacket(PacketType type) const
+{
+  return secureMode() &&
+         cryptoReady &&
+         type != PacketType::Connect &&
+         type != PacketType::Accept;
+}
+
+std::size_t ReliableConnection::cryptoEnvelopeOverhead() const
+{
+  return secureMode() ? (crypto::k_nonce_size + crypto::k_mac_size) : 0;
+}
+
+std::size_t ReliableConnection::maxPayloadForPacket(std::size_t headerExtra) const
+{
+  const std::size_t overhead = kPacketHeaderSize + headerExtra + cryptoEnvelopeOverhead();
+  if (config.maxPacketSize < overhead)
+    return 0;
+  return config.maxPacketSize - overhead;
+}
+
 void ReliableConnection::sendAck(std::uint32_t sequence)
 {
-  sendPacket(PacketType::Ack, 0, nullptr, 0, sequence);
+  (void)sendPacket(PacketType::Ack, 0, nullptr, 0, sequence);
 }
 
 void ReliableConnection::sendPing()
 {
   std::uint32_t seq = getNextSequence(0);
-  sendPacket(PacketType::Ping, 0, nullptr, 0, seq);
+  if (!sendPacket(PacketType::Ping, 0, nullptr, 0, seq))
+    return;
 
   // Store as pending to measure RTT
   PendingPacket pending;
@@ -571,18 +762,12 @@ void ReliableConnection::retryPendingPackets()
         continue;
       }
 
-      // Resend
-      BitStream bs;
-      writePacketHeader(bs, pending.type, pending.channel, pending.sequence);
-
-      if (!pending.data.empty())
-        bs.writeBytes(pending.data.data(), pending.data.size());
-
-      socket->sendTo(bs.getData(), bs.getSizeBytes(), remoteAddr, remotePort);
-
-      pending.sendTime = now;
-      pending.retries++;
-      statsSentPackets++;
+      const void* payload = pending.data.empty() ? nullptr : pending.data.data();
+      if (sendPacket(pending.type, pending.channel, payload, pending.data.size(), pending.sequence))
+      {
+        pending.sendTime = now;
+        pending.retries++;
+      }
     }
   }
 
@@ -725,7 +910,11 @@ void ConnectionManager::processPacket(const void* data, std::size_t size,
 
   RemoteClient* client = findOrCreateClient(from, fromPort);
   if (client != nullptr && client->connection != nullptr)
+  {
     client->connection->processPacket(data, size, from, fromPort);
+    if (!isKnown && client->connection->getState() == ConnectionState::Disconnected)
+      removeClient(client);
+  }
 }
 
 bool ConnectionManager::handshakeAllowed()
