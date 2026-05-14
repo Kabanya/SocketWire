@@ -26,6 +26,36 @@ using socketwire::SocketType;
 
 namespace {
 
+constexpr std::uint8_t kDeadlineHeaderFlag = 0x80;
+constexpr std::uint8_t kPacketTypeMask = 0x7F;
+constexpr std::size_t kBaseHeaderSize = 6;
+constexpr std::size_t kDeadlineHeaderSize = 16;
+
+std::uint32_t ReadU32(const std::vector<std::uint8_t>& data,
+                      std::size_t offset) {
+  std::uint32_t value = 0;
+  std::memcpy(&value, data.data() + offset, sizeof(value));
+  return value;
+}
+
+std::vector<std::uint8_t> MakeDeadlinePacket(
+    PacketType type, std::uint8_t channel, std::uint32_t sequence,
+    std::uint32_t deadline_ms, std::uint32_t age_ms_at_send,
+    const void* payload = nullptr, std::size_t payload_size = 0) {
+  BitStream bs;
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(type) | kDeadlineHeaderFlag);
+  bs.Write<std::uint8_t>(channel);
+  bs.Write<std::uint32_t>(sequence);
+  bs.Write<std::uint8_t>(1);  // extensionVersion
+  bs.Write<std::uint8_t>(0);  // extensionFlags
+  bs.Write<std::uint32_t>(deadline_ms);
+  bs.Write<std::uint32_t>(age_ms_at_send);
+  if (payload != nullptr && payload_size > 0) {
+    bs.WriteBytes(payload, payload_size);
+  }
+  return {bs.GetData(), bs.GetData() + bs.GetSizeBytes()};
+}
+
 // Mock socket for testing
 class MockSocket : public ISocket {
  public:
@@ -683,6 +713,193 @@ TEST_F(ReliableConnectionTest, MultipleChannels) {
   EXPECT_EQ(channel1, 1);
 }
 
+TEST_F(ReliableConnectionTest, LegacySendUsesBaseHeader) {
+  ReliableConnection conn(&socket, config);
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
+
+  socket.ClearSent();
+  ASSERT_TRUE(conn.SendUnreliable(0, "abc", 3));
+
+  ASSERT_EQ(socket.sentPackets.size(), 1u);
+  const auto& packet = socket.sentPackets.at(0).data;
+  ASSERT_EQ(packet.size(), kBaseHeaderSize + 3u);
+  EXPECT_EQ(packet.at(0), static_cast<std::uint8_t>(PacketType::kUnreliable));
+  EXPECT_EQ(packet.at(1), 0);
+  EXPECT_EQ(std::string(packet.begin() + static_cast<std::ptrdiff_t>(kBaseHeaderSize),
+                        packet.end()),
+            "abc");
+}
+
+TEST_F(ReliableConnectionTest, DeadlineSendDisabledIsRejected) {
+  ReliableConnection conn(&socket, config);
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
+
+  socket.ClearSent();
+  EXPECT_FALSE(conn.SendReliableWithDeadline(0, "abc", 3, 50));
+  EXPECT_FALSE(conn.SendUnreliableWithDeadline(0, "abc", 3, 50));
+  EXPECT_FALSE(conn.SendUnsequencedWithDeadline(0, "abc", 3, 50));
+  EXPECT_EQ(socket.GetSentCount(), 0u);
+}
+
+TEST_F(ReliableConnectionTest, DeadlineSendWritesExtendedHeader) {
+  config.deadlinesEnabled = true;
+  ReliableConnection conn(&socket, config);
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
+
+  socket.ClearSent();
+  ASSERT_TRUE(conn.SendUnreliableWithDeadline(1, "xyz", 3, 75));
+
+  ASSERT_EQ(socket.sentPackets.size(), 1u);
+  const auto& packet = socket.sentPackets.at(0).data;
+  ASSERT_EQ(packet.size(), kDeadlineHeaderSize + 3u);
+  EXPECT_EQ(packet.at(0) & kPacketTypeMask,
+            static_cast<std::uint8_t>(PacketType::kUnreliable));
+  EXPECT_NE(packet.at(0) & kDeadlineHeaderFlag, 0);
+  EXPECT_EQ(packet.at(1), 1);
+  EXPECT_EQ(ReadU32(packet, 2), 0u);
+  EXPECT_EQ(packet.at(6), 1);
+  EXPECT_EQ(packet.at(7), 0);
+  EXPECT_EQ(ReadU32(packet, 8), 75u);
+  EXPECT_LE(ReadU32(packet, 12), 75u);
+  EXPECT_EQ(std::string(packet.begin() +
+                            static_cast<std::ptrdiff_t>(kDeadlineHeaderSize),
+                        packet.end()),
+            "xyz");
+}
+
+TEST_F(ReliableConnectionTest, ExpiredReliableAndUnsequencedStopRetrying) {
+  config.deadlinesEnabled = true;
+  config.retryTimeoutMs = 5;
+  config.pingIntervalMs = 10000;
+  ReliableConnection conn(&socket, config);
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
+
+  socket.ClearSent();
+  ASSERT_TRUE(conn.SendReliableWithDeadline(0, "rel", 3, 10));
+  ASSERT_TRUE(conn.SendUnsequencedWithDeadline(0, "unq", 3, 10));
+  ASSERT_EQ(conn.GetInflightCount(), 2u);
+  ASSERT_EQ(socket.GetSentCount(), 2u);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  conn.Update();
+
+  EXPECT_EQ(conn.GetInflightCount(), 0u);
+  EXPECT_EQ(socket.GetSentCount(), 2u);
+  EXPECT_EQ(conn.GetDeadlineRetriesPrevented(), 2u);
+  EXPECT_EQ(conn.GetLostPackets(), 0u);
+}
+
+TEST_F(ReliableConnectionTest, ExpiredReliableStyleReceiveIsAckedAndDropped) {
+  config.deadlinesEnabled = true;
+  ReliableConnection conn(&socket, config);
+  conn.SetHandler(&handler);
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
+
+  const auto reliable =
+      MakeDeadlinePacket(PacketType::kReliable, 0, 0, 10, 10, "rel", 3);
+  socket.ClearSent();
+  conn.ProcessPacket(reliable.data(), reliable.size(), addr, 12345);
+  conn.Update();
+
+  ASSERT_EQ(socket.GetSentCount(), 1u);
+  EXPECT_EQ(socket.sentPackets.at(0).data.at(0),
+            static_cast<std::uint8_t>(PacketType::kAck));
+  EXPECT_EQ(ReadU32(socket.sentPackets.at(0).data, 2), 0u);
+  EXPECT_TRUE(handler.reliablePackets.empty());
+
+  const auto unsequenced =
+      MakeDeadlinePacket(PacketType::kUnsequenced, 0, 1, 10, 10, "unq", 3);
+  socket.ClearSent();
+  conn.ProcessPacket(unsequenced.data(), unsequenced.size(), addr, 12345);
+
+  ASSERT_EQ(socket.GetSentCount(), 1u);
+  EXPECT_EQ(socket.sentPackets.at(0).data.at(0),
+            static_cast<std::uint8_t>(PacketType::kAck));
+  EXPECT_EQ(ReadU32(socket.sentPackets.at(0).data, 2), 1u);
+  EXPECT_TRUE(handler.reliablePackets.empty());
+
+  std::uint16_t group_id = 7;
+  std::uint16_t frag_index = 0;
+  std::uint16_t frag_total = 2;
+  std::vector<std::uint8_t> fragment_payload(9);
+  std::memcpy(fragment_payload.data() + 0, &group_id, 2);
+  std::memcpy(fragment_payload.data() + 2, &frag_index, 2);
+  std::memcpy(fragment_payload.data() + 4, &frag_total, 2);
+  std::memcpy(fragment_payload.data() + 6, "abc", 3);
+  const auto fragment = MakeDeadlinePacket(
+      PacketType::kFragment, 0, 2, 10, 10, fragment_payload.data(),
+      fragment_payload.size());
+  socket.ClearSent();
+  conn.ProcessPacket(fragment.data(), fragment.size(), addr, 12345);
+
+  ASSERT_EQ(socket.GetSentCount(), 1u);
+  EXPECT_EQ(socket.sentPackets.at(0).data.at(0),
+            static_cast<std::uint8_t>(PacketType::kAck));
+  EXPECT_EQ(ReadU32(socket.sentPackets.at(0).data, 2), 2u);
+  EXPECT_TRUE(handler.reliablePackets.empty());
+  EXPECT_EQ(conn.GetDeadlineReceiveDrops(), 3u);
+}
+
+TEST_F(ReliableConnectionTest, ExpiredUnreliableReceiveIsDroppedWithoutAck) {
+  config.deadlinesEnabled = true;
+  ReliableConnection conn(&socket, config);
+  conn.SetHandler(&handler);
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
+
+  const auto packet =
+      MakeDeadlinePacket(PacketType::kUnreliable, 0, 0, 10, 10, "abc", 3);
+  socket.ClearSent();
+  conn.ProcessPacket(packet.data(), packet.size(), addr, 12345);
+
+  EXPECT_EQ(socket.GetSentCount(), 0u);
+  EXPECT_TRUE(handler.unreliablePackets.empty());
+  EXPECT_EQ(conn.GetDeadlineReceiveDrops(), 1u);
+}
+
+TEST_F(ReliableConnectionTest, FragmentGroupExpiresByDeadline) {
+  config.deadlinesEnabled = true;
+  config.fragmentTimeoutMs = 10000;
+  config.pingIntervalMs = 10000;
+  ReliableConnection conn(&socket, config);
+  conn.SetHandler(&handler);
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
+
+  std::uint16_t group_id = 3;
+  std::uint16_t frag_index = 0;
+  std::uint16_t frag_total = 2;
+  std::vector<std::uint8_t> fragment_payload(9);
+  std::memcpy(fragment_payload.data() + 0, &group_id, 2);
+  std::memcpy(fragment_payload.data() + 2, &frag_index, 2);
+  std::memcpy(fragment_payload.data() + 4, &frag_total, 2);
+  std::memcpy(fragment_payload.data() + 6, "abc", 3);
+
+  const auto packet = MakeDeadlinePacket(
+      PacketType::kFragment, 0, 0, 20, 0, fragment_payload.data(),
+      fragment_payload.size());
+  conn.ProcessPacket(packet.data(), packet.size(), addr, 12345);
+  ASSERT_EQ(conn.GetDeadlineExpiredFragmentGroups(), 0u);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(35));
+  conn.Update();
+
+  EXPECT_EQ(conn.GetDeadlineExpiredFragmentGroups(), 1u);
+  EXPECT_TRUE(handler.reliablePackets.empty());
+}
+
 // ConnectionManager tests
 class ConnectionManagerTest : public ::testing::Test {
  protected:
@@ -1118,6 +1335,77 @@ TEST_F(ReliableConnectionTest, SecureReliableAndUnreliablePayloadDelivery) {
       client.SendUnreliable(1, unreliable_msg, std::strlen(unreliable_msg)));
   ASSERT_EQ(client_socket.sentPackets.size(), 1u);
   const auto unreliable_packet = client_socket.sentPackets.back();
+  EXPECT_EQ(
+      std::search(unreliable_packet.data.begin(), unreliable_packet.data.end(),
+                  unreliable_msg, unreliable_msg + std::strlen(unreliable_msg)),
+      unreliable_packet.data.end());
+
+  server.ProcessPacket(unreliable_packet.data.data(),
+                       unreliable_packet.data.size(), addr, 23456);
+  ASSERT_EQ(server_handler.unreliablePackets.size(), 1u);
+  EXPECT_EQ(std::string(server_handler.unreliablePackets.at(0).begin(),
+                        server_handler.unreliablePackets.at(0).end()),
+            std::string(unreliable_msg));
+}
+
+TEST_F(ReliableConnectionTest, SecureDeadlinePayloadDelivery) {
+  auto client_keys = socketwire::crypto::KeyPair::Generate();
+  auto server_keys = socketwire::crypto::KeyPair::Generate();
+
+  ReliableConnectionConfig client_cfg = config;
+  client_cfg.crypto.enabled = true;
+  client_cfg.crypto.localKeyPair = client_keys;
+  client_cfg.crypto.expected_server_public_key = server_keys.publicKey;
+  client_cfg.deadlinesEnabled = true;
+
+  ReliableConnectionConfig server_cfg = config;
+  server_cfg.crypto.enabled = true;
+  server_cfg.crypto.localKeyPair = server_keys;
+  server_cfg.deadlinesEnabled = true;
+
+  MockSocket client_socket;
+  MockSocket server_socket;
+  MockEventHandler client_handler;
+  MockEventHandler server_handler;
+  ReliableConnection client(&client_socket, client_cfg);
+  ReliableConnection server(&server_socket, server_cfg);
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
+
+  ASSERT_TRUE(ConnectSecurePair(client, client_socket, client_handler, server,
+                                server_socket, server_handler, addr));
+  client_socket.ClearSent();
+  server_handler.Reset();
+
+  const char* reliable_msg = "secure deadline reliable";
+  ASSERT_TRUE(client.SendReliableWithDeadline(
+      0, reliable_msg, std::strlen(reliable_msg), 100));
+  ASSERT_EQ(client_socket.sentPackets.size(), 1u);
+  const auto reliable_packet = client_socket.sentPackets.back();
+  ASSERT_EQ(reliable_packet.data.at(0) & kPacketTypeMask,
+            static_cast<std::uint8_t>(PacketType::kReliable));
+  ASSERT_NE(reliable_packet.data.at(0) & kDeadlineHeaderFlag, 0);
+  EXPECT_EQ(
+      std::search(reliable_packet.data.begin(), reliable_packet.data.end(),
+                  reliable_msg, reliable_msg + std::strlen(reliable_msg)),
+      reliable_packet.data.end());
+
+  server.ProcessPacket(reliable_packet.data.data(), reliable_packet.data.size(),
+                       addr, 23456);
+  server.Update();
+  ASSERT_EQ(server_handler.reliablePackets.size(), 1u);
+  EXPECT_EQ(std::string(server_handler.reliablePackets.at(0).begin(),
+                        server_handler.reliablePackets.at(0).end()),
+            std::string(reliable_msg));
+
+  client_socket.ClearSent();
+  const char* unreliable_msg = "secure deadline unreliable";
+  ASSERT_TRUE(client.SendUnreliableWithDeadline(
+      1, unreliable_msg, std::strlen(unreliable_msg), 100));
+  ASSERT_EQ(client_socket.sentPackets.size(), 1u);
+  const auto unreliable_packet = client_socket.sentPackets.back();
+  ASSERT_EQ(unreliable_packet.data.at(0) & kPacketTypeMask,
+            static_cast<std::uint8_t>(PacketType::kUnreliable));
+  ASSERT_NE(unreliable_packet.data.at(0) & kDeadlineHeaderFlag, 0);
   EXPECT_EQ(
       std::search(unreliable_packet.data.begin(), unreliable_packet.data.end(),
                   unreliable_msg, unreliable_msg + std::strlen(unreliable_msg)),

@@ -67,6 +67,14 @@ struct ReliableConnectionConfig {
   /// packet loss, grows by 1 per ACK up to this maximum.
   std::uint32_t sendWindowSize = 0;
   CryptoConfig crypto{};
+  /// Enable deadline-aware packets sent through the WithDeadline APIs.
+  bool deadlinesEnabled = false;
+  /// Maximum accepted deadline/TTL in milliseconds for deadline-aware sends.
+  std::uint32_t maxdeadline_ms = 1000;
+  /// ACK expired reliable-style packets so senders stop retransmitting them.
+  bool ackExpiredReliable = true;
+  /// Drop expired deadline-aware packets before delivering to the handler.
+  bool dropExpiredOnReceive = true;
 };
 
 /// Packet waiting for acknowledgment.
@@ -78,6 +86,10 @@ struct PendingPacket {
   std::uint8_t channel = 0;
   PacketType type =
       PacketType::kReliable;  ///< Original type for retransmission
+  std::chrono::steady_clock::time_point createdTime;
+  std::uint32_t deadline_ms = 0;
+  std::chrono::steady_clock::time_point expireTime;
+  bool hasDeadline = false;
 };
 
 /// Received packet queued for ordered delivery.
@@ -94,6 +106,8 @@ struct FragmentGroup {
       pieces;  ///< Indexed by fragmentIndex
   std::uint16_t receivedCount = 0;
   std::chrono::steady_clock::time_point firstReceived;
+  std::chrono::steady_clock::time_point expireTime;
+  bool hasDeadline = false;
   std::uint8_t channel = 0;
 };
 
@@ -147,10 +161,26 @@ class ReliableConnection {
                       std::size_t size);
   bool SendUnsequenced(const std::uint8_t channel, const void* data,
                        std::size_t size);
+  bool SendReliableWithDeadline(const std::uint8_t channel, const void* data,
+                                std::size_t size, std::uint32_t deadline_ms);
+  bool SendUnreliableWithDeadline(const std::uint8_t channel, const void* data,
+                                  std::size_t size, std::uint32_t deadline_ms);
+  bool SendUnsequencedWithDeadline(const std::uint8_t channel, const void* data,
+                                   std::size_t size,
+                                   std::uint32_t deadline_ms);
 
   bool SendReliable(const std::uint8_t channel, const BitStream& stream);
   bool SendUnreliable(const std::uint8_t channel, const BitStream& stream);
   bool SendUnsequenced(const std::uint8_t channel, const BitStream& stream);
+  bool SendReliableWithDeadline(const std::uint8_t channel,
+                                const BitStream& stream,
+                                std::uint32_t deadline_ms);
+  bool SendUnreliableWithDeadline(const std::uint8_t channel,
+                                  const BitStream& stream,
+                                  std::uint32_t deadline_ms);
+  bool SendUnsequencedWithDeadline(const std::uint8_t channel,
+                                   const BitStream& stream,
+                                   std::uint32_t deadline_ms);
 
   /// Processes retransmits, pings, timeouts, and pending ordered packets.
   void Update();
@@ -186,8 +216,27 @@ class ReliableConnection {
   [[nodiscard]] std::uint32_t GetInflightCount() const {
     return static_cast<std::uint32_t>(pending_packets_.size());
   }
+  [[nodiscard]] std::uint32_t GetDeadlineSendDrops() const {
+    return stats_deadline_send_drops_;
+  }
+  [[nodiscard]] std::uint32_t GetDeadlineReceiveDrops() const {
+    return stats_deadline_receive_drops_;
+  }
+  [[nodiscard]] std::uint32_t GetDeadlineRetriesPrevented() const {
+    return stats_deadline_retries_prevented_;
+  }
+  [[nodiscard]] std::uint32_t GetDeadlineExpiredFragmentGroups() const {
+    return stats_deadline_expired_fragment_groups_;
+  }
 
  private:
+  struct DeadlineMetadata {
+    bool hasDeadline = false;
+    std::uint32_t deadline_ms = 0;
+    std::chrono::steady_clock::time_point createdTime;
+    std::chrono::steady_clock::time_point expireTime;
+  };
+
   ISocket* socket_ = nullptr;
   ReliableConnectionConfig config_;
   IReliableConnectionHandler* event_handler_ = nullptr;
@@ -226,6 +275,10 @@ class ReliableConnection {
   std::uint32_t stats_sent_packets_ = 0;
   std::uint32_t stats_received_packets_ = 0;
   std::uint32_t stats_lost_packets_ = 0;
+  std::uint32_t stats_deadline_send_drops_ = 0;
+  std::uint32_t stats_deadline_receive_drops_ = 0;
+  std::uint32_t stats_deadline_retries_prevented_ = 0;
+  std::uint32_t stats_deadline_expired_fragment_groups_ = 0;
 
   // Congestion control (AIMD)
   std::uint32_t current_send_window_ =
@@ -247,11 +300,21 @@ class ReliableConnection {
   bool crypto_ready_ = false;
 
   // Internal methods
+  bool SendReliableInternal(std::uint8_t channel, const void* data,
+                            std::size_t size, std::uint32_t deadline_ms);
+  bool SendUnreliableInternal(std::uint8_t channel, const void* data,
+                              std::size_t size, std::uint32_t deadline_ms);
+  bool SendUnsequencedInternal(std::uint8_t channel, const void* data,
+                               std::size_t size, std::uint32_t deadline_ms);
   bool SendPacket(PacketType type, std::uint8_t channel, const void* data,
                   std::size_t size, std::uint32_t sequence = 0);
+  bool SendPacket(PacketType type, std::uint8_t channel, const void* data,
+                  std::size_t size, std::uint32_t sequence,
+                  const DeadlineMetadata& deadline);
   /// Split a large payload into Fragment packets and enqueue each for reliable
   /// delivery.
-  bool SendFragmented(std::uint8_t channel, const void* data, std::size_t size);
+  bool SendFragmented(std::uint8_t channel, const void* data, std::size_t size,
+                      const DeadlineMetadata& deadline);
   void SendAck(std::uint32_t sequence);
   void SendPing();
   void ProcessPendingReliable();
@@ -265,7 +328,14 @@ class ReliableConnection {
   [[nodiscard]] bool ShouldEncryptPacket(PacketType type) const;
   [[nodiscard]] std::size_t CryptoEnvelopeOverhead() const;
   [[nodiscard]] std::size_t MaxPayloadForPacket(
-      std::size_t header_extra = 0) const;
+      bool has_deadline = false, std::size_t header_extra = 0) const;
+  [[nodiscard]] bool PrepareDeadline(std::uint32_t deadline_ms,
+                                     DeadlineMetadata& deadline) const;
+  [[nodiscard]] static bool DeadlineExpired(
+      const DeadlineMetadata& deadline,
+      std::chrono::steady_clock::time_point now);
+  static void CopyDeadlineToPending(PendingPacket& pending,
+                                    const DeadlineMetadata& deadline);
 
   [[nodiscard]] bool IsDuplicateSequence(std::uint8_t channel,
                                          std::uint32_t seq) const;
