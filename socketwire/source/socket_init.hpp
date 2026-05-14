@@ -11,9 +11,11 @@ void RegisterPosixSocketFactory();
 ///
 /// Safe to call multiple times.
 bool InitializeSockets();
+inline bool initialize_sockets();
 
 /// Shuts down the socket subsystem where explicit cleanup is needed.
 void ShutdownSockets();
+inline void shutdown_sockets();
 
 }  // namespace socketwire
 
@@ -45,5 +47,9 @@ inline void ShutdownSockets() {
   // destructor. On POSIX, no cleanup needed. This function exists for symmetry
   // and explicit cleanup if needed.
 }
+
+inline bool initialize_sockets() { return InitializeSockets(); }
+
+inline void shutdown_sockets() { ShutdownSockets(); }
 
 }  // namespace socketwire

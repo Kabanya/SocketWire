@@ -56,6 +56,34 @@ std::vector<std::uint8_t> MakeDeadlinePacket(
   return {bs.GetData(), bs.GetData() + bs.GetSizeBytes()};
 }
 
+std::vector<std::uint8_t> MakeBasePacket(PacketType type, std::uint8_t channel,
+                                         std::uint32_t sequence,
+                                         const void* payload = nullptr,
+                                         std::size_t payload_size = 0) {
+  BitStream bs;
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(type));
+  bs.Write<std::uint8_t>(channel);
+  bs.Write<std::uint32_t>(sequence);
+  if (payload != nullptr && payload_size > 0) {
+    bs.WriteBytes(payload, payload_size);
+  }
+  return {bs.GetData(), bs.GetData() + bs.GetSizeBytes()};
+}
+
+std::vector<std::uint8_t> MakeBatchPacket(
+    const std::vector<std::vector<std::uint8_t>>& commands) {
+  BitStream bs;
+  bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kBatch));
+  bs.Write<std::uint8_t>(0);
+  bs.Write<std::uint32_t>(0);
+  bs.Write<std::uint16_t>(static_cast<std::uint16_t>(commands.size()));
+  for (const auto& command : commands) {
+    bs.Write<std::uint16_t>(static_cast<std::uint16_t>(command.size()));
+    bs.WriteBytes(command.data(), command.size());
+  }
+  return {bs.GetData(), bs.GetData() + bs.GetSizeBytes()};
+}
+
 // Mock socket for testing
 class MockSocket : public ISocket {
  public:
@@ -342,11 +370,11 @@ TEST_F(ReliableConnectionTest, ReceiveReliablePacket) {
   socket.ClearSent();
   conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
-  // Should send ACK
-  EXPECT_GT(socket.GetSentCount(), 0) << "Should send ACK packet";
-
   // Process packet queue (since it's sequenced)
   conn.Update();
+
+  // Should flush the queued ACK.
+  EXPECT_GT(socket.GetSentCount(), 0) << "Should send ACK packet";
 
   EXPECT_EQ(handler.reliablePackets.size(), 1)
       << "Should receive one reliable packet";
@@ -382,6 +410,95 @@ TEST_F(ReliableConnectionTest, ReceiveUnreliablePacket) {
   const auto& received_data = handler.unreliablePackets.at(0);
   const std::string received_str(received_data.begin(), received_data.end());
   EXPECT_EQ(received_str, std::string(payload));
+}
+
+TEST_F(ReliableConnectionTest, BatchPacketDeliversMultipleCommands) {
+  ReliableConnection conn(&socket, config);
+  conn.SetHandler(&handler);
+
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
+
+  const auto first = MakeBasePacket(PacketType::kUnreliable, 0, 0, "one", 3);
+  const auto second = MakeBasePacket(PacketType::kUnreliable, 0, 0, "two", 3);
+  const auto batch = MakeBatchPacket({first, second});
+
+  conn.ProcessPacket(batch.data(), batch.size(), addr, 12345);
+
+  ASSERT_EQ(handler.unreliablePackets.size(), 2u);
+  EXPECT_EQ(std::string(handler.unreliablePackets.at(0).begin(),
+                        handler.unreliablePackets.at(0).end()),
+            "one");
+  EXPECT_EQ(std::string(handler.unreliablePackets.at(1).begin(),
+                        handler.unreliablePackets.at(1).end()),
+            "two");
+}
+
+TEST_F(ReliableConnectionTest, BatchPacketRejectsMalformedPayload) {
+  ReliableConnection conn(&socket, config);
+  conn.SetHandler(&handler);
+
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
+
+  BitStream malformed;
+  malformed.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kBatch));
+  malformed.Write<std::uint8_t>(0);
+  malformed.Write<std::uint32_t>(0);
+  malformed.Write<std::uint16_t>(2);
+  malformed.Write<std::uint16_t>(kBaseHeaderSize);
+
+  conn.ProcessPacket(malformed.GetData(), malformed.GetSizeBytes(), addr,
+                     12345);
+
+  EXPECT_TRUE(handler.reliablePackets.empty());
+  EXPECT_TRUE(handler.unreliablePackets.empty());
+}
+
+TEST_F(ReliableConnectionTest, AckPiggybacksOnNextApplicationPacket) {
+  ReliableConnection conn(&socket, config);
+  conn.SetHandler(&handler);
+
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
+
+  const auto inbound =
+      MakeBasePacket(PacketType::kReliable, 0, 0, "in", 2);
+  socket.ClearSent();
+  conn.ProcessPacket(inbound.data(), inbound.size(), addr, 12345);
+  ASSERT_EQ(handler.reliablePackets.size(), 1u);
+  EXPECT_EQ(socket.GetSentCount(), 0u);
+
+  ASSERT_TRUE(conn.SendUnreliable(0, "out", 3));
+  ASSERT_EQ(socket.GetSentCount(), 1u);
+
+  const auto& packet = socket.sentPackets.at(0).data;
+  ASSERT_GE(packet.size(), kBaseHeaderSize + sizeof(std::uint16_t));
+  EXPECT_EQ(packet.at(0), static_cast<std::uint8_t>(PacketType::kBatch));
+
+  std::uint16_t command_count = 0;
+  std::memcpy(&command_count, packet.data() + kBaseHeaderSize,
+              sizeof(command_count));
+  ASSERT_EQ(command_count, 2u);
+
+  std::size_t offset = kBaseHeaderSize + sizeof(std::uint16_t);
+  std::uint16_t first_size = 0;
+  std::memcpy(&first_size, packet.data() + offset, sizeof(first_size));
+  offset += sizeof(first_size);
+  ASSERT_GE(first_size, kBaseHeaderSize);
+  EXPECT_EQ(packet.at(offset), static_cast<std::uint8_t>(PacketType::kAck));
+  EXPECT_EQ(ReadU32(packet, offset + 2), 0u);
+
+  offset += first_size;
+  std::uint16_t second_size = 0;
+  std::memcpy(&second_size, packet.data() + offset, sizeof(second_size));
+  offset += sizeof(second_size);
+  ASSERT_GE(second_size, kBaseHeaderSize + 3u);
+  EXPECT_EQ(packet.at(offset),
+            static_cast<std::uint8_t>(PacketType::kUnreliable));
 }
 
 TEST_F(ReliableConnectionTest, PacketSequencing) {
@@ -821,6 +938,7 @@ TEST_F(ReliableConnectionTest, ExpiredReliableStyleReceiveIsAckedAndDropped) {
       MakeDeadlinePacket(PacketType::kUnsequenced, 0, 1, 10, 10, "unq", 3);
   socket.ClearSent();
   conn.ProcessPacket(unsequenced.data(), unsequenced.size(), addr, 12345);
+  conn.Update();
 
   ASSERT_EQ(socket.GetSentCount(), 1u);
   EXPECT_EQ(socket.sentPackets.at(0).data.at(0),
@@ -841,6 +959,7 @@ TEST_F(ReliableConnectionTest, ExpiredReliableStyleReceiveIsAckedAndDropped) {
       fragment_payload.size());
   socket.ClearSent();
   conn.ProcessPacket(fragment.data(), fragment.size(), addr, 12345);
+  conn.Update();
 
   ASSERT_EQ(socket.GetSentCount(), 1u);
   EXPECT_EQ(socket.sentPackets.at(0).data.at(0),

@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <array>
 #include <cassert>
 #include <cerrno>
 #include <cstring>
@@ -54,9 +56,11 @@ class PosixUDPSocket final : public ISocket {
   SocketResult SendTo(const void* data, std::size_t length,
                       const SocketAddress& to_addr,
                       std::uint16_t to_port) override;
+  std::size_t SendMany(std::span<const OutgoingDatagram> datagrams) override;
   SocketResult Receive(void* buffer, std::size_t capacity,
                        SocketAddress& from_addr,
                        std::uint16_t& from_port) override;
+  std::size_t ReceiveMany(std::span<IncomingDatagram> datagrams) override;
   void Poll(ISocketEventHandler* handler) override;
   SocketError SetBlocking(bool enable) override;
   [[nodiscard]] bool IsBlocking() const override;
@@ -200,6 +204,70 @@ SocketResult PosixUDPSocket::SendTo(const void* data, std::size_t length,
   return {.bytes = static_cast<ptrdiff_t>(sent), .error = SocketError::kNone};
 }
 
+std::size_t PosixUDPSocket::SendMany(
+    std::span<const OutgoingDatagram> datagrams) {
+#if defined(__linux__)
+  if (datagrams.empty()) return 0;
+
+  std::size_t sent_count = 0;
+  if (fd_ == -1) {
+    const auto& first = datagrams.front();
+    const SocketResult first_result =
+        SendTo(first.data, first.size, first.toAddr, first.toPort);
+    if (first_result.Failed()) return 0;
+    sent_count = 1;
+    datagrams = datagrams.subspan(1);
+    if (datagrams.empty()) return sent_count;
+  }
+
+  static constexpr std::size_t kMaxBatch = 64;
+  while (!datagrams.empty()) {
+    const std::size_t count = std::min(kMaxBatch, datagrams.size());
+    std::array<mmsghdr, kMaxBatch> messages{};
+    std::array<iovec, kMaxBatch> iovecs{};
+    std::array<sockaddr_storage, kMaxBatch> addresses{};
+    std::array<socklen_t, kMaxBatch> address_lengths{};
+
+    std::size_t prepared = 0;
+    for (; prepared < count; ++prepared) {
+      const auto& datagram = datagrams[prepared];
+      if (datagram.data == nullptr || datagram.size == 0) break;
+      if (fd_ != -1 && datagram.toAddr.isIPv6 && family_ == AF_INET) break;
+      if (datagram.toAddr.isIPv6 && !config_.enableIPv6) break;
+
+      int target_family = AF_UNSPEC;
+      if (!FillSockaddrStorage(datagram.toAddr, datagram.toPort,
+                               family_ == AF_INET6, addresses[prepared],
+                               target_family, address_lengths[prepared])) {
+        break;
+      }
+
+      iovecs[prepared].iov_base = const_cast<void*>(datagram.data);
+      iovecs[prepared].iov_len = datagram.size;
+      messages[prepared].msg_hdr.msg_iov = &iovecs[prepared];
+      messages[prepared].msg_hdr.msg_iovlen = 1;
+      messages[prepared].msg_hdr.msg_name = &addresses[prepared];
+      messages[prepared].msg_hdr.msg_namelen = address_lengths[prepared];
+    }
+
+    if (prepared == 0) break;
+
+    const int sent =
+        ::sendmmsg(fd_, messages.data(), static_cast<unsigned int>(prepared),
+                   0);
+    if (sent == -1) break;
+
+    sent_count += static_cast<std::size_t>(sent);
+    datagrams = datagrams.subspan(static_cast<std::size_t>(sent));
+    if (static_cast<std::size_t>(sent) < prepared) break;
+  }
+
+  return sent_count;
+#else
+  return ISocket::SendMany(datagrams);
+#endif
+}
+
 SocketResult PosixUDPSocket::Receive(void* buffer, std::size_t capacity,
                                      SocketAddress& from_addr,
                                      std::uint16_t& from_port) {
@@ -223,6 +291,61 @@ SocketResult PosixUDPSocket::Receive(void* buffer, std::size_t capacity,
     from_port = 0;
   }
   return {.bytes = got, .error = SocketError::kNone};
+}
+
+std::size_t PosixUDPSocket::ReceiveMany(
+    std::span<IncomingDatagram> datagrams) {
+#if defined(__linux__)
+  if (fd_ == -1 || datagrams.empty()) return 0;
+
+  static constexpr std::size_t kMaxBatch = 64;
+  const std::size_t count = std::min(kMaxBatch, datagrams.size());
+  std::array<mmsghdr, kMaxBatch> messages{};
+  std::array<iovec, kMaxBatch> iovecs{};
+  std::array<sockaddr_storage, kMaxBatch> addresses{};
+
+  std::size_t prepared = 0;
+  for (; prepared < count; ++prepared) {
+    auto& datagram = datagrams[prepared];
+    if (datagram.data == nullptr || datagram.capacity == 0) break;
+    iovecs[prepared].iov_base = datagram.data;
+    iovecs[prepared].iov_len = datagram.capacity;
+    messages[prepared].msg_hdr.msg_iov = &iovecs[prepared];
+    messages[prepared].msg_hdr.msg_iovlen = 1;
+    messages[prepared].msg_hdr.msg_name = &addresses[prepared];
+    messages[prepared].msg_hdr.msg_namelen = sizeof(sockaddr_storage);
+  }
+
+  if (prepared == 0) return 0;
+
+  const int received =
+      ::recvmmsg(fd_, messages.data(), static_cast<unsigned int>(prepared), 0,
+                 nullptr);
+  if (received == -1) return 0;
+
+  for (int i = 0; i < received; ++i) {
+    auto& datagram = datagrams[static_cast<std::size_t>(i)];
+    const auto& addr = addresses[static_cast<std::size_t>(i)];
+    datagram.fromAddr = SocketaddressFromSockaddr(addr);
+    if (addr.ss_family == AF_INET) {
+      datagram.fromPort =
+          ntohs(reinterpret_cast<const sockaddr_in*>(&addr)->sin_port);
+    } else if (addr.ss_family == AF_INET6) {
+      datagram.fromPort =
+          ntohs(reinterpret_cast<const sockaddr_in6*>(&addr)->sin6_port);
+    } else {
+      datagram.fromPort = 0;
+    }
+    datagram.result = {
+        .bytes = static_cast<std::ptrdiff_t>(
+            messages[static_cast<std::size_t>(i)].msg_len),
+        .error = SocketError::kNone};
+  }
+
+  return static_cast<std::size_t>(received);
+#else
+  return ISocket::ReceiveMany(datagrams);
+#endif
 }
 
 void PosixUDPSocket::Poll(ISocketEventHandler* handler) {

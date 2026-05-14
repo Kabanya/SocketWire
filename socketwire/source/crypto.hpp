@@ -54,7 +54,12 @@ using SessionKey = std::array<unsigned char, kSessionKeySize>;
 using Nonce = std::array<unsigned char, kNonceSize>;
 using HandshakeNonce = std::array<unsigned char, kHandshakeNonceSize>;
 
-enum class CipherSuite : std::uint8_t { kNone = 0, kXChaCha20Poly1305 = 1 };
+enum class CipherSuite : std::uint8_t {
+  kNone = 0,
+  kXChaCha20Poly1305 = 1,
+  None = kNone,
+  XChaCha20Poly1305 = kXChaCha20Poly1305
+};
 
 enum class HandshakeOpcode : std::uint8_t {
   kClientHello = 1,
@@ -75,10 +80,26 @@ enum class CryptoError : std::uint8_t {
   kDecryptFailed,
   kNotReady,
   kInvalidPeerKey,
-  kReplayDetected
+  kReplayDetected,
+  None = kNone,
+  NotInitialized = kNotInitialized,
+  UnsupportedSuite = kUnsupportedSuite,
+  InvalidState = kInvalidState,
+  DecodeError = kDecodeError,
+  KeyExchangeFailed = kKeyExchangeFailed,
+  SodiumFailure = kSodiumFailure,
+  BufferTooSmall = kBufferTooSmall,
+  SequenceExpired = kSequenceExpired,
+  DecryptFailed = kDecryptFailed,
+  NotReady = kNotReady,
+  InvalidPeerKey = kInvalidPeerKey,
+  ReplayDetected = kReplayDetected
 };
 
 [[nodiscard]] const char* ToString(CryptoError error) noexcept;
+[[nodiscard]] inline const char* to_string(CryptoError error) noexcept {
+  return ToString(error);
+}
 
 struct Result {
   bool ok;
@@ -90,10 +111,21 @@ struct Result {
   static constexpr Result Failure(CryptoError e) noexcept {
     return {.ok = false, .error = e};
   }
+  static constexpr Result success() noexcept { return Success(); }
+  static constexpr Result failure(CryptoError e) noexcept {
+    return Failure(e);
+  }
+  [[nodiscard]] constexpr explicit operator bool() const noexcept {
+    return ok;
+  }
 };
 
 Result Initialize();
+inline Result initialize() { return Initialize(); }
 bool CipherSuiteSupported(CipherSuite s);
+inline bool cipherSuiteSupported(CipherSuite s) {
+  return CipherSuiteSupported(s);
+}
 
 template <std::size_t n>
 [[nodiscard]] inline bool AllZero(
@@ -117,6 +149,7 @@ struct KeyPair {
   [[nodiscard]] bool Valid() const noexcept {
     return ValidPublicKey(publicKey) && ValidSecretKey(secretKey);
   }
+  [[nodiscard]] bool valid() const noexcept { return Valid(); }
 
   static Result Generate(KeyPair& out) {
 #if SOCKETWIRE_HAVE_LIBSODIUM
@@ -144,6 +177,7 @@ struct KeyPair {
     (void)Generate(kp);
     return kp;
   }
+  static KeyPair generate() { return Generate(); }
 };
 
 struct SessionKeys {
@@ -153,6 +187,7 @@ struct SessionKeys {
   [[nodiscard]] bool Valid() const noexcept {
     return !AllZero(rx) && !AllZero(tx);
   }
+  [[nodiscard]] bool valid() const noexcept { return Valid(); }
 };
 
 struct NonceGenerator {
@@ -335,6 +370,10 @@ class HandshakeState {
     clientHello.clientPub = staticKeys.publicKey;
     return Result::Success();
   }
+  Result startClient(const KeyPair& client_keys,
+                     const PublicKey& expected_server_public_key = {}) {
+    return StartClient(client_keys, expected_server_public_key);
+  }
 
   Result StartServer(const KeyPair& server_keys) {
     Reset();
@@ -345,6 +384,9 @@ class HandshakeState {
       return Result::Failure(CryptoError::kInvalidState);
     }
     return Result::Success();
+  }
+  Result startServer(const KeyPair& server_keys) {
+    return StartServer(server_keys);
   }
 
   Result WriteClientHello(BitStream& out) {
@@ -364,6 +406,7 @@ class HandshakeState {
     if (result.ok) phase = HandshakePhase::kClientHelloSent;
     return result;
   }
+  Result writeClientHello(BitStream& out) { return WriteClientHello(out); }
 
   Result WriteServerHello(BitStream& out) {
     if (role != HandshakeRole::kServer || !staticKeys.Valid() ||
@@ -385,6 +428,7 @@ class HandshakeState {
     if (result.ok) phase = HandshakePhase::kCompleted;
     return result;
   }
+  Result writeServerHello(BitStream& out) { return WriteServerHello(out); }
 
   Result ProcessClientHello(const unsigned char* data, std::size_t len) {
     if (role != HandshakeRole::kServer || !staticKeys.Valid()) {
@@ -413,6 +457,9 @@ class HandshakeState {
     phase = HandshakePhase::Rejected;
     return Result::failure(CryptoError::NotInitialized);
 #endif
+  }
+  bool processClientHello(const unsigned char* data, std::size_t len) {
+    return ProcessClientHello(data, len).ok;
   }
 
   Result ProcessServerHello(const unsigned char* data, std::size_t len) {
@@ -448,10 +495,14 @@ class HandshakeState {
     return Result::failure(CryptoError::NotInitialized);
 #endif
   }
+  bool processServerHello(const unsigned char* data, std::size_t len) {
+    return ProcessServerHello(data, len).ok;
+  }
 
   [[nodiscard]] bool Completed() const noexcept {
     return phase == HandshakePhase::kCompleted && session.Valid();
   }
+  [[nodiscard]] bool completed() const noexcept { return Completed(); }
 
   [[nodiscard]] HandshakeRole GetRole() const noexcept { return role; }
   [[nodiscard]] HandshakePhase GetPhase() const noexcept { return phase; }
@@ -465,6 +516,8 @@ class HandshakeState {
 
   [[nodiscard]] class CryptoContext CreateClientCryptoContext() const;
   [[nodiscard]] class CryptoContext CreateServerCryptoContext() const;
+  [[nodiscard]] class CryptoContext createClientCryptoContext() const;
+  [[nodiscard]] class CryptoContext createServerCryptoContext() const;
 
  private:
   HandshakeRole role = HandshakeRole::kNone;
@@ -517,6 +570,7 @@ class CryptoContext {
   [[nodiscard]] bool IsReady() const noexcept {
     return suite == CipherSuite::kXChaCha20Poly1305 && haveKeys;
   }
+  [[nodiscard]] bool isReady() const noexcept { return IsReady(); }
 
   Result Encrypt(const unsigned char* plain, std::size_t plain_len,
                  const unsigned char* associated_data,
@@ -599,12 +653,20 @@ class CryptoContext {
     EncodeLe64(seq, ad);
     return Encrypt(plain, plain_len, ad, sizeof(ad), out);
   }
+  bool encrypt(std::uint64_t seq, const unsigned char* plain,
+               std::size_t plain_len, BitStream& out) {
+    return Encrypt(seq, plain, plain_len, out).ok;
+  }
 
   Result Decrypt(std::uint64_t seq, const unsigned char* data, std::size_t len,
                  BitStream& out_plain) {
     unsigned char ad[8];
     EncodeLe64(seq, ad);
     return Decrypt(data, len, ad, sizeof(ad), out_plain);
+  }
+  bool decrypt(std::uint64_t seq, const unsigned char* data, std::size_t len,
+               BitStream& out_plain) {
+    return Decrypt(seq, data, len, out_plain).ok;
   }
 
   static CryptoContext FromClient(const SessionKeys& keys) {
@@ -669,6 +731,14 @@ class CryptoContext {
     }
   }
 };
+
+inline CryptoContext HandshakeState::createClientCryptoContext() const {
+  return CreateClientCryptoContext();
+}
+
+inline CryptoContext HandshakeState::createServerCryptoContext() const {
+  return CreateServerCryptoContext();
+}
 
 struct IdentitySignature {
   std::vector<unsigned char> bytes;
