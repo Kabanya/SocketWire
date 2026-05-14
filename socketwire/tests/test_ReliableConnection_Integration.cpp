@@ -9,16 +9,9 @@
 #include "socket_init.hpp"
 
 using namespace std::chrono_literals;
-
-using socketwire::ConnectionManager;
-using socketwire::IReliableConnectionHandler;
-using socketwire::ISocket;
-using socketwire::ReliableConnection;
-using socketwire::ReliableConnectionConfig;
+using namespace socketwire; // NOLINT
 using socketwire::SocketAddress;
-using socketwire::SocketConfig;
-using socketwire::SocketError;
-using socketwire::SocketFactoryRegistry;
+using socketwire::ReliableConnectionConfig;
 
 class IntegrationTest : public ::testing::Test {
  protected:

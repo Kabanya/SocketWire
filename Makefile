@@ -12,8 +12,5 @@ build: configure
 test: build
 	$(CTEST) --test-dir $(BUILD_DIR) --output-on-failure
 
-test-all: build
-	$(BUILD_DIR)/socketwire/tests/SocketWireTests --gtest_also_run_disabled_tests
-
 clean:
 	$(CMAKE) -E rm -rf $(BUILD_DIR)

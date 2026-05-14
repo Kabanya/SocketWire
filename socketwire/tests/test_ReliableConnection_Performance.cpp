@@ -11,20 +11,10 @@
 #include "reliable_connection.hpp"
 #include "socket_init.hpp"
 
-using socketwire::BitStream;
-using socketwire::ConnectionManager;
-using socketwire::IReliableConnectionHandler;
-using socketwire::ISocket;
-using socketwire::ReliableConnection;
+using namespace std::chrono; // NOLINT
+using namespace socketwire; // NOLINT
 using socketwire::SocketAddress;
-using socketwire::SocketConfig;
-using socketwire::SocketError;
-using socketwire::SocketFactoryRegistry;
 
-using std::chrono::duration_cast;
-using std::chrono::high_resolution_clock;
-using std::chrono::microseconds;
-using std::chrono::milliseconds;
 
 class ReliableConnectionPerformanceTest : public ::testing::Test {
  protected:
@@ -75,7 +65,7 @@ class CounterHandler : public IReliableConnectionHandler {
   }
 };
 
-TEST_F(ReliableConnectionPerformanceTest, DISABLED_SmallPacketThroughput) {
+TEST_F(ReliableConnectionPerformanceTest, SmallPacketThroughput) {
   const uint16_t server_port = 16001;
   const int packet_count = 1000;
   const size_t packet_size = 64;  // Small packets
@@ -184,7 +174,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_SmallPacketThroughput) {
   network_thread.join();
 }
 
-TEST_F(ReliableConnectionPerformanceTest, DISABLED_MediumPacketThroughput) {
+TEST_F(ReliableConnectionPerformanceTest, MediumPacketThroughput) {
   const uint16_t server_port = 16002;
   const int packet_count = 500;
   const size_t packet_size = 1024;  // Larger packets
@@ -284,7 +274,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_MediumPacketThroughput) {
   network_thread.join();
 }
 
-TEST_F(ReliableConnectionPerformanceTest, DISABLED_LargePacketThroughput) {
+TEST_F(ReliableConnectionPerformanceTest, LargePacketThroughput) {
   const uint16_t server_port = 16003;
   const int packet_count = 500;
   const size_t packet_size = 128;
@@ -406,7 +396,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_LargePacketThroughput) {
   network_thread.join();
 }
 
-TEST_F(ReliableConnectionPerformanceTest, DISABLED_ConnectionScalability) {
+TEST_F(ReliableConnectionPerformanceTest, ConnectionScalability) {
   const uint16_t server_port = 16004;
   const int num_clients = 10;
   const int messages_per_client = 50;
@@ -528,7 +518,7 @@ TEST_F(ReliableConnectionPerformanceTest, DISABLED_ConnectionScalability) {
 }
 
 TEST_F(ReliableConnectionPerformanceTest,
-       DISABLED_BitStreamSerializationPerformance) {
+       BitStreamSerializationPerformance) {
   const int iterations = 100000;
 
   std::cout << "\n=== BitStream Serialization Performance ===" << "\n";
