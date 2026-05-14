@@ -5,12 +5,14 @@
 /// Provides reliable packet delivery, packet sequencing, connection state
 /// management, keep-alives, and separate reliable/unreliable channels.
 
+#include <array>
 #include <bitset>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -20,6 +22,8 @@
 #include "bit_stream.hpp"
 #include "crypto.hpp"
 #include "i_socket.hpp"
+
+using Clock = std::chrono::steady_clock;
 
 namespace socketwire {
 
@@ -166,8 +170,7 @@ class ReliableConnection {
   bool SendUnreliableWithDeadline(const std::uint8_t channel, const void* data,
                                   std::size_t size, std::uint32_t deadline_ms);
   bool SendUnsequencedWithDeadline(const std::uint8_t channel, const void* data,
-                                   std::size_t size,
-                                   std::uint32_t deadline_ms);
+                                   std::size_t size, std::uint32_t deadline_ms);
 
   bool SendReliable(const std::uint8_t channel, const BitStream& stream);
   bool SendUnreliable(const std::uint8_t channel, const BitStream& stream);
@@ -214,7 +217,7 @@ class ReliableConnection {
   }
   /// Number of reliable packets currently awaiting acknowledgment.
   [[nodiscard]] std::uint32_t GetInflightCount() const {
-    return static_cast<std::uint32_t>(pending_packets_.size());
+    return pending_active_count_;
   }
   [[nodiscard]] std::uint32_t GetDeadlineSendDrops() const {
     return stats_deadline_send_drops_;
@@ -237,6 +240,17 @@ class ReliableConnection {
     std::chrono::steady_clock::time_point expireTime;
   };
 
+  
+  struct PendingHandle {
+    std::size_t index = std::numeric_limits<std::size_t>::max();
+    std::uint32_t generation = 0;
+  };
+  struct PendingSlot {
+    PendingPacket packet;
+    std::uint32_t generation = 0;
+    bool active = false;
+  };
+
   ISocket* socket_ = nullptr;
   ReliableConnectionConfig config_;
   IReliableConnectionHandler* event_handler_ = nullptr;
@@ -245,12 +259,21 @@ class ReliableConnection {
   SocketAddress remote_addr_;
   std::uint16_t remote_port_ = 0;
 
+  std::vector<std::uint8_t> send_buffer_;
+  std::vector<std::uint8_t> receive_buffer_;
+
   // Sequence numbers per channel.
   std::vector<std::uint32_t> send_sequence_;
   std::vector<std::uint32_t> receive_sequence_;
 
   // Pending packets waiting for ACK.
-  std::deque<PendingPacket> pending_packets_;
+  std::vector<PendingSlot> pending_packets_;
+  std::deque<PendingHandle> pending_order_;
+  std::deque<PendingHandle> pending_retry_order_;
+  std::vector<std::size_t> free_pending_slots_;
+  std::unordered_map<std::uint32_t, PendingHandle> pending_by_sequence_;
+  std::unordered_map<std::uint32_t, std::uint32_t> pending_sequence_counts_;
+  std::uint32_t pending_active_count_ = 0;
 
   // Per-channel duplicate detection window with bounded memory.
   static constexpr std::uint32_t kSeqWindowSize = 1024;
@@ -311,18 +334,35 @@ class ReliableConnection {
   bool SendPacket(PacketType type, std::uint8_t channel, const void* data,
                   std::size_t size, std::uint32_t sequence,
                   const DeadlineMetadata& deadline);
+  bool SendPacket(PacketType type, std::uint8_t channel, const void* data,
+                  std::size_t size, std::uint32_t sequence,
+                  const DeadlineMetadata& deadline, Clock::time_point now);
   /// Split a large payload into Fragment packets and enqueue each for reliable
   /// delivery.
   bool SendFragmented(std::uint8_t channel, const void* data, std::size_t size,
                       const DeadlineMetadata& deadline);
   void SendAck(std::uint32_t sequence);
+  void SendAck(std::uint32_t sequence, Clock::time_point now);
   void SendPing();
-  void ProcessPendingReliable();
-  void RetryPendingPackets();
-  void CheckTimeout();
+  void SendPing(Clock::time_point now);
+  void ProcessPendingReliable(Clock::time_point now);
+  void ProcessPendingReliableChannel(std::uint8_t channel,
+                                     Clock::time_point now);
+  void RetryPendingPackets(Clock::time_point now);
+  void CheckTimeout(Clock::time_point now);
   /// Discard fragment groups that have been waiting longer than
   /// fragmentTimeoutMs.
-  void CleanupFragments();
+  void CleanupFragments(Clock::time_point now);
+  PendingHandle AllocatePendingPacket(std::uint32_t sequence);
+  void ResetPendingPacketForReuse(PendingPacket& pending,
+                                  std::uint32_t sequence);
+  void ErasePendingPacket(PendingHandle handle);
+  [[nodiscard]] PendingPacket* GetPendingPacket(PendingHandle handle);
+  [[nodiscard]] const PendingPacket* GetPendingPacket(
+      PendingHandle handle) const;
+  [[nodiscard]] PendingHandle FindPendingPacket(std::uint32_t sequence) const;
+  [[nodiscard]] bool IsPendingHandleValid(PendingHandle handle) const;
+  void ClearPendingPackets();
   [[nodiscard]] bool SecureMode() const { return config_.crypto.enabled; }
   [[nodiscard]] bool CanUseCrypto() const;
   [[nodiscard]] bool ShouldEncryptPacket(PacketType type) const;
@@ -330,7 +370,8 @@ class ReliableConnection {
   [[nodiscard]] std::size_t MaxPayloadForPacket(
       bool has_deadline = false, std::size_t header_extra = 0) const;
   [[nodiscard]] bool PrepareDeadline(std::uint32_t deadline_ms,
-                                     DeadlineMetadata& deadline) const;
+                                     DeadlineMetadata& deadline,
+                                     Clock::time_point now) const;
   [[nodiscard]] static bool DeadlineExpired(
       const DeadlineMetadata& deadline,
       std::chrono::steady_clock::time_point now);
@@ -395,12 +436,49 @@ class ConnectionManager {
 
   std::vector<std::unique_ptr<RemoteClient>> clients_;
 
+  struct ConnectionKey {
+    bool isIPv6 = false;
+    std::uint16_t port = 0;
+    std::uint32_t ipv4 = 0;
+    std::array<std::uint8_t, 16> ipv6{};
+    std::uint32_t scopeId = 0;
+
+    [[nodiscard]] bool operator==(const ConnectionKey& other) const {
+      return isIPv6 == other.isIPv6 && port == other.port &&
+             ipv4 == other.ipv4 && ipv6 == other.ipv6 &&
+             scopeId == other.scopeId;
+    }
+  };
+
+  struct ConnectionKeyHash {
+    [[nodiscard]] std::size_t operator()(const ConnectionKey& key) const {
+      std::size_t h = std::hash<std::uint16_t>{}(key.port);
+      h ^= std::hash<bool>{}(key.isIPv6) + 0x9e3779b97f4a7c15ULL + (h << 6) +
+           (h >> 2);
+      if (key.isIPv6) {
+        for (const auto byte : key.ipv6) {
+          h ^= std::hash<std::uint8_t>{}(byte) + 0x9e3779b97f4a7c15ULL +
+               (h << 6) + (h >> 2);
+        }
+        h ^= std::hash<std::uint32_t>{}(key.scopeId) + 0x9e3779b97f4a7c15ULL +
+             (h << 6) + (h >> 2);
+      } else {
+        h ^= std::hash<std::uint32_t>{}(key.ipv4) + 0x9e3779b97f4a7c15ULL +
+             (h << 6) + (h >> 2);
+      }
+      return h;
+    }
+  };
+
   RemoteClient* FindOrCreateClient(const SocketAddress& addr,
                                    std::uint16_t port);
   void RemoveClient(RemoteClient* client);
 
-  std::string MakeAddressKey(const SocketAddress& addr, std::uint16_t port);
-  std::unordered_map<std::string, RemoteClient*> client_map_;
+  static ConnectionKey MakeAddressKey(const SocketAddress& addr,
+                                      std::uint16_t port);
+  std::unordered_map<ConnectionKey, RemoteClient*, ConnectionKeyHash>
+      client_map_;
+  std::vector<std::uint8_t> receive_buffer_;
 
   // Handshake rate-limiting state.
   std::uint32_t connect_window_count_ = 0;
