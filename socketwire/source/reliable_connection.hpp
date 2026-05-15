@@ -98,23 +98,23 @@ class PendingPayloadBuffer {
  public:
   static constexpr std::size_t kInlineCapacity = 256;
 
-  [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
-  [[nodiscard]] std::size_t size() const noexcept { return size_; }
+  [[nodiscard]] bool Empty() const noexcept { return size_ == 0; }
+  [[nodiscard]] std::size_t Size() const noexcept { return size_; }
 
-  [[nodiscard]] std::uint8_t* data() noexcept {
+  [[nodiscard]] std::uint8_t* Data() noexcept {
     return using_heap_ ? heap_.data() : inline_.data();
   }
-  [[nodiscard]] const std::uint8_t* data() const noexcept {
+  [[nodiscard]] const std::uint8_t* Data() const noexcept {
     return using_heap_ ? heap_.data() : inline_.data();
   }
 
-  void clear() noexcept {
+  void Clear() noexcept {
     size_ = 0;
     using_heap_ = false;
     heap_.clear();
   }
 
-  void resize(std::size_t size) {
+  void Resize(std::size_t size) {
     size_ = size;
     if (size > kInlineCapacity) {
       using_heap_ = true;
@@ -125,18 +125,18 @@ class PendingPayloadBuffer {
     heap_.clear();
   }
 
-  void assign(const std::uint8_t* first, const std::uint8_t* last) {
+  void Assign(const std::uint8_t* first, const std::uint8_t* last) {
     if (first == nullptr || last == nullptr || last <= first) {
-      clear();
+      Clear();
       return;
     }
-    assign(first, static_cast<std::size_t>(last - first));
+    Assign(first, static_cast<std::size_t>(last - first));
   }
 
-  void assign(const std::uint8_t* src, std::size_t size) {
-    resize(size);
+  void Assign(const std::uint8_t* src, std::size_t size) {
+    Resize(size);
     if (size > 0 && src != nullptr) {
-      std::memcpy(data(), src, size);
+      std::memcpy(Data(), src, size);
     }
   }
 
@@ -187,19 +187,13 @@ class IReliableConnectionHandler {
   virtual ~IReliableConnectionHandler() = default;
 
   /// Called when the connection is established.
-  virtual void OnConnected() { onConnected(); }
-  virtual void onConnected() {}
+  virtual void OnConnected() {}
 
   /// Called when the connection is closed.
-  virtual void OnDisconnected() { onDisconnected(); }
-  virtual void onDisconnected() {}
+  virtual void OnDisconnected() {}
 
   /// Called when a reliable packet is received in order.
   virtual void OnReliableReceived(std::uint8_t channel, const void* data,
-                                  std::size_t size) {
-    onReliableReceived(channel, data, size);
-  }
-  virtual void onReliableReceived(std::uint8_t channel, const void* data,
                                   std::size_t size) {
     (void)channel;
     (void)data;
@@ -209,18 +203,13 @@ class IReliableConnectionHandler {
   /// Called when an unreliable packet is received.
   virtual void OnUnreliableReceived(std::uint8_t channel, const void* data,
                                     std::size_t size) {
-    onUnreliableReceived(channel, data, size);
-  }
-  virtual void onUnreliableReceived(std::uint8_t channel, const void* data,
-                                    std::size_t size) {
     (void)channel;
     (void)data;
     (void)size;
   }
 
   /// Called when the connection times out.
-  virtual void OnTimeout() { onTimeout(); }
-  virtual void onTimeout() {}
+  virtual void OnTimeout() {}
 };
 
 /// Manages a single reliable connection over UDP.
@@ -232,47 +221,24 @@ class ReliableConnection {
 
   /// Starts a client-side connection attempt.
   bool Connect(const SocketAddress& addr, std::uint16_t port);
-  bool connect(const SocketAddress& addr, std::uint16_t port) {
-    return Connect(addr, port);
-  }
   /// Sends a disconnect packet and clears local connection state.
   void Disconnect();
-  void disconnect() { Disconnect(); }
   [[nodiscard]] bool IsConnected() const {
     return state_ == ConnectionState::kConnected;
   }
-  [[nodiscard]] bool isConnected() const { return IsConnected(); }
   [[nodiscard]] ConnectionState GetState() const { return state_; }
-  [[nodiscard]] ConnectionState getState() const { return GetState(); }
   [[nodiscard]] bool IsCryptoReady() const { return crypto_ready_; }
-  [[nodiscard]] bool isCryptoReady() const { return IsCryptoReady(); }
 
   /// Sets the remote address for server-side connections that start connected.
   void SetRemoteAddress(const SocketAddress& addr, std::uint16_t port);
-  void setRemoteAddress(const SocketAddress& addr, std::uint16_t port) {
-    SetRemoteAddress(addr, port);
-  }
   void SetConnected() { state_ = ConnectionState::kConnected; }
-  void setConnected() { SetConnected(); }
 
   bool SendReliable(const std::uint8_t channel, const void* data,
                     std::size_t size);
-  bool sendReliable(const std::uint8_t channel, const void* data,
-                    std::size_t size) {
-    return SendReliable(channel, data, size);
-  }
   bool SendUnreliable(const std::uint8_t channel, const void* data,
                       std::size_t size);
-  bool sendUnreliable(const std::uint8_t channel, const void* data,
-                      std::size_t size) {
-    return SendUnreliable(channel, data, size);
-  }
   bool SendUnsequenced(const std::uint8_t channel, const void* data,
                        std::size_t size);
-  bool sendUnsequenced(const std::uint8_t channel, const void* data,
-                       std::size_t size) {
-    return SendUnsequenced(channel, data, size);
-  }
   bool SendReliableWithDeadline(const std::uint8_t channel, const void* data,
                                 std::size_t size, std::uint32_t deadline_ms);
   bool SendUnreliableWithDeadline(const std::uint8_t channel, const void* data,
@@ -281,17 +247,8 @@ class ReliableConnection {
                                    std::size_t size, std::uint32_t deadline_ms);
 
   bool SendReliable(const std::uint8_t channel, const BitStream& stream);
-  bool sendReliable(const std::uint8_t channel, const BitStream& stream) {
-    return SendReliable(channel, stream);
-  }
   bool SendUnreliable(const std::uint8_t channel, const BitStream& stream);
-  bool sendUnreliable(const std::uint8_t channel, const BitStream& stream) {
-    return SendUnreliable(channel, stream);
-  }
   bool SendUnsequenced(const std::uint8_t channel, const BitStream& stream);
-  bool sendUnsequenced(const std::uint8_t channel, const BitStream& stream) {
-    return SendUnsequenced(channel, stream);
-  }
   bool SendReliableWithDeadline(const std::uint8_t channel,
                                 const BitStream& stream,
                                 std::uint32_t deadline_ms);
@@ -304,58 +261,38 @@ class ReliableConnection {
 
   /// Processes retransmits, pings, timeouts, and pending ordered packets.
   void Update();
-  void update() { Update(); }
 
   /// Drains pending socket packets, then calls Update().
   ///
   /// Requires the socket to be in non-blocking mode.
   void Tick();
-  void tick() { Tick(); }
 
   void ProcessPacket(const void* data, std::size_t size,
                      const SocketAddress& from, std::uint16_t from_port);
-  void processPacket(const void* data, std::size_t size,
-                     const SocketAddress& from, std::uint16_t from_port) {
-    ProcessPacket(data, size, from, from_port);
-  }
 
   void SetHandler(IReliableConnectionHandler* handler) {
     event_handler_ = handler;
   }
-  void setHandler(IReliableConnectionHandler* handler) { SetHandler(handler); }
 
   // Statistics
   [[nodiscard]] std::uint32_t GetSentPackets() const {
     return stats_sent_packets_;
   }
-  [[nodiscard]] std::uint32_t getSentPackets() const { return GetSentPackets(); }
   [[nodiscard]] std::uint32_t GetReceivedPackets() const {
     return stats_received_packets_;
-  }
-  [[nodiscard]] std::uint32_t getReceivedPackets() const {
-    return GetReceivedPackets();
   }
   [[nodiscard]] std::uint32_t GetLostPackets() const {
     return stats_lost_packets_;
   }
-  [[nodiscard]] std::uint32_t getLostPackets() const { return GetLostPackets(); }
   [[nodiscard]] float GetRtt() const { return rtt_; }
   [[nodiscard]] float GetRTT() const { return GetRtt(); }
-  [[nodiscard]] float getRtt() const { return GetRtt(); }
-  [[nodiscard]] float getRTT() const { return GetRtt(); }
   /// Current adaptive send window (0 = unlimited).
   [[nodiscard]] std::uint32_t GetSendWindow() const {
     return current_send_window_;
   }
-  [[nodiscard]] std::uint32_t getSendWindow() const {
-    return GetSendWindow();
-  }
   /// Number of reliable packets currently awaiting acknowledgment.
   [[nodiscard]] std::uint32_t GetInflightCount() const {
     return pending_active_count_;
-  }
-  [[nodiscard]] std::uint32_t getInflightCount() const {
-    return GetInflightCount();
   }
   [[nodiscard]] std::uint32_t GetDeadlineSendDrops() const {
     return stats_deadline_send_drops_;
@@ -378,7 +315,6 @@ class ReliableConnection {
     std::chrono::steady_clock::time_point expireTime;
   };
 
-  
   struct PendingHandle {
     std::size_t index = std::numeric_limits<std::size_t>::max();
     std::uint32_t generation = 0;
@@ -429,8 +365,7 @@ class ReliableConnection {
   std::vector<std::size_t> free_pending_slots_;
   std::unordered_map<std::uint32_t, PendingHandle> pending_by_sequence_;
   std::unordered_map<std::uint32_t, std::uint32_t> pending_sequence_counts_;
-  std::priority_queue<RetryEntry, std::vector<RetryEntry>,
-                      std::greater<RetryEntry>>
+  std::priority_queue<RetryEntry, std::vector<RetryEntry>, std::greater<>>
       retry_heap_;
   std::uint32_t pending_active_count_ = 0;
 
@@ -495,20 +430,18 @@ class ReliableConnection {
   bool SendPacket(PacketType type, std::uint8_t channel, const void* data,
                   std::size_t size, std::uint32_t sequence,
                   const DeadlineMetadata& deadline, Clock::time_point now);
-  bool SendSinglePacket(PacketType type, std::uint8_t channel,
-                        const void* data, std::size_t size,
-                        std::uint32_t sequence,
+  bool SendSinglePacket(PacketType type, std::uint8_t channel, const void* data,
+                        std::size_t size, std::uint32_t sequence,
                         const DeadlineMetadata& deadline,
                         Clock::time_point now);
   bool BuildPacket(PacketType type, std::uint8_t channel, const void* data,
                    std::size_t size, std::uint32_t sequence,
                    const DeadlineMetadata& deadline, Clock::time_point now,
-                   std::vector<std::uint8_t>& buffer,
-                   std::size_t& packet_size);
+                   std::vector<std::uint8_t>& buffer, std::size_t& packet_size);
   bool SendRawDatagram(const std::uint8_t* data, std::size_t size,
                        Clock::time_point now,
                        std::uint32_t logical_packets = 1);
-  bool CanBatchPacket(PacketType type) const;
+  [[nodiscard]] bool CanBatchPacket(PacketType type) const;
   bool SendBatchWithCommand(const std::uint8_t* command,
                             std::size_t command_size, Clock::time_point now);
   bool FlushQueuedAcks(Clock::time_point now);

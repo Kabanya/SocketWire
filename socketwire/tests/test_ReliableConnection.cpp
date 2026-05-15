@@ -260,7 +260,7 @@ TEST_F(ReliableConnectionTest, ServerAcceptConnection) {
 
   conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), client_addr, 12345);
 
-  EXPECT_TRUE(handler.connected) << "Should trigger onConnected";
+  EXPECT_TRUE(handler.connected) << "Should trigger OnConnected";
   EXPECT_EQ(conn.GetState(), ConnectionState::kConnected);
   EXPECT_TRUE(conn.IsConnected());
 }
@@ -282,7 +282,7 @@ TEST_F(ReliableConnectionTest, ClientReceiveAccept) {
 
   conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
-  EXPECT_TRUE(handler.connected) << "Should trigger onConnected";
+  EXPECT_TRUE(handler.connected) << "Should trigger OnConnected";
   EXPECT_EQ(conn.GetState(), ConnectionState::kConnected);
   EXPECT_TRUE(conn.IsConnected());
 }
@@ -302,7 +302,7 @@ TEST_F(ReliableConnectionTest, SendReliablePacket) {
   const char* test_data = "Hello, World!";
   const bool result = conn.SendReliable(0, test_data, strlen(test_data));
 
-  EXPECT_TRUE(result) << "sendReliable should succeed";
+  EXPECT_TRUE(result) << "SendReliable should succeed";
   EXPECT_EQ(socket.GetSentCount(), 1) << "Should send one packet";
 
   // Verify packet structure
@@ -325,7 +325,7 @@ TEST_F(ReliableConnectionTest, SendUnreliablePacket) {
   const char* test_data = "Unreliable data";
   const bool result = conn.SendUnreliable(0, test_data, strlen(test_data));
 
-  EXPECT_TRUE(result) << "sendUnreliable should succeed";
+  EXPECT_TRUE(result) << "SendUnreliable should succeed";
   EXPECT_EQ(socket.GetSentCount(), 1) << "Should send one packet";
 }
 
@@ -347,7 +347,7 @@ TEST_F(ReliableConnectionTest, SendWithBitStream) {
 
   const bool result = conn.SendReliable(0, bs);
 
-  EXPECT_TRUE(result) << "sendReliable with BitStream should succeed";
+  EXPECT_TRUE(result) << "SendReliable with BitStream should succeed";
   EXPECT_EQ(socket.GetSentCount(), 1) << "Should send one packet";
 }
 
@@ -645,7 +645,7 @@ TEST_F(ReliableConnectionTest, Disconnect) {
   conn.Disconnect();
 
   EXPECT_FALSE(conn.IsConnected());
-  EXPECT_TRUE(handler.disconnected) << "Should trigger onDisconnected";
+  EXPECT_TRUE(handler.disconnected) << "Should trigger OnDisconnected";
   EXPECT_GT(socket.GetSentCount(), 0) << "Should send disconnect packet";
 }
 
@@ -667,7 +667,7 @@ TEST_F(ReliableConnectionTest, ReceiveDisconnect) {
 
   conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
-  EXPECT_TRUE(handler.disconnected) << "Should trigger onDisconnected";
+  EXPECT_TRUE(handler.disconnected) << "Should trigger OnDisconnected";
   EXPECT_EQ(conn.GetState(), ConnectionState::kDisconnected);
 }
 
@@ -830,7 +830,7 @@ TEST_F(ReliableConnectionTest, MultipleChannels) {
   EXPECT_EQ(channel1, 1);
 }
 
-TEST_F(ReliableConnectionTest, LegacySendUsesBaseHeader) {
+TEST_F(ReliableConnectionTest, SendWithoutDeadlineUsesBaseHeader) {
   ReliableConnection conn(&socket, config);
   auto addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);

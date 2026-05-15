@@ -210,7 +210,7 @@ void ReliableConnection::Disconnect() {
   for (auto& b : seq_window_bits_) b.reset();
   for (auto& pr : pending_received_) {
     for (auto& slot : pr) {
-      slot.packet.data.clear();
+      slot.packet.data.Clear();
       slot.occupied = false;
     }
   }
@@ -289,7 +289,7 @@ bool ReliableConnection::SendReliableInternal(const std::uint8_t channel,
   PendingPacket* pending = GetPendingPacket(pending_handle);
   if (pending == nullptr) return false;
   if (data != nullptr && size > 0) {
-    pending->data.assign(static_cast<const std::uint8_t*>(data),
+    pending->data.Assign(static_cast<const std::uint8_t*>(data),
                          static_cast<const std::uint8_t*>(data) + size);
   }
   pending->sendTime = now;
@@ -297,8 +297,8 @@ bool ReliableConnection::SendReliableInternal(const std::uint8_t channel,
   pending->type = PacketType::kReliable;
   CopyDeadlineToPending(*pending, deadline);
 
-  const void* payload = pending->data.empty() ? nullptr : pending->data.data();
-  if (!SendPacket(PacketType::kReliable, channel, payload, pending->data.size(),
+  const void* payload = pending->data.Empty() ? nullptr : pending->data.Data();
+  if (!SendPacket(PacketType::kReliable, channel, payload, pending->data.Size(),
                   seq, deadline, now)) {
     ErasePendingPacket(pending_handle);
     return false;
@@ -346,7 +346,7 @@ bool ReliableConnection::SendUnsequencedInternal(const std::uint8_t channel,
   PendingPacket* pending = GetPendingPacket(pending_handle);
   if (pending == nullptr) return false;
   if (data != nullptr && size > 0) {
-    pending->data.assign(static_cast<const std::uint8_t*>(data),
+    pending->data.Assign(static_cast<const std::uint8_t*>(data),
                          static_cast<const std::uint8_t*>(data) + size);
   }
   pending->sendTime = now;
@@ -354,9 +354,9 @@ bool ReliableConnection::SendUnsequencedInternal(const std::uint8_t channel,
   pending->type = PacketType::kUnsequenced;
   CopyDeadlineToPending(*pending, deadline);
 
-  const void* payload = pending->data.empty() ? nullptr : pending->data.data();
+  const void* payload = pending->data.Empty() ? nullptr : pending->data.Data();
   if (!SendPacket(PacketType::kUnsequenced, channel, payload,
-                  pending->data.size(), seq, deadline, now)) {
+                  pending->data.Size(), seq, deadline, now)) {
     ErasePendingPacket(pending_handle);
     return false;
   }
@@ -630,7 +630,8 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
       // Store for ordered processing
       auto& pending_channel = pending_received_.at(channel);
       const auto& expected_sequence = receive_sequence_.at(channel);
-      if (pending_channel.empty() || !IsSequenceNewer(sequence, expected_sequence)) {
+      if (pending_channel.empty() ||
+          !IsSequenceNewer(sequence, expected_sequence)) {
         break;
       }
       const std::uint32_t distance = sequence - expected_sequence;
@@ -638,16 +639,17 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
         break;
       }
 
-      ReceivedSlot& slot = pending_channel.at(sequence % pending_channel.size());
+      ReceivedSlot& slot =
+          pending_channel.at(sequence % pending_channel.size());
       if (slot.occupied && slot.packet.sequence != sequence) {
         break;
       }
 
       slot.packet.sequence = sequence;
       if (payload_size > 0) {
-        slot.packet.data.assign(payload_data, payload_data + payload_size);
+        slot.packet.data.Assign(payload_data, payload_data + payload_size);
       } else {
-        slot.packet.data.clear();
+        slot.packet.data.Clear();
       }
       slot.packet.channel = channel;
       slot.occupied = true;
@@ -882,8 +884,8 @@ bool ReliableConnection::BuildPacket(PacketType type, std::uint8_t channel,
   if (ShouldEncryptPacket(type)) {
     BitStream encrypted;
     const auto* payload = static_cast<const std::uint8_t*>(data);
-    const auto result = crypto_context_.Encrypt(
-        payload, size, buffer.data(), written_header_size, encrypted);
+    const auto result = crypto_context_.Encrypt(payload, size, buffer.data(),
+                                                written_header_size, encrypted);
     if (!result.ok) return false;
     if (packet_size + encrypted.GetSizeBytes() > buffer.size()) {
       return false;
@@ -935,15 +937,13 @@ bool ReliableConnection::SendBatchWithCommand(const std::uint8_t* command,
                                               Clock::time_point now) {
   if (queued_acks_.empty()) return false;
 
-  const std::uint16_t max_commands =
-      std::clamp<std::uint16_t>(config_.maxBatchCommands, 1,
-                                kMaxBatchCommandsHardLimit);
+  const std::uint16_t max_commands = std::clamp<std::uint16_t>(
+      config_.maxBatchCommands, 1, kMaxBatchCommandsHardLimit);
   const std::size_t max_size = config_.maxPacketSize;
   if (batch_buffer_.size() < max_size) batch_buffer_.resize(max_size);
 
-  const std::size_t batch_header_size =
-      WritePacketHeader(batch_buffer_.data(), PacketType::kBatch, 0, 0, false,
-                        0, {}, now);
+  const std::size_t batch_header_size = WritePacketHeader(
+      batch_buffer_.data(), PacketType::kBatch, 0, 0, false, 0, {}, now);
   if (batch_header_size + sizeof(std::uint16_t) > max_size) return false;
 
   std::size_t offset = batch_header_size + sizeof(std::uint16_t);
@@ -1000,15 +1000,13 @@ bool ReliableConnection::FlushQueuedAcks(Clock::time_point now) {
     return true;
   }
 
-  const std::uint16_t max_commands =
-      std::clamp<std::uint16_t>(config_.maxBatchCommands, 1,
-                                kMaxBatchCommandsHardLimit);
+  const std::uint16_t max_commands = std::clamp<std::uint16_t>(
+      config_.maxBatchCommands, 1, kMaxBatchCommandsHardLimit);
   const std::size_t max_size = config_.maxPacketSize;
   if (batch_buffer_.size() < max_size) batch_buffer_.resize(max_size);
 
-  const std::size_t batch_header_size =
-      WritePacketHeader(batch_buffer_.data(), PacketType::kBatch, 0, 0, false,
-                        0, {}, now);
+  const std::size_t batch_header_size = WritePacketHeader(
+      batch_buffer_.data(), PacketType::kBatch, 0, 0, false, 0, {}, now);
   if (batch_header_size + sizeof(std::uint16_t) > max_size) return false;
 
   std::size_t offset = batch_header_size + sizeof(std::uint16_t);
@@ -1041,9 +1039,9 @@ bool ReliableConnection::FlushQueuedAcks(Clock::time_point now) {
     return false;
   }
 
-  queued_acks_.erase(queued_acks_.begin(),
-                     queued_acks_.begin() +
-                         static_cast<std::ptrdiff_t>(consumed));
+  queued_acks_.erase(
+      queued_acks_.begin(),
+      queued_acks_.begin() + static_cast<std::ptrdiff_t>(consumed));
   return queued_acks_.empty() ? true : FlushQueuedAcks(now);
 }
 
@@ -1059,9 +1057,8 @@ void ReliableConnection::QueueAck(std::uint32_t sequence,
     queued_acks_.push_back(sequence);
   }
 
-  const std::uint16_t max_commands =
-      std::clamp<std::uint16_t>(config_.maxBatchCommands, 1,
-                                kMaxBatchCommandsHardLimit);
+  const std::uint16_t max_commands = std::clamp<std::uint16_t>(
+      config_.maxBatchCommands, 1, kMaxBatchCommandsHardLimit);
   if (queued_acks_.size() >= max_commands) {
     (void)FlushQueuedAcks(now);
   }
@@ -1074,9 +1071,8 @@ void ReliableConnection::ProcessBatchPacket(const std::uint8_t* payload,
   if (payload == nullptr || size < sizeof(std::uint16_t)) return;
 
   const std::uint16_t command_count = ReadU16(payload);
-  const std::uint16_t max_commands =
-      std::clamp<std::uint16_t>(config_.maxBatchCommands, 1,
-                                kMaxBatchCommandsHardLimit);
+  const std::uint16_t max_commands = std::clamp<std::uint16_t>(
+      config_.maxBatchCommands, 1, kMaxBatchCommandsHardLimit);
   if (command_count == 0 || command_count > max_commands) return;
 
   std::size_t offset = sizeof(std::uint16_t);
@@ -1129,19 +1125,19 @@ bool ReliableConnection::SendFragmented(std::uint8_t channel, const void* data,
     if (pending == nullptr) return false;
 
     // Layout: [groupId:2][fragIndex:2][fragTotal:2][payload...]
-    pending->data.resize(6 + frag_size);
-    std::memcpy(pending->data.data() + 0, &group_id, 2);
-    std::memcpy(pending->data.data() + 2, &i, 2);
-    std::memcpy(pending->data.data() + 4, &frag_total, 2);
-    std::memcpy(pending->data.data() + 6, src + offset, frag_size);
+    pending->data.Resize(6 + frag_size);
+    std::memcpy(pending->data.Data() + 0, &group_id, 2);
+    std::memcpy(pending->data.Data() + 2, &i, 2);
+    std::memcpy(pending->data.Data() + 4, &frag_total, 2);
+    std::memcpy(pending->data.Data() + 6, src + offset, frag_size);
 
     pending->sendTime = now;
     pending->channel = channel;
     pending->type = PacketType::kFragment;
     CopyDeadlineToPending(*pending, deadline);
 
-    if (!SendPacket(PacketType::kFragment, channel, pending->data.data(),
-                    pending->data.size(), seq, deadline, now)) {
+    if (!SendPacket(PacketType::kFragment, channel, pending->data.Data(),
+                    pending->data.Size(), seq, deadline, now)) {
       ErasePendingPacket(pending_handle);
       return false;
     }
@@ -1260,7 +1256,7 @@ ReliableConnection::PendingHandle ReliableConnection::AllocatePendingPacket(
 void ReliableConnection::ResetPendingPacketForReuse(PendingPacket& pending,
                                                     std::uint32_t sequence) {
   pending.sequence = sequence;
-  pending.data.clear();
+  pending.data.Clear();
   pending.sendTime = {};
   pending.retries = 0;
   pending.channel = 0;
@@ -1407,12 +1403,12 @@ void ReliableConnection::ProcessPendingReliableChannel(std::uint8_t channel,
 
     SendAck(slot.packet.sequence, now);
     if (event_handler_ != nullptr) {
-      event_handler_->OnReliableReceived(
-          slot.packet.channel, slot.packet.data.data(),
-          slot.packet.data.size());
+      event_handler_->OnReliableReceived(slot.packet.channel,
+                                         slot.packet.data.Data(),
+                                         slot.packet.data.Size());
     }
 
-    slot.packet.data.clear();
+    slot.packet.data.Clear();
     slot.occupied = false;
     ++expected_sequence;
   }
@@ -1451,14 +1447,14 @@ void ReliableConnection::RetryPendingPackets(Clock::time_point now) {
       continue;
     }
 
-    const void* payload = pending.data.empty() ? nullptr : pending.data.data();
+    const void* payload = pending.data.Empty() ? nullptr : pending.data.Data();
     DeadlineMetadata deadline;
     deadline.hasDeadline = pending.hasDeadline;
     deadline.deadline_ms = pending.deadline_ms;
     deadline.createdTime = pending.createdTime;
     deadline.expireTime = pending.expireTime;
 
-    if (SendPacket(pending.type, pending.channel, payload, pending.data.size(),
+    if (SendPacket(pending.type, pending.channel, payload, pending.data.Size(),
                    pending.sequence, deadline, now)) {
       pending.sendTime = now;
       pending.retries++;
@@ -1551,7 +1547,7 @@ bool ReliableConnection::IsSequenceNewer(std::uint32_t s1, std::uint32_t s2) {
 }
 
 ReliableConnection::~ReliableConnection() {
-  // Don't call disconnect() which may trigger callbacks during destruction
+  // Don't call Disconnect() which may trigger callbacks during destruction
   // Just clean up resources directly
   state_ = ConnectionState::kDisconnected;
   ClearPendingPackets();
@@ -1559,7 +1555,7 @@ ReliableConnection::~ReliableConnection() {
   for (auto& b : seq_window_bits_) b.reset();
   for (auto& pr : pending_received_) {
     for (auto& slot : pr) {
-      slot.packet.data.clear();
+      slot.packet.data.Clear();
       slot.occupied = false;
     }
   }
