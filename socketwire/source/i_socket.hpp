@@ -8,7 +8,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <span>
 
@@ -22,9 +21,6 @@ namespace socketwire {
 
 class BitStream;
 
-/// High-level socket type.
-enum class SocketType : std::uint8_t { kUdp, kTcp };
-
 /// Error codes returned by socket operations.
 enum class SocketError : std::uint8_t {
   kNone = 0,
@@ -32,24 +28,13 @@ enum class SocketError : std::uint8_t {
   kClosed,        ///< Socket is closed.
   kSystem,        ///< Low-level system error.
   kInvalidParam,  ///< Invalid arguments.
-  kNotBound,      ///< Operation requires a prior bind().
+  kNotBound,      ///< Operation requires a prior Bind().
   kUnsupported,   ///< Unsupported operation or option.
-  kUnknown,       ///< Unclassified error.
-  None = kNone,
-  WouldBlock = kWouldBlock,
-  Closed = kClosed,
-  System = kSystem,
-  InvalidParam = kInvalidParam,
-  NotBound = kNotBound,
-  Unsupported = kUnsupported,
-  Unknown = kUnknown
+  kUnknown        ///< Unclassified error.
 };
 
 /// Converts SocketError to a human-readable string.
 [[nodiscard]] const char* ToString(SocketError error) noexcept;
-[[nodiscard]] inline const char* to_string(SocketError error) noexcept {
-  return ToString(error);
-}
 
 /// Result of a send or receive operation.
 struct SocketResult {
@@ -62,8 +47,6 @@ struct SocketResult {
   [[nodiscard]] constexpr bool Failed() const {
     return error != SocketError::kNone;
   }
-  [[nodiscard]] constexpr bool succeeded() const { return Succeeded(); }
-  [[nodiscard]] constexpr bool failed() const { return Failed(); }
 };
 
 /// IPv4 address stored in host byte order.
@@ -147,12 +130,7 @@ class ISocketEventHandler {
   virtual ~ISocketEventHandler() = default;
 
   /// Called when data is successfully read.
-  virtual void OnDataReceived(const SocketAddress& from,
-                              std::uint16_t from_port, const void* data,
-                              std::size_t bytes_read) {
-    onDataReceived(from, from_port, data, bytes_read);
-  }
-  virtual void onDataReceived([[maybe_unused]] const SocketAddress& from,
+  virtual void OnDataReceived([[maybe_unused]] const SocketAddress& from,
                               [[maybe_unused]] std::uint16_t from_port,
                               [[maybe_unused]] const void* data,
                               [[maybe_unused]] std::size_t bytes_read) {}
@@ -161,22 +139,13 @@ class ISocketEventHandler {
   /// it.
   virtual void OnBitStreamReceived([[maybe_unused]] const SocketAddress& from,
                                    [[maybe_unused]] std::uint16_t from_port,
-                                   [[maybe_unused]] BitStream& stream) {
-    onBitStreamReceived(from, from_port, stream);
-  }
-  virtual void onBitStreamReceived([[maybe_unused]] const SocketAddress& from,
-                                   [[maybe_unused]] std::uint16_t from_port,
                                    [[maybe_unused]] BitStream& stream) {}
 
   /// Called on socket errors.
-  virtual void OnSocketError(SocketError error_code) {
-    onSocketError(error_code);
-  }
-  virtual void onSocketError([[maybe_unused]] SocketError error_code) {}
+  virtual void OnSocketError([[maybe_unused]] SocketError error_code) {}
 
   /// Called when the socket is closed.
-  virtual void OnSocketClosed() { onSocketClosed(); }
-  virtual void onSocketClosed() {}
+  virtual void OnSocketClosed() {}
 };
 
 /// Base socket interface.
@@ -187,41 +156,19 @@ class ISocket {
   /// Binds an address and host-order port.
   virtual SocketError Bind(const SocketAddress& address,
                            std::uint16_t port) = 0;
-  SocketError bind(const SocketAddress& address, std::uint16_t port) {
-    return Bind(address, port);
-  }
-
-  /// For TCP sockets, switches to listening mode.
-  virtual SocketError Listen(int backlog) {
-    (void)backlog;
-    return SocketError::kUnsupported;
-  }
-
-  /// For TCP sockets, accepts an incoming connection.
-  virtual std::unique_ptr<ISocket> Accept(SocketAddress& remote_addr,
-                                          std::uint16_t& remote_port) {
-    (void)remote_addr;
-    (void)remote_port;
-    return nullptr;
-  }
 
   /// Sends a datagram or stream data to a specific address and port.
   virtual SocketResult SendTo(const void* data, std::size_t length,
                               const SocketAddress& to_addr,
                               std::uint16_t to_port) = 0;
-  SocketResult sendTo(const void* data, std::size_t length,
-                      const SocketAddress& to_addr, std::uint16_t to_port) {
-    return SendTo(data, length, to_addr, to_port);
-  }
 
   /// Sends multiple datagrams. Implementations may override this with native
   /// batch I/O; the default path preserves existing single-send behavior.
   virtual std::size_t SendMany(std::span<const OutgoingDatagram> datagrams) {
     std::size_t sent_count = 0;
     for (const auto& datagram : datagrams) {
-      const SocketResult result =
-          SendTo(datagram.data, datagram.size, datagram.toAddr,
-                 datagram.toPort);
+      const SocketResult result = SendTo(datagram.data, datagram.size,
+                                         datagram.toAddr, datagram.toPort);
       if (result.Failed()) break;
       ++sent_count;
     }
@@ -243,10 +190,6 @@ class ISocket {
   virtual SocketResult Receive(void* buffer, std::size_t capacity,
                                SocketAddress& from_addr,
                                std::uint16_t& from_port) = 0;
-  SocketResult receive(void* buffer, std::size_t capacity,
-                       SocketAddress& from_addr, std::uint16_t& from_port) {
-    return Receive(buffer, capacity, from_addr, from_port);
-  }
 
   /// Receives multiple datagrams. Implementations may override this with
   /// native batch I/O; the default path reads until WouldBlock/error or until
@@ -254,9 +197,8 @@ class ISocket {
   virtual std::size_t ReceiveMany(std::span<IncomingDatagram> datagrams) {
     std::size_t received_count = 0;
     for (auto& datagram : datagrams) {
-      datagram.result =
-          Receive(datagram.data, datagram.capacity, datagram.fromAddr,
-                  datagram.fromPort);
+      datagram.result = Receive(datagram.data, datagram.capacity,
+                                datagram.fromAddr, datagram.fromPort);
       if (datagram.result.Failed()) break;
       if (datagram.result.bytes <= 0) break;
       ++received_count;
@@ -272,29 +214,19 @@ class ISocket {
 
   /// Polls the socket and emits events to the handler.
   virtual void Poll(ISocketEventHandler* handler) = 0;
-  void poll(ISocketEventHandler* handler) { Poll(handler); }
 
   /// Updates blocking mode.
   virtual SocketError SetBlocking(bool enable) = 0;
-  SocketError setBlocking(bool enable) { return SetBlocking(enable); }
   [[nodiscard]] virtual bool IsBlocking() const = 0;
-  [[nodiscard]] bool isBlocking() const { return IsBlocking(); }
 
   /// Returns the local port, or 0 if not bound.
   [[nodiscard]] virtual std::uint16_t LocalPort() const = 0;
-  [[nodiscard]] std::uint16_t localPort() const { return LocalPort(); }
-
-  /// Returns the socket type.
-  [[nodiscard]] virtual SocketType Type() const = 0;
-  [[nodiscard]] SocketType type() const { return Type(); }
 
   /// Returns the native descriptor. Use with caution.
   [[nodiscard]] virtual int NativeHandle() const = 0;
-  [[nodiscard]] int nativeHandle() const { return NativeHandle(); }
 
   /// Closes the socket.
   virtual void Close() = 0;
-  void close() { Close(); }
 };
 
 inline SocketResult ISocket::SendBitStream(BitStream& stream,
@@ -319,41 +251,14 @@ class ISocketFactory {
  public:
   virtual ~ISocketFactory() = default;
 
-  virtual std::unique_ptr<ISocket> CreateSocket(SocketType type,
-                                                const SocketConfig& cfg) = 0;
-  std::unique_ptr<ISocket> createSocket(SocketType type,
-                                        const SocketConfig& cfg) {
-    return CreateSocket(type, cfg);
-  }
-
-  std::unique_ptr<ISocket> CreateUdpSocket(const SocketConfig& cfg) {
-    return CreateSocket(SocketType::kUdp, cfg);
-  }
-  std::unique_ptr<ISocket> createUdpSocket(const SocketConfig& cfg) {
-    return CreateUdpSocket(cfg);
-  }
-  std::unique_ptr<ISocket> createUDPSocket(const SocketConfig& cfg) {
-    return CreateUdpSocket(cfg);
-  }
-
-  std::unique_ptr<ISocket> CreateTcpSocket(const SocketConfig& cfg) {
-    return CreateSocket(SocketType::kTcp, cfg);
-  }
-  std::unique_ptr<ISocket> createTcpSocket(const SocketConfig& cfg) {
-    return CreateTcpSocket(cfg);
-  }
-  std::unique_ptr<ISocket> createTCPSocket(const SocketConfig& cfg) {
-    return CreateTcpSocket(cfg);
-  }
+  virtual std::unique_ptr<ISocket> CreateUdpSocket(const SocketConfig& cfg) = 0;
 };
 
 /// Global access to the registered socket factory.
 class SocketFactoryRegistry {
  public:
   static void SetFactory(ISocketFactory* factory);
-  static void setFactory(ISocketFactory* factory) { SetFactory(factory); }
   static ISocketFactory* GetFactory();
-  static ISocketFactory* getFactory() { return GetFactory(); }
 };
 
 /// Registers the POSIX socket factory implementation.

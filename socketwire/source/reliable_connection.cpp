@@ -148,7 +148,7 @@ ReliableConnection::ReliableConnection(ISocket* socket,
                   ? std::max(1u, config_.sendWindowSize / 2)
                   : 32;
 
-  const auto now = Clock::now();
+  const auto now = std::chrono::steady_clock::now();
   last_send_time_ = now;
   last_receive_time_ = now;
   last_ping_time_ = now;
@@ -264,7 +264,7 @@ bool ReliableConnection::SendReliableInternal(const std::uint8_t channel,
                                               std::uint32_t deadline_ms) {
   if (state_ != ConnectionState::kConnected) return false;
 
-  const auto now = Clock::now();
+  const auto now = std::chrono::steady_clock::now();
   DeadlineMetadata deadline;
   if (!PrepareDeadline(deadline_ms, deadline, now)) return false;
 
@@ -314,7 +314,7 @@ bool ReliableConnection::SendUnreliableInternal(const std::uint8_t channel,
                                                 std::uint32_t deadline_ms) {
   if (state_ != ConnectionState::kConnected) return false;
 
-  const auto now = Clock::now();
+  const auto now = std::chrono::steady_clock::now();
   DeadlineMetadata deadline;
   if (!PrepareDeadline(deadline_ms, deadline, now)) return false;
 
@@ -334,7 +334,7 @@ bool ReliableConnection::SendUnsequencedInternal(const std::uint8_t channel,
                                                  std::uint32_t deadline_ms) {
   if (state_ != ConnectionState::kConnected) return false;
 
-  const auto now = Clock::now();
+  const auto now = std::chrono::steady_clock::now();
   DeadlineMetadata deadline;
   if (!PrepareDeadline(deadline_ms, deadline, now)) return false;
 
@@ -402,7 +402,7 @@ bool ReliableConnection::SendUnsequencedWithDeadline(
 }
 
 void ReliableConnection::Update() {
-  auto now = Clock::now();
+  auto now = std::chrono::steady_clock::now();
 
   // Retry pending packets
   RetryPendingPackets(now);
@@ -445,12 +445,19 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
     return;
   }
 
-  const PacketType type = header.type;
-  const std::uint8_t channel = header.channel;
-  const std::uint32_t sequence = header.sequence;
+  ProcessSinglePacket(packet_data, size, header.type, header.channel,
+                      header.sequence, header.hasDeadline, header.deadline_ms,
+                      header.ageMsAtSend, header.headerSize, from, from_port);
+}
 
-  const std::uint8_t* payload_data = packet_data + header.headerSize;
-  std::size_t payload_size = size - header.headerSize;
+void ReliableConnection::ProcessSinglePacket(
+    const std::uint8_t* packet_data, std::size_t size, PacketType type,
+    std::uint8_t channel, std::uint32_t sequence, bool has_deadline,
+    std::uint32_t deadline_ms, std::uint32_t age_ms_at_send,
+    std::size_t header_size, const SocketAddress& from,
+    std::uint16_t from_port) {
+  const std::uint8_t* payload_data = packet_data + header_size;
+  std::size_t payload_size = size - header_size;
   BitStream decrypted_payload;
 
   if (SecureMode() && type != PacketType::kConnect &&
@@ -459,20 +466,19 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
 
     const auto decrypt_result =
         crypto_context_.Decrypt(payload_data, payload_size, packet_data,
-                                header.headerSize, decrypted_payload);
+                                header_size, decrypted_payload);
     if (!decrypt_result.ok) return;
 
     payload_data = decrypted_payload.GetData();
     payload_size = decrypted_payload.GetSizeBytes();
   }
 
-  const auto now = Clock::now();
+  const auto now = std::chrono::steady_clock::now();
   last_receive_time_ = now;
   stats_received_packets_++;
-  const bool deadline_expired = config_.deadlinesEnabled &&
-                                config_.dropExpiredOnReceive &&
-                                header.hasDeadline && header.deadline_ms > 0 &&
-                                header.ageMsAtSend >= header.deadline_ms;
+  const bool deadline_expired =
+      config_.deadlinesEnabled && config_.dropExpiredOnReceive &&
+      has_deadline && deadline_ms > 0 && age_ms_at_send >= deadline_ms;
 
   // Handle different packet types
   switch (type) {
@@ -572,7 +578,8 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
 
     case PacketType::kPong: {
       // Calculate RTT
-      PendingPacket* pending = GetPendingPacket(FindPendingPacket(sequence));
+      const PendingPacket* pending =
+          GetPendingPacket(FindPendingPacket(sequence));
       if (pending != nullptr) {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                            now - pending->sendTime)
@@ -586,7 +593,7 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
     case PacketType::kAck: {
       // Remove acknowledged packet from pending list
       auto pending_handle = FindPendingPacket(sequence);
-      PendingPacket* pending = GetPendingPacket(pending_handle);
+      const PendingPacket* pending = GetPendingPacket(pending_handle);
 
       if (pending != nullptr) {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -735,19 +742,18 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
         fg.total = frag_total;
         fg.pieces.resize(frag_total);
         fg.firstReceived = now;
-        if (config_.deadlinesEnabled && header.hasDeadline &&
-            header.deadline_ms > header.ageMsAtSend) {
+        if (config_.deadlinesEnabled && has_deadline &&
+            deadline_ms > age_ms_at_send) {
           fg.hasDeadline = true;
-          fg.expireTime = now + std::chrono::milliseconds(header.deadline_ms -
-                                                          header.ageMsAtSend);
+          fg.expireTime =
+              now + std::chrono::milliseconds(deadline_ms - age_ms_at_send);
         }
         fg.channel = channel;
         it = groups.emplace(group_id, std::move(fg)).first;
-      } else if (config_.deadlinesEnabled && header.hasDeadline &&
-                 header.deadline_ms > header.ageMsAtSend) {
+      } else if (config_.deadlinesEnabled && has_deadline &&
+                 deadline_ms > age_ms_at_send) {
         const auto fragment_expire_time =
-            now +
-            std::chrono::milliseconds(header.deadline_ms - header.ageMsAtSend);
+            now + std::chrono::milliseconds(deadline_ms - age_ms_at_send);
         FragmentGroup& existing = it->second;
         if (!existing.hasDeadline ||
             fragment_expire_time < existing.expireTime) {
@@ -813,7 +819,7 @@ bool ReliableConnection::SendPacket(PacketType type, std::uint8_t channel,
                                     const void* data, std::size_t size,
                                     std::uint32_t sequence,
                                     const DeadlineMetadata& deadline) {
-  const auto now = Clock::now();
+  const auto now = std::chrono::steady_clock::now();
   return SendPacket(type, channel, data, size, sequence, deadline, now);
 }
 
@@ -821,7 +827,7 @@ bool ReliableConnection::SendPacket(PacketType type, std::uint8_t channel,
                                     const void* data, std::size_t size,
                                     std::uint32_t sequence,
                                     const DeadlineMetadata& deadline,
-                                    Clock::time_point now) {
+                                    std::chrono::steady_clock::time_point now) {
   if (type == PacketType::kAck && CanBatchPacket(type)) {
     QueueAck(sequence, now);
     return true;
@@ -845,11 +851,10 @@ bool ReliableConnection::SendPacket(PacketType type, std::uint8_t channel,
   return SendSinglePacket(type, channel, data, size, sequence, deadline, now);
 }
 
-bool ReliableConnection::SendSinglePacket(PacketType type, std::uint8_t channel,
-                                          const void* data, std::size_t size,
-                                          std::uint32_t sequence,
-                                          const DeadlineMetadata& deadline,
-                                          Clock::time_point now) {
+bool ReliableConnection::SendSinglePacket(
+    PacketType type, std::uint8_t channel, const void* data, std::size_t size,
+    std::uint32_t sequence, const DeadlineMetadata& deadline,
+    std::chrono::steady_clock::time_point now) {
   std::size_t packet_size = 0;
   if (!BuildPacket(type, channel, data, size, sequence, deadline, now,
                    send_buffer_, packet_size)) {
@@ -862,7 +867,7 @@ bool ReliableConnection::BuildPacket(PacketType type, std::uint8_t channel,
                                      const void* data, std::size_t size,
                                      std::uint32_t sequence,
                                      const DeadlineMetadata& deadline,
-                                     Clock::time_point now,
+                                     std::chrono::steady_clock::time_point now,
                                      std::vector<std::uint8_t>& buffer,
                                      std::size_t& packet_size) {
   if (DeadlineExpired(deadline, now)) {
@@ -902,10 +907,9 @@ bool ReliableConnection::BuildPacket(PacketType type, std::uint8_t channel,
   return true;
 }
 
-bool ReliableConnection::SendRawDatagram(const std::uint8_t* data,
-                                         std::size_t size,
-                                         Clock::time_point now,
-                                         std::uint32_t logical_packets) {
+bool ReliableConnection::SendRawDatagram(
+    const std::uint8_t* data, std::size_t size,
+    std::chrono::steady_clock::time_point now, std::uint32_t logical_packets) {
   if (data == nullptr || size == 0) return false;
 
   const SocketResult result =
@@ -932,9 +936,9 @@ bool ReliableConnection::CanBatchPacket(PacketType type) const {
   }
 }
 
-bool ReliableConnection::SendBatchWithCommand(const std::uint8_t* command,
-                                              std::size_t command_size,
-                                              Clock::time_point now) {
+bool ReliableConnection::SendBatchWithCommand(
+    const std::uint8_t* command, std::size_t command_size,
+    std::chrono::steady_clock::time_point now) {
   if (queued_acks_.empty()) return false;
 
   const std::uint16_t max_commands = std::clamp<std::uint16_t>(
@@ -985,68 +989,70 @@ bool ReliableConnection::SendBatchWithCommand(const std::uint8_t* command,
   return true;
 }
 
-bool ReliableConnection::FlushQueuedAcks(Clock::time_point now) {
-  if (queued_acks_.empty()) return true;
+bool ReliableConnection::FlushQueuedAcks(
+    std::chrono::steady_clock::time_point now) {
+  while (!queued_acks_.empty()) {
+    if (queued_acks_.size() == 1) {
+      const std::uint32_t sequence = queued_acks_.front();
+      std::size_t ack_size = 0;
+      if (!BuildPacket(PacketType::kAck, 0, nullptr, 0, sequence,
+                       DeadlineMetadata{}, now, send_buffer_, ack_size)) {
+        return false;
+      }
+      if (!SendRawDatagram(send_buffer_.data(), ack_size, now)) return false;
+      queued_acks_.clear();
+      return true;
+    }
 
-  if (queued_acks_.size() == 1) {
-    const std::uint32_t sequence = queued_acks_.front();
-    std::size_t ack_size = 0;
-    if (!BuildPacket(PacketType::kAck, 0, nullptr, 0, sequence,
-                     DeadlineMetadata{}, now, send_buffer_, ack_size)) {
+    const std::uint16_t max_commands = std::clamp<std::uint16_t>(
+        config_.maxBatchCommands, 1, kMaxBatchCommandsHardLimit);
+    const std::size_t max_size = config_.maxPacketSize;
+    if (batch_buffer_.size() < max_size) batch_buffer_.resize(max_size);
+
+    const std::size_t batch_header_size = WritePacketHeader(
+        batch_buffer_.data(), PacketType::kBatch, 0, 0, false, 0, {}, now);
+    if (batch_header_size + sizeof(std::uint16_t) > max_size) return false;
+
+    std::size_t offset = batch_header_size + sizeof(std::uint16_t);
+    std::uint16_t command_count = 0;
+    std::size_t consumed = 0;
+
+    for (const std::uint32_t ack_sequence : queued_acks_) {
+      if (command_count >= max_commands) break;
+
+      std::size_t ack_size = 0;
+      if (!BuildPacket(PacketType::kAck, 0, nullptr, 0, ack_sequence,
+                       DeadlineMetadata{}, now, send_buffer_, ack_size)) {
+        return false;
+      }
+      if (offset + sizeof(std::uint16_t) + ack_size > max_size) break;
+
+      WriteU16(batch_buffer_.data() + offset,
+               static_cast<std::uint16_t>(ack_size));
+      offset += sizeof(std::uint16_t);
+      std::memcpy(batch_buffer_.data() + offset, send_buffer_.data(), ack_size);
+      offset += ack_size;
+      ++command_count;
+      ++consumed;
+    }
+
+    if (command_count == 0) return false;
+
+    WriteU16(batch_buffer_.data() + batch_header_size, command_count);
+    if (!SendRawDatagram(batch_buffer_.data(), offset, now, command_count)) {
       return false;
     }
-    if (!SendRawDatagram(send_buffer_.data(), ack_size, now)) return false;
-    queued_acks_.clear();
-    return true;
+
+    queued_acks_.erase(
+        queued_acks_.begin(),
+        queued_acks_.begin() + static_cast<std::ptrdiff_t>(consumed));
   }
 
-  const std::uint16_t max_commands = std::clamp<std::uint16_t>(
-      config_.maxBatchCommands, 1, kMaxBatchCommandsHardLimit);
-  const std::size_t max_size = config_.maxPacketSize;
-  if (batch_buffer_.size() < max_size) batch_buffer_.resize(max_size);
-
-  const std::size_t batch_header_size = WritePacketHeader(
-      batch_buffer_.data(), PacketType::kBatch, 0, 0, false, 0, {}, now);
-  if (batch_header_size + sizeof(std::uint16_t) > max_size) return false;
-
-  std::size_t offset = batch_header_size + sizeof(std::uint16_t);
-  std::uint16_t command_count = 0;
-  std::size_t consumed = 0;
-
-  for (const std::uint32_t ack_sequence : queued_acks_) {
-    if (command_count >= max_commands) break;
-
-    std::size_t ack_size = 0;
-    if (!BuildPacket(PacketType::kAck, 0, nullptr, 0, ack_sequence,
-                     DeadlineMetadata{}, now, send_buffer_, ack_size)) {
-      return false;
-    }
-    if (offset + sizeof(std::uint16_t) + ack_size > max_size) break;
-
-    WriteU16(batch_buffer_.data() + offset,
-             static_cast<std::uint16_t>(ack_size));
-    offset += sizeof(std::uint16_t);
-    std::memcpy(batch_buffer_.data() + offset, send_buffer_.data(), ack_size);
-    offset += ack_size;
-    ++command_count;
-    ++consumed;
-  }
-
-  if (command_count == 0) return false;
-
-  WriteU16(batch_buffer_.data() + batch_header_size, command_count);
-  if (!SendRawDatagram(batch_buffer_.data(), offset, now, command_count)) {
-    return false;
-  }
-
-  queued_acks_.erase(
-      queued_acks_.begin(),
-      queued_acks_.begin() + static_cast<std::ptrdiff_t>(consumed));
-  return queued_acks_.empty() ? true : FlushQueuedAcks(now);
+  return true;
 }
 
 void ReliableConnection::QueueAck(std::uint32_t sequence,
-                                  Clock::time_point now) {
+                                  std::chrono::steady_clock::time_point now) {
   if (!CanBatchPacket(PacketType::kAck)) {
     (void)SendSinglePacket(PacketType::kAck, 0, nullptr, 0, sequence,
                            DeadlineMetadata{}, now);
@@ -1085,11 +1091,17 @@ void ReliableConnection::ProcessBatchPacket(const std::uint8_t* payload,
       return;
     }
 
-    const auto command_type =
-        static_cast<PacketType>(payload[offset] & kPacketTypeMask);
-    if (command_type == PacketType::kBatch) return;
+    ParsedPacketHeader command_header;
+    if (!ReadPacketHeader(payload + offset, command_size, command_header)) {
+      return;
+    }
+    if (command_header.type == PacketType::kBatch) return;
 
-    ProcessPacket(payload + offset, command_size, from, from_port);
+    ProcessSinglePacket(payload + offset, command_size, command_header.type,
+                        command_header.channel, command_header.sequence,
+                        command_header.hasDeadline, command_header.deadline_ms,
+                        command_header.ageMsAtSend, command_header.headerSize,
+                        from, from_port);
     offset += command_size;
   }
 }
@@ -1111,7 +1123,7 @@ bool ReliableConnection::SendFragmented(std::uint8_t channel, const void* data,
   const auto* src = static_cast<const std::uint8_t*>(data);
 
   for (std::uint16_t i = 0; i < frag_total; ++i) {
-    const auto now = Clock::now();
+    const auto now = std::chrono::steady_clock::now();
     if (DeadlineExpired(deadline, now)) {
       ++stats_deadline_send_drops_;
       return false;
@@ -1147,7 +1159,8 @@ bool ReliableConnection::SendFragmented(std::uint8_t channel, const void* data,
   return true;
 }
 
-void ReliableConnection::CleanupFragments(Clock::time_point now) {
+void ReliableConnection::CleanupFragments(
+    std::chrono::steady_clock::time_point now) {
   for (auto& ch_groups : fragment_groups_) {
     for (auto it = ch_groups.begin(); it != ch_groups.end();) {
       const auto elapsed =
@@ -1198,9 +1211,9 @@ std::size_t ReliableConnection::MaxPayloadForPacket(
   return config_.maxPacketSize - overhead;
 }
 
-bool ReliableConnection::PrepareDeadline(std::uint32_t deadline_ms,
-                                         DeadlineMetadata& deadline,
-                                         Clock::time_point now) const {
+bool ReliableConnection::PrepareDeadline(
+    std::uint32_t deadline_ms, DeadlineMetadata& deadline,
+    std::chrono::steady_clock::time_point now) const {
   deadline = {};
   if (deadline_ms == 0) return true;
   if (!config_.deadlinesEnabled) return false;
@@ -1294,7 +1307,7 @@ void ReliableConnection::ErasePendingPacket(PendingHandle handle) {
     pending_by_sequence_.erase(indexed);
     if (has_sequence_collision) {
       for (std::size_t index = 0; index < pending_packets_.size(); ++index) {
-        const PendingSlot& candidate = pending_packets_[index];
+        const PendingSlot& candidate = pending_packets_.at(index);
         if (!candidate.active || (index == handle.index &&
                                   candidate.generation == handle.generation)) {
           continue;
@@ -1353,14 +1366,16 @@ void ReliableConnection::SendAck(std::uint32_t sequence) {
 }
 
 void ReliableConnection::SendAck(std::uint32_t sequence,
-                                 Clock::time_point now) {
+                                 std::chrono::steady_clock::time_point now) {
   (void)SendPacket(PacketType::kAck, 0, nullptr, 0, sequence,
                    DeadlineMetadata{}, now);
 }
 
-void ReliableConnection::SendPing() { SendPing(Clock::now()); }
+void ReliableConnection::SendPing() {
+  SendPing(std::chrono::steady_clock::now());
+}
 
-void ReliableConnection::SendPing(Clock::time_point now) {
+void ReliableConnection::SendPing(std::chrono::steady_clock::time_point now) {
   std::uint32_t seq = GetNextSequence(0);
   if (!SendPacket(PacketType::kPing, 0, nullptr, 0, seq, DeadlineMetadata{},
                   now)) {
@@ -1376,7 +1391,8 @@ void ReliableConnection::SendPing(Clock::time_point now) {
   ScheduleRetry(pending_handle, now);
 }
 
-void ReliableConnection::ProcessPendingReliable(Clock::time_point now) {
+void ReliableConnection::ProcessPendingReliable(
+    std::chrono::steady_clock::time_point now) {
   // Process packets in order for each channel independently
   for (std::uint8_t ch = 0;
        ch < static_cast<std::uint8_t>(receive_sequence_.size()); ++ch) {
@@ -1384,8 +1400,8 @@ void ReliableConnection::ProcessPendingReliable(Clock::time_point now) {
   }
 }
 
-void ReliableConnection::ProcessPendingReliableChannel(std::uint8_t channel,
-                                                       Clock::time_point now) {
+void ReliableConnection::ProcessPendingReliableChannel(
+    std::uint8_t channel, std::chrono::steady_clock::time_point now) {
   if (channel >= pending_received_.size() ||
       channel >= receive_sequence_.size()) {
     return;
@@ -1414,7 +1430,8 @@ void ReliableConnection::ProcessPendingReliableChannel(std::uint8_t channel,
   }
 }
 
-void ReliableConnection::RetryPendingPackets(Clock::time_point now) {
+void ReliableConnection::RetryPendingPackets(
+    std::chrono::steady_clock::time_point now) {
   while (!retry_heap_.empty()) {
     const RetryEntry entry = retry_heap_.top();
     PendingPacket* pending_packet = GetPendingPacket(entry.handle);
@@ -1469,9 +1486,9 @@ void ReliableConnection::RetryPendingPackets(Clock::time_point now) {
   }
 }
 
-void ReliableConnection::ScheduleRetry(PendingHandle handle,
-                                       Clock::time_point now) {
-  PendingPacket* pending = GetPendingPacket(handle);
+void ReliableConnection::ScheduleRetry(
+    PendingHandle handle, std::chrono::steady_clock::time_point now) {
+  const PendingPacket* pending = GetPendingPacket(handle);
   if (pending == nullptr) return;
 
   const auto due_time = now + std::chrono::milliseconds(config_.retryTimeoutMs);
@@ -1495,7 +1512,8 @@ void ReliableConnection::EnsureReceiveBatchBuffers() {
   }
 }
 
-void ReliableConnection::CheckTimeout(Clock::time_point now) {
+void ReliableConnection::CheckTimeout(
+    std::chrono::steady_clock::time_point now) {
   if (state_ != ConnectionState::kConnected) return;
 
   auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(

@@ -27,14 +27,11 @@ class MockEventHandler : public ISocketEventHandler {
 class NetSocketTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    const bool result = InitializeSockets();
-    ASSERT_TRUE(result) << "Socket initialization should succeed";
+    InitializeSockets();
 
     factory = SocketFactoryRegistry::GetFactory();
     ASSERT_NE(factory, nullptr) << "Socket factory should be registered";
   }
-
-  void TearDown() override { ShutdownSockets(); }
 
   ISocketFactory* factory = nullptr;
 };
@@ -219,7 +216,7 @@ TEST_F(NetSocketTest, SendAndReceiveWithMock) {
   // Small delay
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-  // Setup expectation for mock - expect onDataReceived to be called
+  // Setup expectation for mock - expect OnDataReceived to be called.
   EXPECT_CALL(mock_handler, OnDataReceived(::testing::_, sender_port,
                                            ::testing::_, message_len))
       .Times(1)
@@ -264,16 +261,6 @@ TEST_F(NetSocketTest, NonBlockingBehavior) {
       sock->Receive(buffer, sizeof(buffer), from_addr, from_port);
   EXPECT_EQ(result.error, SocketError::kWouldBlock)
       << "Non-blocking receive with no data should return WouldBlock";
-}
-
-TEST_F(NetSocketTest, SocketType) {
-  const SocketConfig config;
-
-  auto udp_socket = factory->CreateSocket(SocketType::kUdp, config);
-  ASSERT_NE(udp_socket, nullptr);
-
-  EXPECT_EQ(udp_socket->Type(), SocketType::kUdp)
-      << "Socket type should be UDP";
 }
 
 TEST_F(NetSocketTest, MultipleMessagesSequential) {

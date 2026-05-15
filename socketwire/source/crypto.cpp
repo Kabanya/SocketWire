@@ -15,7 +15,7 @@ Result Initialize() {
   if (sodium_init() < 0) return Result::Failure(CryptoError::kSodiumFailure);
   return Result::Success();
 #else
-  return Result::failure(CryptoError::NotInitialized);
+  return Result::Failure(CryptoError::kNotInitialized);
 #endif
 }
 

@@ -24,16 +24,10 @@ class MockSocketEventHandler : public ISocketEventHandler {
 class UDPSocketTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    const bool result = InitializeSockets();
-    ASSERT_TRUE(result) << "Socket initialization should succeed";
+    InitializeSockets();
 
     factory = SocketFactoryRegistry::GetFactory();
     ASSERT_NE(factory, nullptr) << "Socket factory should be registered";
-  }
-
-  void TearDown() override {
-    // Cleanup
-    ShutdownSockets();
   }
 
   ISocketFactory* factory = nullptr;
@@ -43,10 +37,9 @@ class UDPSocketTest : public ::testing::Test {
 
 TEST_F(UDPSocketTest, CreateUDPSocket) {
   const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
 
   ASSERT_NE(socket, nullptr) << "Should create UDP socket";
-  EXPECT_EQ(socket->Type(), SocketType::kUdp);
 }
 
 TEST_F(UDPSocketTest, CreateWithCustomConfig) {
@@ -56,7 +49,7 @@ TEST_F(UDPSocketTest, CreateWithCustomConfig) {
   config.sendBufferSize = 65536;
   config.recvBufferSize = 65536;
 
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
 
   ASSERT_NE(socket, nullptr);
   EXPECT_FALSE(socket->IsBlocking())
@@ -66,7 +59,7 @@ TEST_F(UDPSocketTest, CreateWithCustomConfig) {
 TEST_F(UDPSocketTest, BindToAnyPort)  // bind test
 {
   const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
@@ -78,7 +71,7 @@ TEST_F(UDPSocketTest, BindToAnyPort)  // bind test
 
 TEST_F(UDPSocketTest, BindToSpecificPort) {
   const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
@@ -93,7 +86,7 @@ TEST_F(UDPSocketTest, BindToSpecificPort) {
 
 TEST_F(UDPSocketTest, BindTwiceReturnsError) {
   const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
@@ -108,8 +101,8 @@ TEST_F(UDPSocketTest, BindTwiceReturnsError) {
 
 TEST_F(UDPSocketTest, BindMultipleSocketsDifferentPorts) {
   const SocketConfig config;
-  auto socket1 = factory->CreateSocket(SocketType::kUdp, config);
-  auto socket2 = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket1 = factory->CreateUdpSocket(config);
+  auto socket2 = factory->CreateUdpSocket(config);
 
   ASSERT_NE(socket1, nullptr);
   ASSERT_NE(socket2, nullptr);
@@ -126,8 +119,8 @@ TEST_F(UDPSocketTest, BindMultipleSocketsDifferentPorts) {
 // SEND AND RECEIVE
 TEST_F(UDPSocketTest, SendAndReceive) {
   const SocketConfig config;
-  auto sender = factory->CreateSocket(SocketType::kUdp, config);
-  auto receiver = factory->CreateSocket(SocketType::kUdp, config);
+  auto sender = factory->CreateUdpSocket(config);
+  auto receiver = factory->CreateUdpSocket(config);
 
   ASSERT_NE(sender, nullptr);
   ASSERT_NE(receiver, nullptr);
@@ -169,7 +162,7 @@ TEST_F(UDPSocketTest, SendAndReceive) {
 
 TEST_F(UDPSocketTest, SendWithoutBind) {
   const SocketConfig config;
-  auto sender = factory->CreateSocket(SocketType::kUdp, config);
+  auto sender = factory->CreateUdpSocket(config);
   ASSERT_NE(sender, nullptr);
 
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
@@ -187,7 +180,7 @@ TEST_F(UDPSocketTest, SendWithoutBind) {
 
 TEST_F(UDPSocketTest, SendNullDataReturnsError) {
   const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
@@ -200,7 +193,7 @@ TEST_F(UDPSocketTest, SendNullDataReturnsError) {
 
 TEST_F(UDPSocketTest, SendZeroLengthReturnsError) {
   const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
@@ -214,7 +207,7 @@ TEST_F(UDPSocketTest, SendZeroLengthReturnsError) {
 
 TEST_F(UDPSocketTest, ReceiveWithoutBindReturnsError) {
   const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   char buffer[1024];
@@ -230,7 +223,7 @@ TEST_F(UDPSocketTest, ReceiveWithoutBindReturnsError) {
 
 TEST_F(UDPSocketTest, ReceiveNullBufferReturnsError) {
   const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
@@ -248,8 +241,8 @@ TEST_F(UDPSocketTest, ReceiveNullBufferReturnsError) {
 
 TEST_F(UDPSocketTest, MultipleMessages) {
   const SocketConfig config;
-  auto sender = factory->CreateSocket(SocketType::kUdp, config);
-  auto receiver = factory->CreateSocket(SocketType::kUdp, config);
+  auto sender = factory->CreateUdpSocket(config);
+  auto receiver = factory->CreateUdpSocket(config);
 
   ASSERT_NE(sender, nullptr);
   ASSERT_NE(receiver, nullptr);
@@ -288,7 +281,7 @@ TEST_F(UDPSocketTest, DefaultNonBlocking) {
   SocketConfig config;
   config.nonBlocking = true;
 
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
@@ -299,7 +292,7 @@ TEST_F(UDPSocketTest, DefaultNonBlocking) {
 
 TEST_F(UDPSocketTest, NonBlockingReceive) {
   const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
@@ -318,7 +311,7 @@ TEST_F(UDPSocketTest, NonBlockingReceive) {
 
 TEST_F(UDPSocketTest, SetBlockingWithoutBindReturnsError) {
   const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   const SocketError err = socket->SetBlocking(true);
@@ -329,7 +322,7 @@ TEST_F(UDPSocketTest, NonBlockingReceiveReturnsWouldBlock) {
   SocketConfig config;
   config.nonBlocking = true;
 
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
@@ -350,8 +343,8 @@ TEST_F(UDPSocketTest, NonBlockingReceiveReturnsWouldBlock) {
 // POLL TEST
 TEST_F(UDPSocketTest, PollWithHandler) {
   const SocketConfig config;
-  auto sender = factory->CreateSocket(SocketType::kUdp, config);
-  auto receiver = factory->CreateSocket(SocketType::kUdp, config);
+  auto sender = factory->CreateUdpSocket(config);
+  auto receiver = factory->CreateUdpSocket(config);
 
   ASSERT_NE(sender, nullptr);
   ASSERT_NE(receiver, nullptr);
@@ -372,7 +365,7 @@ TEST_F(UDPSocketTest, PollWithHandler) {
 
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-  // Expect onDataReceived to be called
+  // Expect OnDataReceived to be called.
   EXPECT_CALL(mock_handler, OnDataReceived(::testing::_, ::testing::_,
                                            ::testing::_, message_len))
       .Times(1)
@@ -391,7 +384,7 @@ TEST_F(UDPSocketTest, PollWithHandler) {
 
 TEST_F(UDPSocketTest, PollWithoutData) {
   const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
@@ -403,8 +396,8 @@ TEST_F(UDPSocketTest, PollWithoutData) {
 
 TEST_F(UDPSocketTest, PollMultiplePackets) {
   const SocketConfig config;
-  auto sender = factory->CreateSocket(SocketType::kUdp, config);
-  auto receiver = factory->CreateSocket(SocketType::kUdp, config);
+  auto sender = factory->CreateUdpSocket(config);
+  auto receiver = factory->CreateUdpSocket(config);
 
   ASSERT_NE(sender, nullptr);
   ASSERT_NE(receiver, nullptr);
@@ -442,7 +435,7 @@ TEST_F(UDPSocketTest, PollMultiplePackets) {
 
 TEST_F(UDPSocketTest, CloseSocket) {
   const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
@@ -460,7 +453,7 @@ TEST_F(UDPSocketTest, CloseSocket) {
 
 TEST_F(UDPSocketTest, CloseMultipleTimes) {
   const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
@@ -477,7 +470,7 @@ TEST_F(UDPSocketTest, DestructorClosesSocket) {
   std::uint16_t port = 0;
 
   {
-    auto socket = factory->CreateSocket(SocketType::kUdp, config);
+    auto socket = factory->CreateUdpSocket(config);
     const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
     ASSERT_EQ(socket->Bind(addr, 0), SocketError::kNone);
     port = socket->LocalPort();
@@ -486,7 +479,7 @@ TEST_F(UDPSocketTest, DestructorClosesSocket) {
   }
 
   // Should be able to bind to the same port again
-  auto socket2 = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket2 = factory->CreateUdpSocket(config);
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
 
   // Port should be available (may get same or different port from OS)
@@ -496,7 +489,7 @@ TEST_F(UDPSocketTest, DestructorClosesSocket) {
 // NATIVE HANDLE TEST
 TEST_F(UDPSocketTest, NativeHandle) {
   const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
+  auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
 
   // Before bind, handle might be -1
@@ -513,8 +506,8 @@ TEST_F(UDPSocketTest, NativeHandle) {
 
 TEST_F(UDPSocketTest, LargePacket) {
   const SocketConfig config;
-  auto sender = factory->CreateSocket(SocketType::kUdp, config);
-  auto receiver = factory->CreateSocket(SocketType::kUdp, config);
+  auto sender = factory->CreateUdpSocket(config);
+  auto receiver = factory->CreateUdpSocket(config);
 
   ASSERT_NE(sender, nullptr);
   ASSERT_NE(receiver, nullptr);
@@ -549,13 +542,4 @@ TEST_F(UDPSocketTest, LargePacket) {
   EXPECT_TRUE(recv_result.Succeeded());
   EXPECT_EQ(recv_result.bytes, static_cast<std::ptrdiff_t>(data_size));
   EXPECT_EQ(std::memcmp(buffer.data(), data.data(), data_size), 0);
-}
-
-// TYPE TEST
-TEST_F(UDPSocketTest, SocketType) {
-  const SocketConfig config;
-  auto socket = factory->CreateSocket(SocketType::kUdp, config);
-  ASSERT_NE(socket, nullptr);
-
-  EXPECT_EQ(socket->Type(), SocketType::kUdp);
 }

@@ -11,22 +11,18 @@
 #include "reliable_connection.hpp"
 #include "socket_init.hpp"
 
-using namespace std::chrono; // NOLINT
-using namespace socketwire; // NOLINT
+using namespace std::chrono;  // NOLINT
+using namespace socketwire;   // NOLINT
 using socketwire::SocketAddress;
-
 
 class ReliableConnectionPerformanceTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    const bool result = socketwire::InitializeSockets();
-    ASSERT_TRUE(result) << "Socket initialization should succeed";
+    socketwire::InitializeSockets();
 
     auto factory = SocketFactoryRegistry::GetFactory();
     ASSERT_NE(factory, nullptr) << "Socket factory should be available";
   }
-
-  void TearDown() override { socketwire::ShutdownSockets(); }
 
   // Helper to measure throughput
   struct ThroughputResult {
@@ -517,8 +513,7 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionScalability) {
   network_thread.join();
 }
 
-TEST_F(ReliableConnectionPerformanceTest,
-       BitStreamSerializationPerformance) {
+TEST_F(ReliableConnectionPerformanceTest, BitStreamSerializationPerformance) {
   const int iterations = 100000;
 
   std::cout << "\n=== BitStream Serialization Performance ===" << "\n";

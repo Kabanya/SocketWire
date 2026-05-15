@@ -6,7 +6,7 @@
 
 #include "crypto.hpp"
 
-using namespace socketwire; // NOLINT
+using namespace socketwire;  // NOLINT
 
 namespace {
 
@@ -17,7 +17,7 @@ class CryptoTest : public ::testing::Test {
     auto result = crypto::Initialize();
     ASSERT_TRUE(result.ok) << "Failed to initialize crypto library";
 #else
-    (void)crypto::initialize();
+    (void)crypto::Initialize();
 #endif
   }
 };
@@ -68,7 +68,7 @@ TEST_F(CryptoTest, InitializeSucceeds) {
   EXPECT_EQ(result.error, crypto::CryptoError::kNone);
 #else
   EXPECT_FALSE(result.ok);
-  EXPECT_EQ(result.error, crypto::CryptoError::NotInitialized);
+  EXPECT_EQ(result.error, crypto::CryptoError::kNotInitialized);
 #endif
 }
 
@@ -93,8 +93,7 @@ TEST_F(CryptoTest, ResultHelpers) {
   EXPECT_TRUE(success.ok);
   EXPECT_EQ(success.error, crypto::CryptoError::kNone);
 
-  auto failure = crypto::Result::Failure(
-      crypto::CryptoError::kInvalidState);
+  auto failure = crypto::Result::Failure(crypto::CryptoError::kInvalidState);
   EXPECT_FALSE(failure.ok);
   EXPECT_EQ(failure.error, crypto::CryptoError::kInvalidState);
 }
@@ -125,14 +124,13 @@ TEST_F(CryptoTest, ResultAllErrorCodes) {
 
 TEST_F(CryptoTest, CipherSuiteSupported) {
 #if SOCKETWIRE_HAVE_LIBSODIUM
-  EXPECT_TRUE(crypto::CipherSuiteSupported(
-      crypto::CipherSuite::kXChaCha20Poly1305));
+  EXPECT_TRUE(
+      crypto::CipherSuiteSupported(crypto::CipherSuite::kXChaCha20Poly1305));
 #else
-  EXPECT_FALSE(crypto::cipher_suite_supported(
-      crypto::CipherSuite::XChaCha20Poly1305));
+  EXPECT_FALSE(
+      crypto::CipherSuiteSupported(crypto::CipherSuite::kXChaCha20Poly1305));
 #endif
-  EXPECT_FALSE(crypto::CipherSuiteSupported(
-      crypto::CipherSuite::kNone));
+  EXPECT_FALSE(crypto::CipherSuiteSupported(crypto::CipherSuite::kNone));
 }
 
 TEST_F(CryptoTest, KeyPairGeneration) {
@@ -149,8 +147,8 @@ TEST_F(CryptoTest, KeyPairGeneration) {
   EXPECT_NE(kp1.secretKey, kp2.secretKey);
 #else
   EXPECT_FALSE(result.ok);
-  EXPECT_EQ(result.error, crypto::CryptoError::NotInitialized);
-  EXPECT_FALSE(kp1.valid());
+  EXPECT_EQ(result.error, crypto::CryptoError::kNotInitialized);
+  EXPECT_FALSE(kp1.Valid());
 #endif
 }
 
@@ -189,7 +187,7 @@ TEST_F(CryptoTest, NonceGeneratorInitRandom) {
   EXPECT_EQ(ng.counter, 0u);
 #else
   EXPECT_FALSE(result.ok);
-  EXPECT_EQ(result.error, crypto::CryptoError::NotInitialized);
+  EXPECT_EQ(result.error, crypto::CryptoError::kNotInitialized);
   EXPECT_FALSE(ng.initialized);
 #endif
 }
@@ -245,8 +243,7 @@ TEST_F(CryptoTest, ClientHelloWriteReadStrict) {
   EXPECT_EQ(bs.GetSizeBytes(), crypto::kClientHelloSize);
 
   crypto::ClientHelloData read;
-  auto result = crypto::ReadClientHello(bs.GetData(),
-                                                    bs.GetSizeBytes(), read);
+  auto result = crypto::ReadClientHello(bs.GetData(), bs.GetSizeBytes(), read);
   ASSERT_TRUE(result.ok);
   EXPECT_EQ(read.versionMajor, original.versionMajor);
   EXPECT_EQ(read.versionMinor, original.versionMinor);
@@ -262,28 +259,26 @@ TEST_F(CryptoTest, ClientHelloInvalidData) {
   EXPECT_EQ(result.error, crypto::CryptoError::kDecodeError);
 
   BitStream wrong_opcode;
-  wrong_opcode.Write<std::uint8_t>(static_cast<std::uint8_t>(
-      crypto::HandshakeOpcode::kServerHello));
+  wrong_opcode.Write<std::uint8_t>(
+      static_cast<std::uint8_t>(crypto::HandshakeOpcode::kServerHello));
   wrong_opcode.Write<std::uint8_t>(1);
   wrong_opcode.Write<std::uint8_t>(0);
-  wrong_opcode.Write<std::uint8_t>(static_cast<std::uint8_t>(
-      crypto::CipherSuite::kXChaCha20Poly1305));
+  wrong_opcode.Write<std::uint8_t>(
+      static_cast<std::uint8_t>(crypto::CipherSuite::kXChaCha20Poly1305));
   std::array<unsigned char, crypto::kHandshakeNonceSize> nonce{};
   std::array<unsigned char, crypto::kPublicKeySize> pub{};
   wrong_opcode.WriteBytes(nonce.data(), nonce.size());
   wrong_opcode.WriteBytes(pub.data(), pub.size());
-  result = crypto::ReadClientHello(
-      wrong_opcode.GetData(), wrong_opcode.GetSizeBytes(), read);
+  result = crypto::ReadClientHello(wrong_opcode.GetData(),
+                                   wrong_opcode.GetSizeBytes(), read);
   EXPECT_FALSE(result.ok);
 
   const crypto::ClientHelloData original;
   BitStream bs;
   ASSERT_TRUE(crypto::WriteClientHello(bs, original).ok);
-  result = crypto::ReadClientHello(bs.GetData(),
-                                               bs.GetSizeBytes() - 1, read);
+  result = crypto::ReadClientHello(bs.GetData(), bs.GetSizeBytes() - 1, read);
   EXPECT_FALSE(result.ok);
-  result = crypto::ReadClientHello(bs.GetData(),
-                                               bs.GetSizeBytes() + 1, read);
+  result = crypto::ReadClientHello(bs.GetData(), bs.GetSizeBytes() + 1, read);
   EXPECT_FALSE(result.ok);
 }
 
@@ -305,8 +300,7 @@ TEST_F(CryptoTest, ServerHelloWriteReadStrict) {
   EXPECT_EQ(bs.GetSizeBytes(), crypto::kServerHelloSize);
 
   crypto::ServerHelloData read;
-  auto result = crypto::ReadServerHello(bs.GetData(),
-                                                    bs.GetSizeBytes(), read);
+  auto result = crypto::ReadServerHello(bs.GetData(), bs.GetSizeBytes(), read);
   ASSERT_TRUE(result.ok);
   EXPECT_EQ(read.versionMajor, original.versionMajor);
   EXPECT_EQ(read.versionMinor, original.versionMinor);

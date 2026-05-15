@@ -7,8 +7,6 @@
 /out
 CMakeLists.txt.user
 compile_commands.json
-/temp_examples
-scripts
 *.exe
 **.py
 **.txt

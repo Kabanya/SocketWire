@@ -22,7 +22,6 @@ using socketwire::ReliableConnectionConfig;
 using socketwire::SocketAddress;
 using socketwire::SocketError;
 using socketwire::SocketResult;
-using socketwire::SocketType;
 
 namespace {
 
@@ -121,8 +120,8 @@ class MockSocket : public ISocket {
     return SendTo(stream.GetData(), stream.GetSizeBytes(), to_addr, to_port);
   }
 
-  SocketResult Receive(void* buffer, std::size_t capacity, SocketAddress& from_addr,
-                       uint16_t& from_port) override {
+  SocketResult Receive(void* buffer, std::size_t capacity,
+                       SocketAddress& from_addr, uint16_t& from_port) override {
     if (shouldBlock || receiveQueue.empty()) {
       if (receiveError != SocketError::kNone) {
         return {.bytes = -1, .error = receiveError};
@@ -151,13 +150,13 @@ class MockSocket : public ISocket {
 
   [[nodiscard]] bool IsBlocking() const override { return false; }
   [[nodiscard]] uint16_t LocalPort() const override { return 54321; }
-  [[nodiscard]] SocketType Type() const override { return SocketType::kUdp; }
   [[nodiscard]] int NativeHandle() const override { return 42; }
   void Close() override {}
 
   void QueueReceive(const void* data, std::size_t size) {
-    const std::vector<std::uint8_t> packet(static_cast<const std::uint8_t*>(data),
-                                      static_cast<const std::uint8_t*>(data) + size);
+    const std::vector<std::uint8_t> packet(
+        static_cast<const std::uint8_t*>(data),
+        static_cast<const std::uint8_t*>(data) + size);
     receiveQueue.push_back(packet);
   }
 
@@ -184,16 +183,18 @@ class MockEventHandler : public IReliableConnectionHandler {
   void OnReliableReceived(std::uint8_t channel, const void* data,
                           std::size_t size) override {
     (void)channel;
-    const std::vector<std::uint8_t> packet(static_cast<const std::uint8_t*>(data),
-                                      static_cast<const std::uint8_t*>(data) + size);
+    const std::vector<std::uint8_t> packet(
+        static_cast<const std::uint8_t*>(data),
+        static_cast<const std::uint8_t*>(data) + size);
     reliablePackets.push_back(packet);
   }
 
   void OnUnreliableReceived(std::uint8_t channel, const void* data,
                             std::size_t size) override {
     (void)channel;
-    const std::vector<std::uint8_t> packet(static_cast<const std::uint8_t*>(data),
-                                      static_cast<const std::uint8_t*>(data) + size);
+    const std::vector<std::uint8_t> packet(
+        static_cast<const std::uint8_t*>(data),
+        static_cast<const std::uint8_t*>(data) + size);
     unreliablePackets.push_back(packet);
   }
 
@@ -465,8 +466,7 @@ TEST_F(ReliableConnectionTest, AckPiggybacksOnNextApplicationPacket) {
   conn.SetRemoteAddress(addr, 12345);
   conn.SetConnected();
 
-  const auto inbound =
-      MakeBasePacket(PacketType::kReliable, 0, 0, "in", 2);
+  const auto inbound = MakeBasePacket(PacketType::kReliable, 0, 0, "in", 2);
   socket.ClearSent();
   conn.ProcessPacket(inbound.data(), inbound.size(), addr, 12345);
   ASSERT_EQ(handler.reliablePackets.size(), 1u);
@@ -582,8 +582,6 @@ TEST_F(ReliableConnectionTest, DuplicateDetection) {
 }
 
 TEST_F(ReliableConnectionTest, AcknowledgmentReceived) {
-  // TODO(kabanya): why on windows this test does not pass with 1000 ping
-  // interval
   config.pingIntervalMs = 10000;  // in fact disable ping
   ReliableConnection conn(&socket, config);
   conn.SetHandler(&handler);
@@ -844,9 +842,10 @@ TEST_F(ReliableConnectionTest, SendWithoutDeadlineUsesBaseHeader) {
   ASSERT_EQ(packet.size(), kBaseHeaderSize + 3u);
   EXPECT_EQ(packet.at(0), static_cast<std::uint8_t>(PacketType::kUnreliable));
   EXPECT_EQ(packet.at(1), 0);
-  EXPECT_EQ(std::string(packet.begin() + static_cast<std::ptrdiff_t>(kBaseHeaderSize),
-                        packet.end()),
-            "abc");
+  EXPECT_EQ(
+      std::string(packet.begin() + static_cast<std::ptrdiff_t>(kBaseHeaderSize),
+                  packet.end()),
+      "abc");
 }
 
 TEST_F(ReliableConnectionTest, DeadlineSendDisabledIsRejected) {
@@ -954,9 +953,9 @@ TEST_F(ReliableConnectionTest, ExpiredReliableStyleReceiveIsAckedAndDropped) {
   std::memcpy(fragment_payload.data() + 2, &frag_index, 2);
   std::memcpy(fragment_payload.data() + 4, &frag_total, 2);
   std::memcpy(fragment_payload.data() + 6, "abc", 3);
-  const auto fragment = MakeDeadlinePacket(
-      PacketType::kFragment, 0, 2, 10, 10, fragment_payload.data(),
-      fragment_payload.size());
+  const auto fragment =
+      MakeDeadlinePacket(PacketType::kFragment, 0, 2, 10, 10,
+                         fragment_payload.data(), fragment_payload.size());
   socket.ClearSent();
   conn.ProcessPacket(fragment.data(), fragment.size(), addr, 12345);
   conn.Update();
@@ -1006,9 +1005,9 @@ TEST_F(ReliableConnectionTest, FragmentGroupExpiresByDeadline) {
   std::memcpy(fragment_payload.data() + 4, &frag_total, 2);
   std::memcpy(fragment_payload.data() + 6, "abc", 3);
 
-  const auto packet = MakeDeadlinePacket(
-      PacketType::kFragment, 0, 0, 20, 0, fragment_payload.data(),
-      fragment_payload.size());
+  const auto packet =
+      MakeDeadlinePacket(PacketType::kFragment, 0, 0, 20, 0,
+                         fragment_payload.data(), fragment_payload.size());
   conn.ProcessPacket(packet.data(), packet.size(), addr, 12345);
   ASSERT_EQ(conn.GetDeadlineExpiredFragmentGroups(), 0u);
 
@@ -1090,7 +1089,8 @@ TEST_F(ConnectionManagerTest, BroadcastReliable) {
   SocketAddress addr2 = SocketAddress::FromIPv4(0x7F000002);
 
   BitStream connect_bs;
-  connect_bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kConnect));
+  connect_bs.Write<std::uint8_t>(
+      static_cast<std::uint8_t>(PacketType::kConnect));
   connect_bs.Write<std::uint8_t>(0);
   connect_bs.Write<std::uint32_t>(0);
 
@@ -1115,7 +1115,8 @@ TEST_F(ConnectionManagerTest, BroadcastUnreliable) {
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
 
   BitStream connect_bs;
-  connect_bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kConnect));
+  connect_bs.Write<std::uint8_t>(
+      static_cast<std::uint8_t>(PacketType::kConnect));
   connect_bs.Write<std::uint8_t>(0);
   connect_bs.Write<std::uint32_t>(0);
 
@@ -1393,7 +1394,8 @@ TEST_F(ReliableConnectionTest, SecureConnectionRejectsPlaintextAfterHandshake) {
   server_handler.Reset();
 
   BitStream plaintext;
-  plaintext.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kReliable));
+  plaintext.Write<std::uint8_t>(
+      static_cast<std::uint8_t>(PacketType::kReliable));
   plaintext.Write<std::uint8_t>(0);
   plaintext.Write<std::uint32_t>(0);
   plaintext.WriteBytes("plain", 5);
@@ -1496,8 +1498,8 @@ TEST_F(ReliableConnectionTest, SecureDeadlinePayloadDelivery) {
   server_handler.Reset();
 
   const char* reliable_msg = "secure deadline reliable";
-  ASSERT_TRUE(client.SendReliableWithDeadline(
-      0, reliable_msg, std::strlen(reliable_msg), 100));
+  ASSERT_TRUE(client.SendReliableWithDeadline(0, reliable_msg,
+                                              std::strlen(reliable_msg), 100));
   ASSERT_EQ(client_socket.sentPackets.size(), 1u);
   const auto reliable_packet = client_socket.sentPackets.back();
   ASSERT_EQ(reliable_packet.data.at(0) & kPacketTypeMask,

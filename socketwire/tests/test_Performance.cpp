@@ -20,8 +20,7 @@ class PerformanceTest : public ::testing::Test {
               << ::testing::UnitTest::GetInstance()->current_test_info()->name()
               << "________\n\n\n";
 
-    const bool result = InitializeSockets();
-    ASSERT_TRUE(result) << "Socket initialization should succeed";
+    InitializeSockets();
     factory = SocketFactoryRegistry::GetFactory();
     ASSERT_NE(factory, nullptr) << "Socket factory should be registered";
   }

@@ -16,15 +16,12 @@
 #include <memory>
 #include <optional>
 #include <queue>
-#include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "bit_stream.hpp"
 #include "crypto.hpp"
 #include "i_socket.hpp"
-
-using Clock = std::chrono::steady_clock;
 
 namespace socketwire {
 
@@ -285,7 +282,6 @@ class ReliableConnection {
     return stats_lost_packets_;
   }
   [[nodiscard]] float GetRtt() const { return rtt_; }
-  [[nodiscard]] float GetRTT() const { return GetRtt(); }
   /// Current adaptive send window (0 = unlimited).
   [[nodiscard]] std::uint32_t GetSendWindow() const {
     return current_send_window_;
@@ -429,42 +425,55 @@ class ReliableConnection {
                   const DeadlineMetadata& deadline);
   bool SendPacket(PacketType type, std::uint8_t channel, const void* data,
                   std::size_t size, std::uint32_t sequence,
-                  const DeadlineMetadata& deadline, Clock::time_point now);
+                  const DeadlineMetadata& deadline,
+                  std::chrono::steady_clock::time_point now);
   bool SendSinglePacket(PacketType type, std::uint8_t channel, const void* data,
                         std::size_t size, std::uint32_t sequence,
                         const DeadlineMetadata& deadline,
-                        Clock::time_point now);
+                        std::chrono::steady_clock::time_point now);
   bool BuildPacket(PacketType type, std::uint8_t channel, const void* data,
                    std::size_t size, std::uint32_t sequence,
-                   const DeadlineMetadata& deadline, Clock::time_point now,
+                   const DeadlineMetadata& deadline,
+                   std::chrono::steady_clock::time_point now,
                    std::vector<std::uint8_t>& buffer, std::size_t& packet_size);
   bool SendRawDatagram(const std::uint8_t* data, std::size_t size,
-                       Clock::time_point now,
+                       std::chrono::steady_clock::time_point now,
                        std::uint32_t logical_packets = 1);
   [[nodiscard]] bool CanBatchPacket(PacketType type) const;
   bool SendBatchWithCommand(const std::uint8_t* command,
-                            std::size_t command_size, Clock::time_point now);
-  bool FlushQueuedAcks(Clock::time_point now);
-  void QueueAck(std::uint32_t sequence, Clock::time_point now);
+                            std::size_t command_size,
+                            std::chrono::steady_clock::time_point now);
+  bool FlushQueuedAcks(std::chrono::steady_clock::time_point now);
+  void QueueAck(std::uint32_t sequence,
+                std::chrono::steady_clock::time_point now);
   void ProcessBatchPacket(const std::uint8_t* payload, std::size_t size,
                           const SocketAddress& from, std::uint16_t from_port);
+  void ProcessSinglePacket(const std::uint8_t* packet_data, std::size_t size,
+                           PacketType type, std::uint8_t channel,
+                           std::uint32_t sequence, bool has_deadline,
+                           std::uint32_t deadline_ms,
+                           std::uint32_t age_ms_at_send,
+                           std::size_t header_size, const SocketAddress& from,
+                           std::uint16_t from_port);
   /// Split a large payload into Fragment packets and enqueue each for reliable
   /// delivery.
   bool SendFragmented(std::uint8_t channel, const void* data, std::size_t size,
                       const DeadlineMetadata& deadline);
   void SendAck(std::uint32_t sequence);
-  void SendAck(std::uint32_t sequence, Clock::time_point now);
+  void SendAck(std::uint32_t sequence,
+               std::chrono::steady_clock::time_point now);
   void SendPing();
-  void SendPing(Clock::time_point now);
-  void ProcessPendingReliable(Clock::time_point now);
+  void SendPing(std::chrono::steady_clock::time_point now);
+  void ProcessPendingReliable(std::chrono::steady_clock::time_point now);
   void ProcessPendingReliableChannel(std::uint8_t channel,
-                                     Clock::time_point now);
-  void RetryPendingPackets(Clock::time_point now);
-  void CheckTimeout(Clock::time_point now);
+                                     std::chrono::steady_clock::time_point now);
+  void RetryPendingPackets(std::chrono::steady_clock::time_point now);
+  void CheckTimeout(std::chrono::steady_clock::time_point now);
   /// Discard fragment groups that have been waiting longer than
   /// fragmentTimeoutMs.
-  void CleanupFragments(Clock::time_point now);
-  void ScheduleRetry(PendingHandle handle, Clock::time_point now);
+  void CleanupFragments(std::chrono::steady_clock::time_point now);
+  void ScheduleRetry(PendingHandle handle,
+                     std::chrono::steady_clock::time_point now);
   void EnsureReceiveBatchBuffers();
   PendingHandle AllocatePendingPacket(std::uint32_t sequence);
   void ResetPendingPacketForReuse(PendingPacket& pending,
@@ -482,9 +491,9 @@ class ReliableConnection {
   [[nodiscard]] std::size_t CryptoEnvelopeOverhead() const;
   [[nodiscard]] std::size_t MaxPayloadForPacket(
       bool has_deadline = false, std::size_t header_extra = 0) const;
-  [[nodiscard]] bool PrepareDeadline(std::uint32_t deadline_ms,
-                                     DeadlineMetadata& deadline,
-                                     Clock::time_point now) const;
+  [[nodiscard]] bool PrepareDeadline(
+      std::uint32_t deadline_ms, DeadlineMetadata& deadline,
+      std::chrono::steady_clock::time_point now) const;
   [[nodiscard]] static bool DeadlineExpired(
       const DeadlineMetadata& deadline,
       std::chrono::steady_clock::time_point now);
@@ -601,24 +610,5 @@ class ConnectionManager {
   bool HandshakeAllowed();  ///< Returns true if a new connection may be
                             ///< accepted right now.
 };
-
-// Helper function to create connection key from IPv4 address and port
-inline std::string MakeConnectionKey(const SocketAddress& addr,
-                                     std::uint16_t port) {
-  std::string key;
-  if (addr.isIPv6) {
-    // 16 bytes IPv6 + 4 bytes scopeId + 2 bytes port
-    key.resize(22);
-    std::memcpy(key.data(), addr.ipv6.bytes.data(), 16);
-    std::memcpy(key.data() + 16, &addr.ipv6.scopeId, 4);
-    std::memcpy(key.data() + 20, &port, 2);
-  } else {
-    // 4 bytes IPv4 + 2 bytes port
-    key.resize(6);
-    std::memcpy(key.data(), &addr.ipv4.hostOrderAddress, 4);
-    std::memcpy(key.data() + 4, &port, 2);
-  }
-  return key;
-}
 
 }  // namespace socketwire

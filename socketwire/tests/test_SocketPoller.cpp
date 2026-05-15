@@ -25,19 +25,16 @@ class MockSocketEventHandler : public ISocketEventHandler {
 class SocketPollerTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    const bool result = InitializeSockets();
-    ASSERT_TRUE(result) << "Socket initialization should succeed";
+    InitializeSockets();
     factory = SocketFactoryRegistry::GetFactory();
     ASSERT_NE(factory, nullptr);
   }
-
-  void TearDown() override { ShutdownSockets(); }
 
   ISocketFactory* factory = nullptr;
 
   std::unique_ptr<ISocket> CreateUdpSocket() {
     const SocketConfig config;
-    return factory->CreateSocket(SocketType::kUdp, config);
+    return factory->CreateUdpSocket(config);
   }
 };
 

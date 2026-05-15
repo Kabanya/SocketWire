@@ -1,8 +1,6 @@
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cerrno>
-#include <cstring>
 #include <utility>
 
 #include "i_socket.hpp"
@@ -20,10 +18,6 @@
 #include "socket_address_utils.hpp"
 
 namespace socketwire {
-
-// Pull shared address-conversion helpers into this TU's namespace.
-using detail::FillSockaddrStorage;
-using detail::SocketaddressFromSockaddr;
 
 // ERRORS MAP errno -> SocketError
 static SocketError MapErrno(int e) {
@@ -65,7 +59,6 @@ class PosixUDPSocket final : public ISocket {
   SocketError SetBlocking(bool enable) override;
   [[nodiscard]] bool IsBlocking() const override;
   [[nodiscard]] std::uint16_t LocalPort() const override;
-  [[nodiscard]] SocketType Type() const override;
   [[nodiscard]] int NativeHandle() const override;
   void Close() override;
 
@@ -117,8 +110,8 @@ SocketError PosixUDPSocket::Bind(const SocketAddress& address,
   sockaddr_storage addr{};
   socklen_t addr_len = 0;
   int target_family = AF_UNSPEC;
-  if (!FillSockaddrStorage(address, port, family_ == AF_INET6, addr,
-                           target_family, addr_len)) {
+  if (!detail::FillSockaddrStorage(address, port, family_ == AF_INET6, addr,
+                                   target_family, addr_len)) {
     ::close(fd_);
     fd_ = -1;
     family_ = AF_UNSPEC;
@@ -191,8 +184,8 @@ SocketResult PosixUDPSocket::SendTo(const void* data, std::size_t length,
   sockaddr_storage addr{};
   socklen_t addr_len = 0;
   int target_family = AF_UNSPEC;
-  if (!FillSockaddrStorage(to_addr, to_port, family_ == AF_INET6, addr,
-                           target_family, addr_len)) {
+  if (!detail::FillSockaddrStorage(to_addr, to_port, family_ == AF_INET6, addr,
+                                   target_family, addr_len)) {
     return {.bytes = -1, .error = SocketError::kInvalidParam};
   }
 
@@ -236,9 +229,9 @@ std::size_t PosixUDPSocket::SendMany(
       if (datagram.toAddr.isIPv6 && !config_.enableIPv6) break;
 
       int target_family = AF_UNSPEC;
-      if (!FillSockaddrStorage(datagram.toAddr, datagram.toPort,
-                               family_ == AF_INET6, addresses[prepared],
-                               target_family, address_lengths[prepared])) {
+      if (!detail::FillSockaddrStorage(
+              datagram.toAddr, datagram.toPort, family_ == AF_INET6,
+              addresses[prepared], target_family, address_lengths[prepared])) {
         break;
       }
 
@@ -252,9 +245,8 @@ std::size_t PosixUDPSocket::SendMany(
 
     if (prepared == 0) break;
 
-    const int sent =
-        ::sendmmsg(fd_, messages.data(), static_cast<unsigned int>(prepared),
-                   0);
+    const int sent = ::sendmmsg(fd_, messages.data(),
+                                static_cast<unsigned int>(prepared), 0);
     if (sent == -1) break;
 
     sent_count += static_cast<std::size_t>(sent);
@@ -282,7 +274,7 @@ SocketResult PosixUDPSocket::Receive(void* buffer, std::size_t capacity,
                                  0, reinterpret_cast<sockaddr*>(&addr), &len);
   if (std::cmp_equal(got, -1)) return {.bytes = -1, .error = MapErrno(errno)};
 
-  from_addr = SocketaddressFromSockaddr(addr);
+  from_addr = detail::SocketAddressFromSockaddr(addr);
   if (addr.ss_family == AF_INET) {
     from_port = ntohs(reinterpret_cast<sockaddr_in*>(&addr)->sin_port);
   } else if (addr.ss_family == AF_INET6) {
@@ -293,8 +285,7 @@ SocketResult PosixUDPSocket::Receive(void* buffer, std::size_t capacity,
   return {.bytes = got, .error = SocketError::kNone};
 }
 
-std::size_t PosixUDPSocket::ReceiveMany(
-    std::span<IncomingDatagram> datagrams) {
+std::size_t PosixUDPSocket::ReceiveMany(std::span<IncomingDatagram> datagrams) {
 #if defined(__linux__)
   if (fd_ == -1 || datagrams.empty()) return 0;
 
@@ -318,15 +309,14 @@ std::size_t PosixUDPSocket::ReceiveMany(
 
   if (prepared == 0) return 0;
 
-  const int received =
-      ::recvmmsg(fd_, messages.data(), static_cast<unsigned int>(prepared), 0,
-                 nullptr);
+  const int received = ::recvmmsg(
+      fd_, messages.data(), static_cast<unsigned int>(prepared), 0, nullptr);
   if (received == -1) return 0;
 
   for (int i = 0; i < received; ++i) {
     auto& datagram = datagrams[static_cast<std::size_t>(i)];
     const auto& addr = addresses[static_cast<std::size_t>(i)];
-    datagram.fromAddr = SocketaddressFromSockaddr(addr);
+    datagram.fromAddr = detail::SocketAddressFromSockaddr(addr);
     if (addr.ss_family == AF_INET) {
       datagram.fromPort =
           ntohs(reinterpret_cast<const sockaddr_in*>(&addr)->sin_port);
@@ -336,10 +326,9 @@ std::size_t PosixUDPSocket::ReceiveMany(
     } else {
       datagram.fromPort = 0;
     }
-    datagram.result = {
-        .bytes = static_cast<std::ptrdiff_t>(
-            messages[static_cast<std::size_t>(i)].msg_len),
-        .error = SocketError::kNone};
+    datagram.result = {.bytes = static_cast<std::ptrdiff_t>(
+                           messages[static_cast<std::size_t>(i)].msg_len),
+                       .error = SocketError::kNone};
   }
 
   return static_cast<std::size_t>(received);
@@ -392,8 +381,6 @@ bool PosixUDPSocket::IsBlocking() const { return blocking_; }
 
 std::uint16_t PosixUDPSocket::LocalPort() const { return bound_port_; }
 
-SocketType PosixUDPSocket::Type() const { return SocketType::kUdp; }
-
 int PosixUDPSocket::NativeHandle() const { return fd_; }
 
 void PosixUDPSocket::Close() {
@@ -405,18 +392,10 @@ void PosixUDPSocket::Close() {
   }
 }
 
-// POSIX Socket Factory (currently implements only UDP).
 class PosixSocketFactory : public ISocketFactory {
  public:
-  std::unique_ptr<ISocket> CreateSocket(SocketType type,
-                                        const SocketConfig& cfg) override {
-    switch (type) {
-      case SocketType::kUdp:
-        return std::make_unique<PosixUDPSocket>(cfg);
-      case SocketType::kTcp:
-      default:
-        return nullptr;
-    }
+  std::unique_ptr<ISocket> CreateUdpSocket(const SocketConfig& cfg) override {
+    return std::make_unique<PosixUDPSocket>(cfg);
   }
 };
 

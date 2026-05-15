@@ -10,12 +10,7 @@ void RegisterPosixSocketFactory();
 /// Initializes the socket subsystem.
 ///
 /// Safe to call multiple times.
-bool InitializeSockets();
-inline bool initialize_sockets();
-
-/// Shuts down the socket subsystem where explicit cleanup is needed.
-void ShutdownSockets();
-inline void shutdown_sockets();
+void InitializeSockets();
 
 }  // namespace socketwire
 
@@ -28,28 +23,17 @@ inline void shutdown_sockets();
 
 namespace socketwire {
 
-inline bool InitializeSockets() {
+inline void InitializeSockets() {
   static bool initialized = false;
-  if (initialized) return true;
+  if (initialized) return;
 
 #if SOCKETWIRE_PLATFORM_WINDOWS
-  register_windows_socket_factory();
+  RegisterWindowsSocketFactory();
 #else
   RegisterPosixSocketFactory();
 #endif
 
   initialized = true;
-  return true;
 }
-
-inline void ShutdownSockets() {
-  // On Windows, WSACleanup is called automatically by WSAInitializer
-  // destructor. On POSIX, no cleanup needed. This function exists for symmetry
-  // and explicit cleanup if needed.
-}
-
-inline bool initialize_sockets() { return InitializeSockets(); }
-
-inline void shutdown_sockets() { ShutdownSockets(); }
 
 }  // namespace socketwire

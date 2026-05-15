@@ -9,21 +9,18 @@
 #include "socket_init.hpp"
 
 using namespace std::chrono_literals;
-using namespace socketwire; // NOLINT
-using socketwire::SocketAddress;
+using namespace socketwire;  // NOLINT
 using socketwire::ReliableConnectionConfig;
+using socketwire::SocketAddress;
 
 class IntegrationTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    const bool result = socketwire::InitializeSockets();
-    ASSERT_TRUE(result) << "Socket initialization should succeed";
+    socketwire::InitializeSockets();
 
     auto factory = SocketFactoryRegistry::GetFactory();
     ASSERT_NE(factory, nullptr) << "Socket factory should be available";
   }
-
-  void TearDown() override { socketwire::ShutdownSockets(); }
 };
 
 // Simple echo server handler
@@ -73,8 +70,9 @@ class ClientHandler : public IReliableConnectionHandler {
     reliableReceived++;
 
     const std::scoped_lock lock(messagesMutex);
-    const std::vector<std::uint8_t> msg(static_cast<const std::uint8_t*>(data),
-                                   static_cast<const std::uint8_t*>(data) + size);
+    const std::vector<std::uint8_t> msg(
+        static_cast<const std::uint8_t*>(data),
+        static_cast<const std::uint8_t*>(data) + size);
     receivedMessages.push_back(msg);
   }
 
@@ -84,8 +82,9 @@ class ClientHandler : public IReliableConnectionHandler {
     unreliableReceived++;
 
     const std::scoped_lock lock(messagesMutex);
-    const std::vector<std::uint8_t> msg(static_cast<const std::uint8_t*>(data),
-                                   static_cast<const std::uint8_t*>(data) + size);
+    const std::vector<std::uint8_t> msg(
+        static_cast<const std::uint8_t*>(data),
+        static_cast<const std::uint8_t*>(data) + size);
     receivedMessages.push_back(msg);
   }
 

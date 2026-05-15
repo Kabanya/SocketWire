@@ -1,6 +1,3 @@
-#include <cassert>
-#include <cstring>
-
 #include "i_socket.hpp"
 
 #ifdef __clangd__
@@ -25,11 +22,6 @@ void RegisterWindowsSocketFactory() {}
 #endif
 
 namespace socketwire {
-
-// Pull shared address-conversion helpers into this TU's namespace.
-using detail::FillSockaddrStorage;
-using detail::IsIpv4Mapped;
-using detail::SocketaddressFromSockaddr;
 
 // Global WSA initialization helper
 class WSAInitializer {
@@ -100,7 +92,6 @@ class WindowsUDPSocket final : public ISocket {
   SocketError SetBlocking(bool enable) override;
   bool IsBlocking() const override;
   std::uint16_t LocalPort() const override;
-  SocketType Type() const override;
   int NativeHandle() const override;
   void Close() override;
 
@@ -166,8 +157,8 @@ SocketError WindowsUDPSocket::Bind(const SocketAddress& address,
   sockaddr_storage addr{};
   int addr_len = 0;
   int target_family = AF_UNSPEC;
-  if (!FillSockaddrStorage(address, port, family_ == AF_INET6, addr,
-                           target_family, addr_len)) {
+  if (!detail::FillSockaddrStorage(address, port, family_ == AF_INET6, addr,
+                                   target_family, addr_len)) {
     ::closesocket(sock_);
     sock_ = INVALID_SOCKET;
     family_ = AF_UNSPEC;
@@ -244,8 +235,8 @@ SocketResult WindowsUDPSocket::SendTo(const void* data, std::size_t length,
   sockaddr_storage addr{};
   int addr_len = 0;
   int target_family = AF_UNSPEC;
-  if (!FillSockaddrStorage(to_addr, to_port, family_ == AF_INET6, addr,
-                           target_family, addr_len))
+  if (!detail::FillSockaddrStorage(to_addr, to_port, family_ == AF_INET6, addr,
+                                   target_family, addr_len))
     return {-1, SocketError::kInvalidParam};
 
   int sent = ::sendto(sock_, reinterpret_cast<const char*>(data),
@@ -270,7 +261,7 @@ SocketResult WindowsUDPSocket::Receive(void* buffer, std::size_t capacity,
                        reinterpret_cast<sockaddr*>(&addr), &len);
   if (got == SOCKET_ERROR) return {-1, MapLastError()};
 
-  from_addr = SocketaddressFromSockaddr(addr);
+  from_addr = detail::SocketAddressFromSockaddr(addr);
   if (addr.ss_family == AF_INET)
     from_port = ntohs(reinterpret_cast<sockaddr_in*>(&addr)->sin_port);
   else if (addr.ss_family == AF_INET6)
@@ -316,8 +307,6 @@ bool WindowsUDPSocket::IsBlocking() const { return blocking_; }
 
 std::uint16_t WindowsUDPSocket::LocalPort() const { return bound_port_; }
 
-SocketType WindowsUDPSocket::Type() const { return SocketType::kUdp; }
-
 int WindowsUDPSocket::NativeHandle() const { return static_cast<int>(sock_); }
 
 void WindowsUDPSocket::Close() {
@@ -329,20 +318,10 @@ void WindowsUDPSocket::Close() {
   }
 }
 
-// Windows Socket Factory
 class WindowsSocketFactory : public ISocketFactory {
  public:
-  std::unique_ptr<ISocket> CreateSocket(SocketType type,
-                                        const SocketConfig& cfg) override {
-    switch (type) {
-      case SocketType::kUdp:
-        return std::make_unique<WindowsUDPSocket>(cfg);
-      case SocketType::kTcp:
-        // TODO(kabanya): add TCP socket implementation (WindowsTCPSocket)
-        return nullptr;
-      default:
-        return nullptr;
-    }
+  std::unique_ptr<ISocket> CreateUdpSocket(const SocketConfig& cfg) override {
+    return std::make_unique<WindowsUDPSocket>(cfg);
   }
 };
 

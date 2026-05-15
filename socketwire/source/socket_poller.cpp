@@ -179,8 +179,9 @@ void SocketPoller::BackendRemove(ISocket* socket) {
     if (fd == select_max_fd_) {
       select_max_fd_ = -1;
       for (auto& kv : fd_map_) {
-        if (kv.first != fd && kv.first > select_max_fd_)
+        if (kv.first != fd && kv.first > select_max_fd_) {
           select_max_fd_ = kv.first;
+        }
       }
     }
   }
