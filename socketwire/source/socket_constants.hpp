@@ -19,13 +19,13 @@ class SocketConstants {
   static constexpr std::uint32_t kIpV4Any = 0x00000000;       ///< 0.0.0.0
   static constexpr std::uint32_t kIpV4Loopback = 0x7F000001;  ///< 127.0.0.1
   static constexpr std::uint32_t kIpV4Broadcast =
-      0xFFFFFFFF;  ///< 255.255.255.255
+    0xFFFFFFFF;  ///< 255.255.255.255
 
   /// IPv6 address constants in network byte order.
   static inline constexpr std::array<std::uint8_t, 16> kIpV6Any = {
-      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};  ///< ::
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};  ///< ::
   static inline constexpr std::array<std::uint8_t, 16> kIpV6Loopback = {
-      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}};  ///< ::1
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}};  ///< ::1
 
   /// Lets the system choose a port.
   static constexpr std::uint16_t kPortAny = 0;
@@ -64,7 +64,7 @@ class SocketConstants {
 
   /// Formats an IPv6 address as a string.
   static std::string FormatIPv6String(
-      const std::array<std::uint8_t, 16>& address, std::uint32_t scope_id = 0);
+    const std::array<std::uint8_t, 16>& address, std::uint32_t scope_id = 0);
 
   /// Creates an IPv4 address from individual octets.
   static SocketAddress FromOctets(std::uint8_t a, std::uint8_t b,

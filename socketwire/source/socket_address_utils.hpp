@@ -29,7 +29,7 @@ inline bool IsIpv4Mapped(const in6_addr& addr) {
 
 // Converts sockaddr_storage back to SocketAddress.
 inline SocketAddress SocketAddressFromSockaddr(
-    const sockaddr_storage& storage) {
+  const sockaddr_storage& storage) {
   if (storage.ss_family == AF_INET) {
     const auto* addr = reinterpret_cast<const sockaddr_in*>(&storage);
     return SocketAddress::FromIPv4(ntohl(addr->sin_addr.s_addr));

@@ -180,10 +180,10 @@ SocketError WindowsUDPSocket::Bind(const SocketAddress& address,
                     &bound_len) == 0) {
     if (bound_addr.ss_family == AF_INET) {
       bound_port_ =
-          ntohs(reinterpret_cast<sockaddr_in*>(&bound_addr)->sin_port);
+        ntohs(reinterpret_cast<sockaddr_in*>(&bound_addr)->sin_port);
     } else if (bound_addr.ss_family == AF_INET6) {
       bound_port_ =
-          ntohs(reinterpret_cast<sockaddr_in6*>(&bound_addr)->sin6_port);
+        ntohs(reinterpret_cast<sockaddr_in6*>(&bound_addr)->sin6_port);
     }
   } else {
     bound_port_ = port;  // fallback

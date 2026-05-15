@@ -78,7 +78,7 @@ TEST_F(ReliableConnectionPerformanceTest, SmallPacketThroughput) {
 
   CounterHandler server_handler;
   auto server_manager =
-      std::make_unique<ConnectionManager>(server_socket.get());
+    std::make_unique<ConnectionManager>(server_socket.get());
   server_manager->SetHandler(&server_handler);
 
   // Client
@@ -99,21 +99,21 @@ TEST_F(ReliableConnectionPerformanceTest, SmallPacketThroughput) {
 
       while (true) {
         auto result =
-            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          server_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           server_manager->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
       while (true) {
         auto result =
-            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          client_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           client_conn->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
@@ -149,12 +149,12 @@ TEST_F(ReliableConnectionPerformanceTest, SmallPacketThroughput) {
   auto duration = duration_cast<milliseconds>(end_time - start_time).count();
 
   EXPECT_EQ(server_handler.reliableCount, packet_count)
-      << "All packets should be received";
+    << "All packets should be received";
 
   const double packets_per_sec =
-      (packet_count * 1000.0) / static_cast<double>(duration);
+    (packet_count * 1000.0) / static_cast<double>(duration);
   const double bytes_per_sec =
-      (packet_count * packet_size * 1000.0) / static_cast<double>(duration);
+    (packet_count * packet_size * 1000.0) / static_cast<double>(duration);
 
   std::cout << "\n=== Small Packet Throughput ===" << "\n";
   std::cout << "Packets: " << packet_count << "\n";
@@ -186,7 +186,7 @@ TEST_F(ReliableConnectionPerformanceTest, MediumPacketThroughput) {
 
   CounterHandler server_handler;
   auto server_manager =
-      std::make_unique<ConnectionManager>(server_socket.get());
+    std::make_unique<ConnectionManager>(server_socket.get());
   server_manager->SetHandler(&server_handler);
 
   auto client_socket = factory->CreateUdpSocket(cfg);
@@ -205,21 +205,21 @@ TEST_F(ReliableConnectionPerformanceTest, MediumPacketThroughput) {
 
       while (true) {
         auto result =
-            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          server_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           server_manager->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
       while (true) {
         auto result =
-            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          client_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           client_conn->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
@@ -252,9 +252,9 @@ TEST_F(ReliableConnectionPerformanceTest, MediumPacketThroughput) {
   EXPECT_EQ(server_handler.reliableCount, packet_count);
 
   const double packets_per_sec =
-      (packet_count * 1000.0) / static_cast<double>(duration);
+    (packet_count * 1000.0) / static_cast<double>(duration);
   const double bytes_per_sec =
-      (packet_count * packet_size * 1000.0) / static_cast<double>(duration);
+    (packet_count * packet_size * 1000.0) / static_cast<double>(duration);
 
   std::cout << "\n=== Large Packet Throughput ===" << "\n";
   std::cout << "Packets: " << packet_count << "\n";
@@ -286,7 +286,7 @@ TEST_F(ReliableConnectionPerformanceTest, LargePacketThroughput) {
 
   CounterHandler server_handler;
   auto server_manager =
-      std::make_unique<ConnectionManager>(server_socket.get());
+    std::make_unique<ConnectionManager>(server_socket.get());
   server_manager->SetHandler(&server_handler);
 
   auto client_socket = factory->CreateUdpSocket(cfg);
@@ -305,21 +305,21 @@ TEST_F(ReliableConnectionPerformanceTest, LargePacketThroughput) {
 
       while (true) {
         auto result =
-            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          server_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           server_manager->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
       while (true) {
         auto result =
-            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          client_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           client_conn->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
@@ -366,7 +366,7 @@ TEST_F(ReliableConnectionPerformanceTest, LargePacketThroughput) {
   const uint32_t received = server_handler.unreliableCount;
   const double delivery_rate = (received * 100.0) / packet_count;
   const double packets_per_sec =
-      (received * 1000.0) / static_cast<double>(duration);
+    (received * 1000.0) / static_cast<double>(duration);
   const double bytes_per_sec = (static_cast<double>(received) *
                                 static_cast<double>(packet_size) * 1000.0) /
                                static_cast<double>(duration);
@@ -385,8 +385,8 @@ TEST_F(ReliableConnectionPerformanceTest, LargePacketThroughput) {
   // Use a more realistic threshold for unreliable packets, especially under
   // load
   EXPECT_GT(delivery_rate, 70.0)
-      << "Delivery rate should be reasonable on localhost, got "
-      << delivery_rate << "%";
+    << "Delivery rate should be reasonable on localhost, got " << delivery_rate
+    << "%";
 
   running = false;
   network_thread.join();
@@ -408,7 +408,7 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionScalability) {
 
   CounterHandler server_handler;
   auto server_manager =
-      std::make_unique<ConnectionManager>(server_socket.get());
+    std::make_unique<ConnectionManager>(server_socket.get());
   server_manager->SetHandler(&server_handler);
 
   // Create multiple clients
@@ -437,11 +437,11 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionScalability) {
 
       while (true) {
         auto result =
-            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          server_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           server_manager->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
@@ -452,8 +452,7 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionScalability) {
           if (!result.Succeeded()) break;
           if (result.bytes > 0) {
             client_conns.at(i)->ProcessPacket(
-                buffer, static_cast<std::size_t>(result.bytes), from,
-                from_port);
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
           }
         }
         client_conns.at(i)->Update();
@@ -533,7 +532,7 @@ TEST_F(ReliableConnectionPerformanceTest, BitStreamSerializationPerformance) {
 
   auto write_end = high_resolution_clock::now();
   auto write_duration =
-      duration_cast<microseconds>(write_end - write_start).count();
+    duration_cast<microseconds>(write_end - write_start).count();
 
   std::cout << "Write operations: " << iterations << "\n";
   std::cout << "Write time: " << write_duration << " μs" << "\n";
@@ -571,7 +570,7 @@ TEST_F(ReliableConnectionPerformanceTest, BitStreamSerializationPerformance) {
 
   auto read_end = high_resolution_clock::now();
   auto read_duration =
-      duration_cast<microseconds>(read_end - read_start).count();
+    duration_cast<microseconds>(read_end - read_start).count();
 
   std::cout << "Read operations: " << iterations << "\n";
   std::cout << "Read time: " << read_duration << " μs" << "\n";

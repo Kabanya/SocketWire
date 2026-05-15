@@ -27,7 +27,7 @@ std::expected<bool, BitStreamError> BitStream::TryReadBit() noexcept {
 }
 
 std::expected<std::uint32_t, BitStreamError> BitStream::TryReadBits(
-    std::uint8_t bit_count) noexcept {
+  std::uint8_t bit_count) noexcept {
   try {
     return ReadBits(bit_count);
   } catch (...) {
@@ -75,7 +75,7 @@ void BitStream::WriteBit(bool value) {
 
   if (value) {
     buffer_.at(byte_index) |=
-        static_cast<std::uint8_t>(std::uint32_t{1} << bit_index);
+      static_cast<std::uint8_t>(std::uint32_t{1} << bit_index);
   }
 
   write_pos_++;
@@ -90,8 +90,8 @@ bool BitStream::ReadBit() {
   }
 
   const bool value =
-      (buffer_.at(byte_index) &
-       static_cast<std::uint8_t>(std::uint32_t{1} << bit_index)) != 0;
+    (buffer_.at(byte_index) &
+     static_cast<std::uint8_t>(std::uint32_t{1} << bit_index)) != 0;
   read_pos_++;
 
   return value;
@@ -226,7 +226,7 @@ std::size_t BitStream::GetSizeBits() const { return write_pos_; }
 
 std::size_t BitStream::GetRemainingBytes() const {
   const std::size_t read_byte =
-      (read_pos_ + 7) / 8;  // current read position, rounded up to byte
+    (read_pos_ + 7) / 8;  // current read position, rounded up to byte
   return (read_byte < buffer_.size()) ? (buffer_.size() - read_byte) : 0;
 }
 
@@ -249,10 +249,10 @@ void BitStream::WriteQuantizedFloat(float value, float min, float max,
   value = std::clamp(value, min, max);
 
   const std::uint32_t range = (bits == 32)
-                             ? std::numeric_limits<std::uint32_t>::max()
-                             : ((std::uint32_t{1} << bits) - 1);
-  const auto quantized = static_cast<std::uint32_t>(static_cast<float>(range) *
-                                               ((value - min) / (max - min)));
+                                ? std::numeric_limits<std::uint32_t>::max()
+                                : ((std::uint32_t{1} << bits) - 1);
+  const auto quantized = static_cast<std::uint32_t>(
+    static_cast<float>(range) * ((value - min) / (max - min)));
 
   WriteBits(quantized, bits);
 }
@@ -263,11 +263,11 @@ float BitStream::ReadQuantizedFloat(float min, float max, std::uint8_t bits) {
   }
 
   const uint32_t range = (bits == 32)
-                             ? std::numeric_limits<std::uint32_t>::max()
-                             : ((std::uint32_t{1} << bits) - 1);
+                           ? std::numeric_limits<std::uint32_t>::max()
+                           : ((std::uint32_t{1} << bits) - 1);
   const std::uint32_t quantized = ReadBits(bits);
   return min + (static_cast<float>(quantized) / static_cast<float>(range)) *
-                   (max - min);
+                 (max - min);
 }
 
 }  // namespace socketwire

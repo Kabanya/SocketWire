@@ -4,6 +4,7 @@
 
 namespace socketwire {
 
+void RegisterEmscriptenSocketFactory();
 void RegisterWindowsSocketFactory();
 void RegisterPosixSocketFactory();
 
@@ -15,6 +16,12 @@ void InitializeSockets();
 }  // namespace socketwire
 
 // Implementation
+#if defined(__EMSCRIPTEN__)
+#define SOCKETWIRE_PLATFORM_EMSCRIPTEN 1
+#else
+#define SOCKETWIRE_PLATFORM_EMSCRIPTEN 0
+#endif
+
 #if defined(_WIN32) || defined(_WIN64)
 #define SOCKETWIRE_PLATFORM_WINDOWS 1
 #else
@@ -27,7 +34,9 @@ inline void InitializeSockets() {
   static bool initialized = false;
   if (initialized) return;
 
-#if SOCKETWIRE_PLATFORM_WINDOWS
+#if SOCKETWIRE_PLATFORM_EMSCRIPTEN
+  RegisterEmscriptenSocketFactory();
+#elif SOCKETWIRE_PLATFORM_WINDOWS
   RegisterWindowsSocketFactory();
 #else
   RegisterPosixSocketFactory();

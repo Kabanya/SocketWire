@@ -36,22 +36,22 @@ HandshakeFixture CompleteHandshake() {
 
   HandshakeFixture fixture;
   EXPECT_TRUE(
-      fixture.client.StartClient(client_keys, server_keys.publicKey).ok);
+    fixture.client.StartClient(client_keys, server_keys.publicKey).ok);
   EXPECT_TRUE(fixture.server.StartServer(server_keys).ok);
 
   BitStream client_hello;
   EXPECT_TRUE(fixture.client.WriteClientHello(client_hello).ok);
-  EXPECT_TRUE(fixture.server
-                  .ProcessClientHello(client_hello.GetData(),
-                                      client_hello.GetSizeBytes())
-                  .ok);
+  EXPECT_TRUE(
+    fixture.server
+      .ProcessClientHello(client_hello.GetData(), client_hello.GetSizeBytes())
+      .ok);
 
   BitStream server_hello;
   EXPECT_TRUE(fixture.server.WriteServerHello(server_hello).ok);
-  EXPECT_TRUE(fixture.client
-                  .ProcessServerHello(server_hello.GetData(),
-                                      server_hello.GetSizeBytes())
-                  .ok);
+  EXPECT_TRUE(
+    fixture.client
+      .ProcessServerHello(server_hello.GetData(), server_hello.GetSizeBytes())
+      .ok);
 
   fixture.clientContext = fixture.client.CreateClientCryptoContext();
   fixture.serverContext = fixture.server.CreateServerCryptoContext();
@@ -100,19 +100,19 @@ TEST_F(CryptoTest, ResultHelpers) {
 
 TEST_F(CryptoTest, ResultAllErrorCodes) {
   const std::vector<crypto::CryptoError> errors = {
-      crypto::CryptoError::kNone,
-      crypto::CryptoError::kNotInitialized,
-      crypto::CryptoError::kUnsupportedSuite,
-      crypto::CryptoError::kInvalidState,
-      crypto::CryptoError::kDecodeError,
-      crypto::CryptoError::kKeyExchangeFailed,
-      crypto::CryptoError::kSodiumFailure,
-      crypto::CryptoError::kBufferTooSmall,
-      crypto::CryptoError::kSequenceExpired,
-      crypto::CryptoError::kDecryptFailed,
-      crypto::CryptoError::kNotReady,
-      crypto::CryptoError::kInvalidPeerKey,
-      crypto::CryptoError::kReplayDetected};
+    crypto::CryptoError::kNone,
+    crypto::CryptoError::kNotInitialized,
+    crypto::CryptoError::kUnsupportedSuite,
+    crypto::CryptoError::kInvalidState,
+    crypto::CryptoError::kDecodeError,
+    crypto::CryptoError::kKeyExchangeFailed,
+    crypto::CryptoError::kSodiumFailure,
+    crypto::CryptoError::kBufferTooSmall,
+    crypto::CryptoError::kSequenceExpired,
+    crypto::CryptoError::kDecryptFailed,
+    crypto::CryptoError::kNotReady,
+    crypto::CryptoError::kInvalidPeerKey,
+    crypto::CryptoError::kReplayDetected};
 
   for (auto err : errors) {
     auto result = crypto::Result::Failure(err);
@@ -125,10 +125,10 @@ TEST_F(CryptoTest, ResultAllErrorCodes) {
 TEST_F(CryptoTest, CipherSuiteSupported) {
 #if SOCKETWIRE_HAVE_LIBSODIUM
   EXPECT_TRUE(
-      crypto::CipherSuiteSupported(crypto::CipherSuite::kXChaCha20Poly1305));
+    crypto::CipherSuiteSupported(crypto::CipherSuite::kXChaCha20Poly1305));
 #else
   EXPECT_FALSE(
-      crypto::CipherSuiteSupported(crypto::CipherSuite::kXChaCha20Poly1305));
+    crypto::CipherSuiteSupported(crypto::CipherSuite::kXChaCha20Poly1305));
 #endif
   EXPECT_FALSE(crypto::CipherSuiteSupported(crypto::CipherSuite::kNone));
 }
@@ -260,11 +260,11 @@ TEST_F(CryptoTest, ClientHelloInvalidData) {
 
   BitStream wrong_opcode;
   wrong_opcode.Write<std::uint8_t>(
-      static_cast<std::uint8_t>(crypto::HandshakeOpcode::kServerHello));
+    static_cast<std::uint8_t>(crypto::HandshakeOpcode::kServerHello));
   wrong_opcode.Write<std::uint8_t>(1);
   wrong_opcode.Write<std::uint8_t>(0);
   wrong_opcode.Write<std::uint8_t>(
-      static_cast<std::uint8_t>(crypto::CipherSuite::kXChaCha20Poly1305));
+    static_cast<std::uint8_t>(crypto::CipherSuite::kXChaCha20Poly1305));
   std::array<unsigned char, crypto::kHandshakeNonceSize> nonce{};
   std::array<unsigned char, crypto::kPublicKeySize> pub{};
   wrong_opcode.WriteBytes(nonce.data(), nonce.size());
@@ -334,10 +334,10 @@ TEST_F(CryptoTest, PinnedServerKeyMismatchFails) {
 
   BitStream client_hello;
   ASSERT_TRUE(client.WriteClientHello(client_hello).ok);
-  ASSERT_TRUE(server
-                  .ProcessClientHello(client_hello.GetData(),
-                                      client_hello.GetSizeBytes())
-                  .ok);
+  ASSERT_TRUE(
+    server
+      .ProcessClientHello(client_hello.GetData(), client_hello.GetSizeBytes())
+      .ok);
 
   BitStream server_hello;
   ASSERT_TRUE(server.WriteServerHello(server_hello).ok);
@@ -357,8 +357,8 @@ TEST_F(CryptoTest, EncryptDecryptBasic) {
 
   BitStream encrypted;
   auto result = fixture.clientContext.Encrypt(
-      seq, reinterpret_cast<const unsigned char*>(message),
-      std::strlen(message), encrypted);
+    seq, reinterpret_cast<const unsigned char*>(message), std::strlen(message),
+    encrypted);
   ASSERT_TRUE(result.ok);
   EXPECT_GT(encrypted.GetSizeBytes(), std::strlen(message));
 
@@ -382,13 +382,13 @@ TEST_F(CryptoTest, DecryptWithWrongSequenceFails) {
 
   BitStream encrypted;
   ASSERT_TRUE(fixture.clientContext
-                  .Encrypt(100, reinterpret_cast<const unsigned char*>(message),
-                           std::strlen(message), encrypted)
-                  .ok);
+                .Encrypt(100, reinterpret_cast<const unsigned char*>(message),
+                         std::strlen(message), encrypted)
+                .ok);
 
   BitStream decrypted;
   auto result = fixture.serverContext.Decrypt(
-      200, encrypted.GetData(), encrypted.GetSizeBytes(), decrypted);
+    200, encrypted.GetData(), encrypted.GetSizeBytes(), decrypted);
   EXPECT_FALSE(result.ok);
   EXPECT_EQ(result.error, crypto::CryptoError::kDecryptFailed);
 #endif
@@ -401,12 +401,12 @@ TEST_F(CryptoTest, CorruptedCiphertextFails) {
 
   BitStream encrypted;
   ASSERT_TRUE(fixture.clientContext
-                  .Encrypt(7, reinterpret_cast<const unsigned char*>(message),
-                           std::strlen(message), encrypted)
-                  .ok);
+                .Encrypt(7, reinterpret_cast<const unsigned char*>(message),
+                         std::strlen(message), encrypted)
+                .ok);
 
   std::vector<std::uint8_t> corrupted(
-      encrypted.GetData(), encrypted.GetData() + encrypted.GetSizeBytes());
+    encrypted.GetData(), encrypted.GetData() + encrypted.GetSizeBytes());
   corrupted.back() ^= 0x80;
 
   BitStream decrypted;
@@ -424,15 +424,15 @@ TEST_F(CryptoTest, ReplayedCiphertextFails) {
 
   BitStream encrypted;
   ASSERT_TRUE(fixture.clientContext
-                  .Encrypt(9, reinterpret_cast<const unsigned char*>(message),
-                           std::strlen(message), encrypted)
-                  .ok);
+                .Encrypt(9, reinterpret_cast<const unsigned char*>(message),
+                         std::strlen(message), encrypted)
+                .ok);
 
   BitStream decrypted;
   ASSERT_TRUE(
-      fixture.serverContext
-          .Decrypt(9, encrypted.GetData(), encrypted.GetSizeBytes(), decrypted)
-          .ok);
+    fixture.serverContext
+      .Decrypt(9, encrypted.GetData(), encrypted.GetSizeBytes(), decrypted)
+      .ok);
 
   BitStream replay;
   auto result = fixture.serverContext.Decrypt(9, encrypted.GetData(),
@@ -449,29 +449,27 @@ TEST_F(CryptoTest, BidirectionalCommunication) {
   const char* client_msg = "Client to Server";
   BitStream c2s_encrypted;
   ASSERT_TRUE(fixture.clientContext
-                  .Encrypt(1,
-                           reinterpret_cast<const unsigned char*>(client_msg),
-                           std::strlen(client_msg), c2s_encrypted)
-                  .ok);
+                .Encrypt(1, reinterpret_cast<const unsigned char*>(client_msg),
+                         std::strlen(client_msg), c2s_encrypted)
+                .ok);
 
   BitStream c2s_decrypted;
   ASSERT_TRUE(fixture.serverContext
-                  .Decrypt(1, c2s_encrypted.GetData(),
-                           c2s_encrypted.GetSizeBytes(), c2s_decrypted)
-                  .ok);
+                .Decrypt(1, c2s_encrypted.GetData(),
+                         c2s_encrypted.GetSizeBytes(), c2s_decrypted)
+                .ok);
 
   const char* server_msg = "Server to Client";
   BitStream s2c_encrypted;
   ASSERT_TRUE(fixture.serverContext
-                  .Encrypt(2,
-                           reinterpret_cast<const unsigned char*>(server_msg),
-                           std::strlen(server_msg), s2c_encrypted)
-                  .ok);
+                .Encrypt(2, reinterpret_cast<const unsigned char*>(server_msg),
+                         std::strlen(server_msg), s2c_encrypted)
+                .ok);
 
   BitStream s2c_decrypted;
   ASSERT_TRUE(fixture.clientContext
-                  .Decrypt(2, s2c_encrypted.GetData(),
-                           s2c_encrypted.GetSizeBytes(), s2c_decrypted)
-                  .ok);
+                .Decrypt(2, s2c_encrypted.GetData(),
+                         s2c_encrypted.GetSizeBytes(), s2c_decrypted)
+                .ok);
 #endif
 }

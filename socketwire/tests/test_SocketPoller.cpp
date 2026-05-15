@@ -189,7 +189,7 @@ TEST_F(SocketPollerTest, IntegrationSendReceive) {
   const char* test_data = "Hello, SocketPoller!";
   const std::size_t data_size = strlen(test_data) + 1;
   const SocketResult send_result =
-      sender_socket->SendTo(test_data, data_size, addr, receiver_port);
+    sender_socket->SendTo(test_data, data_size, addr, receiver_port);
   ASSERT_TRUE(send_result.Succeeded());
 
   // Poll for events
@@ -202,7 +202,7 @@ TEST_F(SocketPollerTest, IntegrationSendReceive) {
   MockSocketEventHandler handler;
   EXPECT_CALL(handler,
               OnDataReceived(testing::_, sender_port, testing::_, data_size))
-      .Times(1);
+    .Times(1);
 
   poller.DispatchReadable(events.at(0), &handler);
 }

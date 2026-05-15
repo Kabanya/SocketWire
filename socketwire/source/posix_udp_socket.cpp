@@ -1,5 +1,8 @@
+#if defined(__linux__)
 #include <algorithm>
 #include <array>
+#endif
+
 #include <cerrno>
 #include <utility>
 
@@ -63,6 +66,10 @@ class PosixUDPSocket final : public ISocket {
   void Close() override;
 
  private:
+#if defined(__linux__)
+  std::size_t SendManyWithSendmmsg(std::span<const OutgoingDatagram> datagrams);
+#endif
+
   int fd_ = -1;
   bool blocking_ = false;
   std::uint16_t bound_port_ = 0;
@@ -133,10 +140,10 @@ SocketError PosixUDPSocket::Bind(const SocketAddress& address,
                     &bound_len) == 0) {
     if (bound_addr.ss_family == AF_INET) {
       bound_port_ =
-          ntohs(reinterpret_cast<sockaddr_in*>(&bound_addr)->sin_port);
+        ntohs(reinterpret_cast<sockaddr_in*>(&bound_addr)->sin_port);
     } else if (bound_addr.ss_family == AF_INET6) {
       bound_port_ =
-          ntohs(reinterpret_cast<sockaddr_in6*>(&bound_addr)->sin6_port);
+        ntohs(reinterpret_cast<sockaddr_in6*>(&bound_addr)->sin6_port);
     }
   } else {
     bound_port_ = port;  // fallback
@@ -190,23 +197,32 @@ SocketResult PosixUDPSocket::SendTo(const void* data, std::size_t length,
   }
 
   const ssize_t sent =
-      ::sendto(fd_, reinterpret_cast<const char*>(data), length, 0,
-               reinterpret_cast<sockaddr*>(&addr), addr_len);
+    ::sendto(fd_, reinterpret_cast<const char*>(data), length, 0,
+             reinterpret_cast<sockaddr*>(&addr), addr_len);
   if (std::cmp_equal(sent, -1)) return {.bytes = -1, .error = MapErrno(errno)};
 
   return {.bytes = static_cast<ptrdiff_t>(sent), .error = SocketError::kNone};
 }
 
 std::size_t PosixUDPSocket::SendMany(
-    std::span<const OutgoingDatagram> datagrams) {
+  std::span<const OutgoingDatagram> datagrams) {
 #if defined(__linux__)
+  return SendManyWithSendmmsg(datagrams);
+#else
+  return ISocket::SendMany(datagrams);
+#endif
+}
+
+#if defined(__linux__)
+std::size_t PosixUDPSocket::SendManyWithSendmmsg(
+  std::span<const OutgoingDatagram> datagrams) {
   if (datagrams.empty()) return 0;
 
   std::size_t sent_count = 0;
   if (fd_ == -1) {
     const auto& first = datagrams.front();
     const SocketResult first_result =
-        SendTo(first.data, first.size, first.toAddr, first.toPort);
+      SendTo(first.data, first.size, first.toAddr, first.toPort);
     if (first_result.Failed()) return 0;
     sent_count = 1;
     datagrams = datagrams.subspan(1);
@@ -230,8 +246,8 @@ std::size_t PosixUDPSocket::SendMany(
 
       int target_family = AF_UNSPEC;
       if (!detail::FillSockaddrStorage(
-              datagram.toAddr, datagram.toPort, family_ == AF_INET6,
-              addresses[prepared], target_family, address_lengths[prepared])) {
+            datagram.toAddr, datagram.toPort, family_ == AF_INET6,
+            addresses[prepared], target_family, address_lengths[prepared])) {
         break;
       }
 
@@ -245,8 +261,8 @@ std::size_t PosixUDPSocket::SendMany(
 
     if (prepared == 0) break;
 
-    const int sent = ::sendmmsg(fd_, messages.data(),
-                                static_cast<unsigned int>(prepared), 0);
+    const int sent =
+      ::sendmmsg(fd_, messages.data(), static_cast<unsigned int>(prepared), 0);
     if (sent == -1) break;
 
     sent_count += static_cast<std::size_t>(sent);
@@ -255,10 +271,8 @@ std::size_t PosixUDPSocket::SendMany(
   }
 
   return sent_count;
-#else
-  return ISocket::SendMany(datagrams);
-#endif
 }
+#endif
 
 SocketResult PosixUDPSocket::Receive(void* buffer, std::size_t capacity,
                                      SocketAddress& from_addr,
@@ -310,7 +324,7 @@ std::size_t PosixUDPSocket::ReceiveMany(std::span<IncomingDatagram> datagrams) {
   if (prepared == 0) return 0;
 
   const int received = ::recvmmsg(
-      fd_, messages.data(), static_cast<unsigned int>(prepared), 0, nullptr);
+    fd_, messages.data(), static_cast<unsigned int>(prepared), 0, nullptr);
   if (received == -1) return 0;
 
   for (int i = 0; i < received; ++i) {
@@ -319,15 +333,15 @@ std::size_t PosixUDPSocket::ReceiveMany(std::span<IncomingDatagram> datagrams) {
     datagram.fromAddr = detail::SocketAddressFromSockaddr(addr);
     if (addr.ss_family == AF_INET) {
       datagram.fromPort =
-          ntohs(reinterpret_cast<const sockaddr_in*>(&addr)->sin_port);
+        ntohs(reinterpret_cast<const sockaddr_in*>(&addr)->sin_port);
     } else if (addr.ss_family == AF_INET6) {
       datagram.fromPort =
-          ntohs(reinterpret_cast<const sockaddr_in6*>(&addr)->sin6_port);
+        ntohs(reinterpret_cast<const sockaddr_in6*>(&addr)->sin6_port);
     } else {
       datagram.fromPort = 0;
     }
     datagram.result = {.bytes = static_cast<std::ptrdiff_t>(
-                           messages[static_cast<std::size_t>(i)].msg_len),
+                         messages[static_cast<std::size_t>(i)].msg_len),
                        .error = SocketError::kNone};
   }
 

@@ -97,7 +97,7 @@ bool CipherSuiteSupported(CipherSuite s);
 
 template <std::size_t n>
 [[nodiscard]] inline bool AllZero(
-    const std::array<unsigned char, n>& bytes) noexcept {
+  const std::array<unsigned char, n>& bytes) noexcept {
   return std::all_of(bytes.begin(), bytes.end(),
                      [](unsigned char b) { return b == 0; });
 }
@@ -227,13 +227,13 @@ struct ServerHelloData {
 };
 
 constexpr std::size_t kClientHelloSize =
-    1 + 1 + 1 + 1 + kHandshakeNonceSize + kPublicKeySize;
+  1 + 1 + 1 + 1 + kHandshakeNonceSize + kPublicKeySize;
 constexpr std::size_t kServerHelloSize =
-    1 + 1 + 1 + 1 + kHandshakeNonceSize + kPublicKeySize;
+  1 + 1 + 1 + 1 + kHandshakeNonceSize + kPublicKeySize;
 
 inline Result WriteClientHello(BitStream& bs, const ClientHelloData& d) {
   bs.Write<std::uint8_t>(
-      static_cast<std::uint8_t>(HandshakeOpcode::kClientHello));
+    static_cast<std::uint8_t>(HandshakeOpcode::kClientHello));
   bs.Write<std::uint8_t>(d.versionMajor);
   bs.Write<std::uint8_t>(d.versionMinor);
   bs.Write<std::uint8_t>(static_cast<std::uint8_t>(d.suite));
@@ -274,7 +274,7 @@ inline Result ReadClientHello(const unsigned char* data, std::size_t len,
 
 inline Result WriteServerHello(BitStream& bs, const ServerHelloData& d) {
   bs.Write<std::uint8_t>(
-      static_cast<std::uint8_t>(HandshakeOpcode::kServerHello));
+    static_cast<std::uint8_t>(HandshakeOpcode::kServerHello));
   bs.Write<std::uint8_t>(d.versionMajor);
   bs.Write<std::uint8_t>(d.versionMinor);
   bs.Write<std::uint8_t>(static_cast<std::uint8_t>(d.suite));
@@ -360,7 +360,7 @@ class HandshakeState {
     clientHello.suite = CipherSuite::kXChaCha20Poly1305;
     out.Clear();
     const auto result =
-        ::socketwire::crypto::WriteClientHello(out, clientHello);
+      ::socketwire::crypto::WriteClientHello(out, clientHello);
     if (result.ok) phase = HandshakePhase::kClientHelloSent;
     return result;
   }
@@ -381,7 +381,7 @@ class HandshakeState {
     RandomHandshakeNonce(serverHello.nonce);
     out.Clear();
     const auto result =
-        ::socketwire::crypto::WriteServerHello(out, serverHello);
+      ::socketwire::crypto::WriteServerHello(out, serverHello);
     if (result.ok) phase = HandshakePhase::kCompleted;
     return result;
   }
@@ -401,8 +401,8 @@ class HandshakeState {
     clientHello = tmp;
 #if SOCKETWIRE_HAVE_LIBSODIUM
     if (crypto_kx_server_session_keys(
-            session.rx.data(), session.tx.data(), staticKeys.publicKey.data(),
-            staticKeys.secretKey.data(), clientHello.clientPub.data()) != 0) {
+          session.rx.data(), session.tx.data(), staticKeys.publicKey.data(),
+          staticKeys.secretKey.data(), clientHello.clientPub.data()) != 0) {
       phase = HandshakePhase::kRejected;
       session = {};
       return Result::Failure(CryptoError::kKeyExchangeFailed);
@@ -435,8 +435,8 @@ class HandshakeState {
     serverHello = tmp;
 #if SOCKETWIRE_HAVE_LIBSODIUM
     if (crypto_kx_client_session_keys(
-            session.rx.data(), session.tx.data(), staticKeys.publicKey.data(),
-            staticKeys.secretKey.data(), serverHello.serverPub.data()) != 0) {
+          session.rx.data(), session.tx.data(), staticKeys.publicKey.data(),
+          staticKeys.secretKey.data(), serverHello.serverPub.data()) != 0) {
       phase = HandshakePhase::kRejected;
       session = {};
       return Result::Failure(CryptoError::kKeyExchangeFailed);
@@ -535,8 +535,8 @@ class CryptoContext {
     std::vector<unsigned char> cipher(plain_len + kMacSize);
     unsigned long long outLen = 0;  // NOLINT
     if (crypto_aead_xchacha20poly1305_ietf_encrypt(
-            cipher.data(), &outLen, plain, plain_len, associated_data,
-            associated_data_len, nullptr, nonce.data(), keyTx.data()) != 0) {
+          cipher.data(), &outLen, plain, plain_len, associated_data,
+          associated_data_len, nullptr, nonce.data(), keyTx.data()) != 0) {
       return Result::Failure(CryptoError::kSodiumFailure);
     }
 
@@ -573,9 +573,8 @@ class CryptoContext {
     std::vector<unsigned char> plain(cipher_len);
     unsigned long long plainOut = 0;  // NOLINT
     if (crypto_aead_xchacha20poly1305_ietf_decrypt(
-            plain.data(), &plainOut, nullptr, cipher, cipher_len,
-            associated_data, associated_data_len, nonce.data(),
-            keyRx.data()) != 0) {
+          plain.data(), &plainOut, nullptr, cipher, cipher_len, associated_data,
+          associated_data_len, nonce.data(), keyRx.data()) != 0) {
       return Result::Failure(CryptoError::kDecryptFailed);
     }
 

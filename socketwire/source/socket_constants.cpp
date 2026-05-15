@@ -136,7 +136,7 @@ SocketAddress SocketConstants::FromOctets(std::uint8_t a, std::uint8_t b,
 }
 
 std::optional<SocketAddress> SocketConstants::TryFromString(
-    const char* ip_string) {
+  const char* ip_string) {
   if (ip_string == nullptr) return std::nullopt;
 
   std::uint32_t addr = 0;
@@ -158,7 +158,7 @@ std::string SocketConstants::FormatIPv4String(std::uint32_t address) {
 }
 
 std::string SocketConstants::FormatIPv6String(
-    const std::array<std::uint8_t, 16>& address, std::uint32_t scope_id) {
+  const std::array<std::uint8_t, 16>& address, std::uint32_t scope_id) {
   char buf[46];
   if (!FormatIPv6(address, scope_id, buf, sizeof(buf))) return {};
   return {buf};

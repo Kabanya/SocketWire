@@ -146,10 +146,9 @@ void SocketPoller::BackendRemove(ISocket* socket) {
 
 #if SOCKETWIRE_PLATFORM_WINDOWS
   if (backend_ == PollBackend::kWsaPoll) {
-    auto it = std::find_if(poll_fds_.begin(), poll_fds_.end(),
-                           [fd](const WSAPOLLFD& pfd) {
-                             return pfd.fd == static_cast<SOCKET>(fd);
-                           });
+    auto it = std::find_if(
+      poll_fds_.begin(), poll_fds_.end(),
+      [fd](const WSAPOLLFD& pfd) { return pfd.fd == static_cast<SOCKET>(fd); });
     if (it != poll_fds_.end()) {
       poll_fds_.erase(it);
     }
@@ -316,7 +315,7 @@ void SocketPoller::DispatchReadable(const SocketEvent& ev,
     std::uint16_t port = 0;
     char buffer[2048];
     const SocketResult r =
-        ev.socket->Receive(buffer, sizeof(buffer), from, port);
+      ev.socket->Receive(buffer, sizeof(buffer), from, port);
     if (!r.Succeeded()) {
       if (r.error != SocketError::kWouldBlock) {
         handler->OnSocketError(r.error);

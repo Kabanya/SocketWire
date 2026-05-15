@@ -71,8 +71,8 @@ class ClientHandler : public IReliableConnectionHandler {
 
     const std::scoped_lock lock(messagesMutex);
     const std::vector<std::uint8_t> msg(
-        static_cast<const std::uint8_t*>(data),
-        static_cast<const std::uint8_t*>(data) + size);
+      static_cast<const std::uint8_t*>(data),
+      static_cast<const std::uint8_t*>(data) + size);
     receivedMessages.push_back(msg);
   }
 
@@ -83,8 +83,8 @@ class ClientHandler : public IReliableConnectionHandler {
 
     const std::scoped_lock lock(messagesMutex);
     const std::vector<std::uint8_t> msg(
-        static_cast<const std::uint8_t*>(data),
-        static_cast<const std::uint8_t*>(data) + size);
+      static_cast<const std::uint8_t*>(data),
+      static_cast<const std::uint8_t*>(data) + size);
     receivedMessages.push_back(msg);
   }
 
@@ -119,7 +119,7 @@ TEST_F(IntegrationTest, ClientServerConnect) {
 
   EchoServerHandler server_handler;
   auto server_manager =
-      std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
+    std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
   server_handler.manager = server_manager.get();
   server_manager->SetHandler(&server_handler);
 
@@ -129,12 +129,12 @@ TEST_F(IntegrationTest, ClientServerConnect) {
 
   ClientHandler client_handler;
   auto client_conn =
-      std::make_unique<ReliableConnection>(client_socket.get(), conn_cfg);
+    std::make_unique<ReliableConnection>(client_socket.get(), conn_cfg);
   client_conn->SetHandler(&client_handler);
 
   // Connect
   SocketAddress connect_addr =
-      SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
+    SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
   client_conn->Connect(connect_addr, server_port);
 
   EXPECT_FALSE(client_handler.connected);
@@ -150,12 +150,12 @@ TEST_F(IntegrationTest, ClientServerConnect) {
         SocketAddress from;
         uint16_t from_port = 0;
         auto result =
-            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          server_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
 
         if (result.bytes > 0) {
           server_manager->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
@@ -164,12 +164,12 @@ TEST_F(IntegrationTest, ClientServerConnect) {
         SocketAddress from;
         uint16_t from_port = 0;
         auto result =
-            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          client_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
 
         if (result.bytes > 0) {
           client_conn->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
@@ -213,7 +213,7 @@ TEST_F(IntegrationTest, ClientServerReliableMessage) {
 
   EchoServerHandler server_handler;
   auto server_manager =
-      std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
+    std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
   server_handler.manager = server_manager.get();
   server_manager->SetHandler(&server_handler);
 
@@ -223,7 +223,7 @@ TEST_F(IntegrationTest, ClientServerReliableMessage) {
 
   ClientHandler client_handler;
   auto client_conn =
-      std::make_unique<ReliableConnection>(client_socket.get(), conn_cfg);
+    std::make_unique<ReliableConnection>(client_socket.get(), conn_cfg);
   client_conn->SetHandler(&client_handler);
 
   SocketAddress connect_addr = SocketAddress::FromIPv4(0x7F000001);
@@ -239,11 +239,11 @@ TEST_F(IntegrationTest, ClientServerReliableMessage) {
         SocketAddress from;
         uint16_t from_port = 0;
         auto result =
-            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          server_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           server_manager->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
@@ -251,11 +251,11 @@ TEST_F(IntegrationTest, ClientServerReliableMessage) {
         SocketAddress from;
         uint16_t from_port = 0;
         auto result =
-            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          client_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           client_conn->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
@@ -282,9 +282,9 @@ TEST_F(IntegrationTest, ClientServerReliableMessage) {
   }
 
   EXPECT_GT(client_handler.reliableReceived, 0)
-      << "Should receive echoed message";
+    << "Should receive echoed message";
   EXPECT_GT(server_handler.messagesReceived, 0)
-      << "Server should receive message";
+    << "Server should receive message";
 
   auto messages = client_handler.GetMessages();
   ASSERT_FALSE(messages.empty());
@@ -312,14 +312,14 @@ TEST_F(IntegrationTest, ClientServerMultipleMessages) {
   ReliableConnectionConfig conn_cfg;
   EchoServerHandler server_handler;
   auto server_manager =
-      std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
+    std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
   server_handler.manager = server_manager.get();
   server_manager->SetHandler(&server_handler);
 
   auto client_socket = factory->CreateUdpSocket(cfg);
   ClientHandler client_handler;
   auto client_conn =
-      std::make_unique<ReliableConnection>(client_socket.get(), conn_cfg);
+    std::make_unique<ReliableConnection>(client_socket.get(), conn_cfg);
   client_conn->SetHandler(&client_handler);
 
   client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
@@ -333,21 +333,21 @@ TEST_F(IntegrationTest, ClientServerMultipleMessages) {
 
       while (true) {
         auto result =
-            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          server_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           server_manager->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
       while (true) {
         auto result =
-            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          client_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           client_conn->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
@@ -378,7 +378,7 @@ TEST_F(IntegrationTest, ClientServerMultipleMessages) {
   }
 
   EXPECT_GE(client_handler.reliableReceived, message_count)
-      << "Should receive all echoed messages";
+    << "Should receive all echoed messages";
 
   running = false;
   network_thread.join();
@@ -399,7 +399,7 @@ TEST_F(IntegrationTest, ClientServerUnreliableMessages) {
 
   EchoServerHandler server_handler;
   auto server_manager =
-      std::make_unique<ConnectionManager>(server_socket.get());
+    std::make_unique<ConnectionManager>(server_socket.get());
   server_handler.manager = server_manager.get();
   server_manager->SetHandler(&server_handler);
 
@@ -419,21 +419,21 @@ TEST_F(IntegrationTest, ClientServerUnreliableMessages) {
 
       while (true) {
         auto result =
-            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          server_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           server_manager->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
       while (true) {
         auto result =
-            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          client_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           client_conn->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
@@ -460,7 +460,7 @@ TEST_F(IntegrationTest, ClientServerUnreliableMessages) {
   std::this_thread::sleep_for(300ms);
 
   EXPECT_GT(client_handler.unreliableReceived, 0)
-      << "Should receive some unreliable messages";
+    << "Should receive some unreliable messages";
 
   running = false;
   network_thread.join();
@@ -483,7 +483,7 @@ TEST_F(IntegrationTest, MultipleClients) {
 
   EchoServerHandler server_handler;
   auto server_manager =
-      std::make_unique<ConnectionManager>(server_socket.get());
+    std::make_unique<ConnectionManager>(server_socket.get());
   server_handler.manager = server_manager.get();
   server_manager->SetHandler(&server_handler);
 
@@ -516,11 +516,11 @@ TEST_F(IntegrationTest, MultipleClients) {
 
       while (true) {
         auto result =
-            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          server_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           server_manager->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
@@ -531,8 +531,7 @@ TEST_F(IntegrationTest, MultipleClients) {
           if (!result.Succeeded()) break;
           if (result.bytes > 0) {
             client_conns.at(i)->ProcessPacket(
-                buffer, static_cast<std::size_t>(result.bytes), from,
-                from_port);
+              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
           }
         }
         client_conns.at(i)->Update();
@@ -559,7 +558,7 @@ TEST_F(IntegrationTest, MultipleClients) {
 
   auto connections = server_manager->GetConnections();
   EXPECT_EQ(connections.size(), num_clients)
-      << "Server should have " << num_clients << " clients";
+    << "Server should have " << num_clients << " clients";
 
   // Each client sends a message
   for (size_t i = 0; i < client_conns.size(); i++) {
@@ -573,7 +572,7 @@ TEST_F(IntegrationTest, MultipleClients) {
   // Each client should receive messages from all clients (including themselves)
   for (const auto& handler : client_handlers) {
     EXPECT_GE(handler->reliableReceived, num_clients)
-        << "Each client should receive all broadcast messages";
+      << "Each client should receive all broadcast messages";
   }
 
   running = false;
@@ -595,7 +594,7 @@ TEST_F(IntegrationTest, ClientDisconnect) {
 
   EchoServerHandler server_handler;
   auto server_manager =
-      std::make_unique<ConnectionManager>(server_socket.get());
+    std::make_unique<ConnectionManager>(server_socket.get());
   server_handler.manager = server_manager.get();
   server_manager->SetHandler(&server_handler);
 
@@ -615,21 +614,21 @@ TEST_F(IntegrationTest, ClientDisconnect) {
 
       while (true) {
         auto result =
-            server_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          server_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           server_manager->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 
       while (true) {
         auto result =
-            client_socket->Receive(buffer, sizeof(buffer), from, from_port);
+          client_socket->Receive(buffer, sizeof(buffer), from, from_port);
         if (!result.Succeeded()) break;
         if (result.bytes > 0) {
           client_conn->ProcessPacket(
-              buffer, static_cast<std::size_t>(result.bytes), from, from_port);
+            buffer, static_cast<std::size_t>(result.bytes), from, from_port);
         }
       }
 

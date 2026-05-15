@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstring>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "i_socket.hpp"
@@ -38,9 +39,9 @@ std::uint32_t ReadU32(const std::vector<std::uint8_t>& data,
 }
 
 std::vector<std::uint8_t> MakeDeadlinePacket(
-    PacketType type, std::uint8_t channel, std::uint32_t sequence,
-    std::uint32_t deadline_ms, std::uint32_t age_ms_at_send,
-    const void* payload = nullptr, std::size_t payload_size = 0) {
+  PacketType type, std::uint8_t channel, std::uint32_t sequence,
+  std::uint32_t deadline_ms, std::uint32_t age_ms_at_send,
+  const void* payload = nullptr, std::size_t payload_size = 0) {
   BitStream bs;
   bs.Write<std::uint8_t>(static_cast<std::uint8_t>(type) | kDeadlineHeaderFlag);
   bs.Write<std::uint8_t>(channel);
@@ -70,7 +71,7 @@ std::vector<std::uint8_t> MakeBasePacket(PacketType type, std::uint8_t channel,
 }
 
 std::vector<std::uint8_t> MakeBatchPacket(
-    const std::vector<std::vector<std::uint8_t>>& commands) {
+  const std::vector<std::vector<std::uint8_t>>& commands) {
   BitStream bs;
   bs.Write<std::uint8_t>(static_cast<std::uint8_t>(PacketType::kBatch));
   bs.Write<std::uint8_t>(0);
@@ -155,14 +156,68 @@ class MockSocket : public ISocket {
 
   void QueueReceive(const void* data, std::size_t size) {
     const std::vector<std::uint8_t> packet(
-        static_cast<const std::uint8_t*>(data),
-        static_cast<const std::uint8_t*>(data) + size);
+      static_cast<const std::uint8_t*>(data),
+      static_cast<const std::uint8_t*>(data) + size);
     receiveQueue.push_back(packet);
   }
 
   void ClearSent() { sentPackets.clear(); }
 
   [[nodiscard]] std::size_t GetSentCount() const { return sentPackets.size(); }
+};
+
+class WebSocketLikeMockSocket : public ISocket {
+ public:
+  std::vector<std::vector<std::uint8_t>> sentFrames;
+  std::vector<std::vector<std::uint8_t>> receiveQueue;
+
+  SocketError Bind(const SocketAddress& address, uint16_t port) override {
+    (void)address;
+    (void)port;
+    return SocketError::kNone;
+  }
+
+  SocketResult SendTo(const void* data, std::size_t length,
+                      const SocketAddress& to_addr, uint16_t to_port) override {
+    (void)to_addr;
+    (void)to_port;
+    sentFrames.emplace_back(static_cast<const std::uint8_t*>(data),
+                            static_cast<const std::uint8_t*>(data) + length);
+    return {.bytes = static_cast<std::ptrdiff_t>(length),
+            .error = SocketError::kNone};
+  }
+
+  SocketResult Receive(void* buffer, std::size_t capacity,
+                       SocketAddress& from_addr, uint16_t& from_port) override {
+    if (receiveQueue.empty()) {
+      return {.bytes = -1, .error = SocketError::kWouldBlock};
+    }
+
+    const auto& frame = receiveQueue.front();
+    const std::size_t copy_size = std::min(capacity, frame.size());
+    std::memcpy(buffer, frame.data(), copy_size);
+    receiveQueue.erase(receiveQueue.begin());
+
+    from_addr = SocketAddress::FromIPv4(0);
+    from_port = 0;
+    return {.bytes = static_cast<std::ptrdiff_t>(copy_size),
+            .error = SocketError::kNone};
+  }
+
+  void Poll(ISocketEventHandler* handler) override { (void)handler; }
+
+  SocketError SetBlocking(bool enable) override {
+    return enable ? SocketError::kUnsupported : SocketError::kNone;
+  }
+
+  [[nodiscard]] bool IsBlocking() const override { return false; }
+  [[nodiscard]] uint16_t LocalPort() const override { return 0; }
+  [[nodiscard]] int NativeHandle() const override { return -1; }
+  void Close() override {}
+
+  void QueueReceive(std::vector<std::uint8_t> frame) {
+    receiveQueue.push_back(std::move(frame));
+  }
 };
 
 // Mock event handler
@@ -184,8 +239,8 @@ class MockEventHandler : public IReliableConnectionHandler {
                           std::size_t size) override {
     (void)channel;
     const std::vector<std::uint8_t> packet(
-        static_cast<const std::uint8_t*>(data),
-        static_cast<const std::uint8_t*>(data) + size);
+      static_cast<const std::uint8_t*>(data),
+      static_cast<const std::uint8_t*>(data) + size);
     reliablePackets.push_back(packet);
   }
 
@@ -193,8 +248,8 @@ class MockEventHandler : public IReliableConnectionHandler {
                             std::size_t size) override {
     (void)channel;
     const std::vector<std::uint8_t> packet(
-        static_cast<const std::uint8_t*>(data),
-        static_cast<const std::uint8_t*>(data) + size);
+      static_cast<const std::uint8_t*>(data),
+      static_cast<const std::uint8_t*>(data) + size);
     unreliablePackets.push_back(packet);
   }
 
@@ -244,6 +299,25 @@ TEST_F(ReliableConnectionTest, ClientConnect) {
   ASSERT_FALSE(socket.sentPackets.empty());
   const auto& packet = socket.sentPackets.at(0);
   EXPECT_GT(packet.data.size(), 0);
+}
+
+TEST_F(ReliableConnectionTest, WebSocketLikeSocketSupportsClientHandshake) {
+  WebSocketLikeMockSocket web_socket;
+  ReliableConnection conn(&web_socket, config);
+  conn.SetHandler(&handler);
+
+  EXPECT_TRUE(conn.Connect(SocketAddress::FromIPv4(0), 0));
+
+  ASSERT_EQ(web_socket.sentFrames.size(), 1u);
+  ASSERT_GE(web_socket.sentFrames.at(0).size(), kBaseHeaderSize);
+  EXPECT_EQ(web_socket.sentFrames.at(0).at(0) & kPacketTypeMask,
+            static_cast<std::uint8_t>(PacketType::kConnect));
+
+  web_socket.QueueReceive(MakeBasePacket(PacketType::kAccept, 0, 0));
+  conn.Tick();
+
+  EXPECT_TRUE(handler.connected);
+  EXPECT_TRUE(conn.IsConnected());
 }
 
 TEST_F(ReliableConnectionTest, ServerAcceptConnection) {
@@ -310,7 +384,7 @@ TEST_F(ReliableConnectionTest, SendReliablePacket) {
   ASSERT_FALSE(socket.sentPackets.empty());
   const auto& packet = socket.sentPackets.at(0);
   EXPECT_GT(packet.data.size(), strlen(test_data))
-      << "Packet should include header";
+    << "Packet should include header";
 }
 
 TEST_F(ReliableConnectionTest, SendUnreliablePacket) {
@@ -378,7 +452,7 @@ TEST_F(ReliableConnectionTest, ReceiveReliablePacket) {
   EXPECT_GT(socket.GetSentCount(), 0) << "Should send ACK packet";
 
   EXPECT_EQ(handler.reliablePackets.size(), 1)
-      << "Should receive one reliable packet";
+    << "Should receive one reliable packet";
   ASSERT_FALSE(handler.reliablePackets.empty());
 
   const auto& received_data = handler.reliablePackets.at(0);
@@ -405,7 +479,7 @@ TEST_F(ReliableConnectionTest, ReceiveUnreliablePacket) {
   conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
   EXPECT_EQ(handler.unreliablePackets.size(), 1)
-      << "Should receive one unreliable packet";
+    << "Should receive one unreliable packet";
   ASSERT_FALSE(handler.unreliablePackets.empty());
 
   const auto& received_data = handler.unreliablePackets.at(0);
@@ -532,14 +606,14 @@ TEST_F(ReliableConnectionTest, PacketSequencing) {
   conn.ProcessPacket(packet1.data(), packet1.size(), addr, 12345);
   conn.Update();
   EXPECT_EQ(handler.reliablePackets.size(), 0)
-      << "Still waiting for sequence 0";
+    << "Still waiting for sequence 0";
 
   conn.ProcessPacket(packet0.data(), packet0.size(), addr, 12345);
   conn.Update();
 
   // Now all packets should be delivered in order
   EXPECT_EQ(handler.reliablePackets.size(), 3)
-      << "Should receive all three packets";
+    << "Should receive all three packets";
 
   const std::string first(handler.reliablePackets.at(0).begin(),
                           handler.reliablePackets.at(0).end());
@@ -578,7 +652,7 @@ TEST_F(ReliableConnectionTest, DuplicateDetection) {
   conn.Update();
 
   EXPECT_EQ(handler.reliablePackets.size(), first_count)
-      << "Duplicate packet should be ignored";
+    << "Duplicate packet should be ignored";
 }
 
 TEST_F(ReliableConnectionTest, AcknowledgmentReceived) {
@@ -623,9 +697,9 @@ TEST_F(ReliableConnectionTest, AcknowledgmentReceived) {
 
   // Should not resend after ACK
   EXPECT_EQ(socket.GetSentCount(), sent_before)
-      << "Should not resend acknowledged packet";
+    << "Should not resend acknowledged packet";
   EXPECT_EQ(conn.GetLostPackets(), lost_before)
-      << "Acknowledged packet should not be counted as lost";
+    << "Acknowledged packet should not be counted as lost";
 }
 
 TEST_F(ReliableConnectionTest, Disconnect) {
@@ -683,7 +757,7 @@ TEST_F(ReliableConnectionTest, Statistics) {
   // Send packet
   conn.SendReliable(0, "Test", 4);
   EXPECT_GT(conn.GetSentPackets(), initial_sent)
-      << "Sent count should increase";
+    << "Sent count should increase";
 
   // Receive packet
   BitStream bs;
@@ -695,7 +769,7 @@ TEST_F(ReliableConnectionTest, Statistics) {
   conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345);
 
   EXPECT_GT(conn.GetReceivedPackets(), initial_received)
-      << "Received count should increase";
+    << "Received count should increase";
 }
 
 TEST_F(ReliableConnectionTest, PingPong) {
@@ -776,12 +850,12 @@ TEST_F(ReliableConnectionTest, MaxPacketSizeLimit) {
 
   socket.ClearSent();
   const bool result =
-      conn.SendReliable(0, large_data.data(), large_data.size());
+    conn.SendReliable(0, large_data.data(), large_data.size());
 
   EXPECT_TRUE(result) << "Large payloads should succeed via fragmentation";
   // The payload must have been split into multiple Fragment packets
   EXPECT_GT(socket.GetSentCount(), 1u)
-      << "Oversized payload should produce multiple Fragment packets";
+    << "Oversized payload should produce multiple Fragment packets";
 }
 
 TEST_F(ReliableConnectionTest, MultipleChannels) {
@@ -799,7 +873,7 @@ TEST_F(ReliableConnectionTest, MultipleChannels) {
   conn.SendReliable(1, "Channel1", 8);
 
   EXPECT_EQ(socket.GetSentCount(), 2)
-      << "Should send packets on different channels";
+    << "Should send packets on different channels";
 
   // Verify channels are different
   ASSERT_GE(socket.sentPackets.size(), 2);
@@ -843,9 +917,9 @@ TEST_F(ReliableConnectionTest, SendWithoutDeadlineUsesBaseHeader) {
   EXPECT_EQ(packet.at(0), static_cast<std::uint8_t>(PacketType::kUnreliable));
   EXPECT_EQ(packet.at(1), 0);
   EXPECT_EQ(
-      std::string(packet.begin() + static_cast<std::ptrdiff_t>(kBaseHeaderSize),
-                  packet.end()),
-      "abc");
+    std::string(packet.begin() + static_cast<std::ptrdiff_t>(kBaseHeaderSize),
+                packet.end()),
+    "abc");
 }
 
 TEST_F(ReliableConnectionTest, DeadlineSendDisabledIsRejected) {
@@ -883,9 +957,9 @@ TEST_F(ReliableConnectionTest, DeadlineSendWritesExtendedHeader) {
   EXPECT_EQ(packet.at(7), 0);
   EXPECT_EQ(ReadU32(packet, 8), 75u);
   EXPECT_LE(ReadU32(packet, 12), 75u);
-  EXPECT_EQ(std::string(packet.begin() +
-                            static_cast<std::ptrdiff_t>(kDeadlineHeaderSize),
-                        packet.end()),
+  EXPECT_EQ(std::string(
+              packet.begin() + static_cast<std::ptrdiff_t>(kDeadlineHeaderSize),
+              packet.end()),
             "xyz");
 }
 
@@ -922,7 +996,7 @@ TEST_F(ReliableConnectionTest, ExpiredReliableStyleReceiveIsAckedAndDropped) {
   conn.SetConnected();
 
   const auto reliable =
-      MakeDeadlinePacket(PacketType::kReliable, 0, 0, 10, 10, "rel", 3);
+    MakeDeadlinePacket(PacketType::kReliable, 0, 0, 10, 10, "rel", 3);
   socket.ClearSent();
   conn.ProcessPacket(reliable.data(), reliable.size(), addr, 12345);
   conn.Update();
@@ -934,7 +1008,7 @@ TEST_F(ReliableConnectionTest, ExpiredReliableStyleReceiveIsAckedAndDropped) {
   EXPECT_TRUE(handler.reliablePackets.empty());
 
   const auto unsequenced =
-      MakeDeadlinePacket(PacketType::kUnsequenced, 0, 1, 10, 10, "unq", 3);
+    MakeDeadlinePacket(PacketType::kUnsequenced, 0, 1, 10, 10, "unq", 3);
   socket.ClearSent();
   conn.ProcessPacket(unsequenced.data(), unsequenced.size(), addr, 12345);
   conn.Update();
@@ -954,8 +1028,8 @@ TEST_F(ReliableConnectionTest, ExpiredReliableStyleReceiveIsAckedAndDropped) {
   std::memcpy(fragment_payload.data() + 4, &frag_total, 2);
   std::memcpy(fragment_payload.data() + 6, "abc", 3);
   const auto fragment =
-      MakeDeadlinePacket(PacketType::kFragment, 0, 2, 10, 10,
-                         fragment_payload.data(), fragment_payload.size());
+    MakeDeadlinePacket(PacketType::kFragment, 0, 2, 10, 10,
+                       fragment_payload.data(), fragment_payload.size());
   socket.ClearSent();
   conn.ProcessPacket(fragment.data(), fragment.size(), addr, 12345);
   conn.Update();
@@ -977,7 +1051,7 @@ TEST_F(ReliableConnectionTest, ExpiredUnreliableReceiveIsDroppedWithoutAck) {
   conn.SetConnected();
 
   const auto packet =
-      MakeDeadlinePacket(PacketType::kUnreliable, 0, 0, 10, 10, "abc", 3);
+    MakeDeadlinePacket(PacketType::kUnreliable, 0, 0, 10, 10, "abc", 3);
   socket.ClearSent();
   conn.ProcessPacket(packet.data(), packet.size(), addr, 12345);
 
@@ -1006,8 +1080,8 @@ TEST_F(ReliableConnectionTest, FragmentGroupExpiresByDeadline) {
   std::memcpy(fragment_payload.data() + 6, "abc", 3);
 
   const auto packet =
-      MakeDeadlinePacket(PacketType::kFragment, 0, 0, 20, 0,
-                         fragment_payload.data(), fragment_payload.size());
+    MakeDeadlinePacket(PacketType::kFragment, 0, 0, 20, 0,
+                       fragment_payload.data(), fragment_payload.size());
   conn.ProcessPacket(packet.data(), packet.size(), addr, 12345);
   ASSERT_EQ(conn.GetDeadlineExpiredFragmentGroups(), 0u);
 
@@ -1055,7 +1129,7 @@ TEST_F(ConnectionManagerTest, AutoCreateConnection) {
 
   auto connections = manager.GetConnections();
   EXPECT_EQ(connections.size(), 1)
-      << "Should auto-create connection for new client";
+    << "Should auto-create connection for new client";
 }
 
 TEST_F(ConnectionManagerTest, GetConnection) {
@@ -1090,7 +1164,7 @@ TEST_F(ConnectionManagerTest, BroadcastReliable) {
 
   BitStream connect_bs;
   connect_bs.Write<std::uint8_t>(
-      static_cast<std::uint8_t>(PacketType::kConnect));
+    static_cast<std::uint8_t>(PacketType::kConnect));
   connect_bs.Write<std::uint8_t>(0);
   connect_bs.Write<std::uint32_t>(0);
 
@@ -1116,7 +1190,7 @@ TEST_F(ConnectionManagerTest, BroadcastUnreliable) {
 
   BitStream connect_bs;
   connect_bs.Write<std::uint8_t>(
-      static_cast<std::uint8_t>(PacketType::kConnect));
+    static_cast<std::uint8_t>(PacketType::kConnect));
   connect_bs.Write<std::uint8_t>(0);
   connect_bs.Write<std::uint32_t>(0);
 
@@ -1191,7 +1265,7 @@ TEST_F(ReliableConnectionTest, UnknownPacketTypeIsIgnored) {
 
   auto received_before [[maybe_unused]] = conn.GetReceivedPackets();
   EXPECT_NO_THROW(
-      conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345));
+    conn.ProcessPacket(bs.GetData(), bs.GetSizeBytes(), addr, 12345));
   // The packet header was still read, but no side effects occur.
   // The counter increments because lastReceiveTime is not updated
   // (readPacketHeader returns false before reaching the counter update).
@@ -1226,8 +1300,8 @@ TEST_F(ConnectionManagerTest, IPv6ClientsAreSeparated) {
 
   auto connections = manager.GetConnections();
   EXPECT_EQ(connections.size(), 2u)
-      << "Two IPv6 clients with different addresses should create separate "
-         "connections";
+    << "Two IPv6 clients with different addresses should create separate "
+       "connections";
 
   auto* c1 = manager.GetConnection(addr1, 5000);
   auto* c2 = manager.GetConnection(addr2, 5000);
@@ -1395,7 +1469,7 @@ TEST_F(ReliableConnectionTest, SecureConnectionRejectsPlaintextAfterHandshake) {
 
   BitStream plaintext;
   plaintext.Write<std::uint8_t>(
-      static_cast<std::uint8_t>(PacketType::kReliable));
+    static_cast<std::uint8_t>(PacketType::kReliable));
   plaintext.Write<std::uint8_t>(0);
   plaintext.Write<std::uint32_t>(0);
   plaintext.WriteBytes("plain", 5);
@@ -1438,9 +1512,9 @@ TEST_F(ReliableConnectionTest, SecureReliableAndUnreliablePayloadDelivery) {
   ASSERT_EQ(client_socket.sentPackets.size(), 1u);
   const auto reliable_packet = client_socket.sentPackets.back();
   EXPECT_EQ(
-      std::search(reliable_packet.data.begin(), reliable_packet.data.end(),
-                  reliable_msg, reliable_msg + std::strlen(reliable_msg)),
-      reliable_packet.data.end());
+    std::search(reliable_packet.data.begin(), reliable_packet.data.end(),
+                reliable_msg, reliable_msg + std::strlen(reliable_msg)),
+    reliable_packet.data.end());
 
   server.ProcessPacket(reliable_packet.data.data(), reliable_packet.data.size(),
                        addr, 23456);
@@ -1453,13 +1527,13 @@ TEST_F(ReliableConnectionTest, SecureReliableAndUnreliablePayloadDelivery) {
   client_socket.ClearSent();
   const char* unreliable_msg = "secure unreliable";
   ASSERT_TRUE(
-      client.SendUnreliable(1, unreliable_msg, std::strlen(unreliable_msg)));
+    client.SendUnreliable(1, unreliable_msg, std::strlen(unreliable_msg)));
   ASSERT_EQ(client_socket.sentPackets.size(), 1u);
   const auto unreliable_packet = client_socket.sentPackets.back();
   EXPECT_EQ(
-      std::search(unreliable_packet.data.begin(), unreliable_packet.data.end(),
-                  unreliable_msg, unreliable_msg + std::strlen(unreliable_msg)),
-      unreliable_packet.data.end());
+    std::search(unreliable_packet.data.begin(), unreliable_packet.data.end(),
+                unreliable_msg, unreliable_msg + std::strlen(unreliable_msg)),
+    unreliable_packet.data.end());
 
   server.ProcessPacket(unreliable_packet.data.data(),
                        unreliable_packet.data.size(), addr, 23456);
@@ -1506,9 +1580,9 @@ TEST_F(ReliableConnectionTest, SecureDeadlinePayloadDelivery) {
             static_cast<std::uint8_t>(PacketType::kReliable));
   ASSERT_NE(reliable_packet.data.at(0) & kDeadlineHeaderFlag, 0);
   EXPECT_EQ(
-      std::search(reliable_packet.data.begin(), reliable_packet.data.end(),
-                  reliable_msg, reliable_msg + std::strlen(reliable_msg)),
-      reliable_packet.data.end());
+    std::search(reliable_packet.data.begin(), reliable_packet.data.end(),
+                reliable_msg, reliable_msg + std::strlen(reliable_msg)),
+    reliable_packet.data.end());
 
   server.ProcessPacket(reliable_packet.data.data(), reliable_packet.data.size(),
                        addr, 23456);
@@ -1521,16 +1595,16 @@ TEST_F(ReliableConnectionTest, SecureDeadlinePayloadDelivery) {
   client_socket.ClearSent();
   const char* unreliable_msg = "secure deadline unreliable";
   ASSERT_TRUE(client.SendUnreliableWithDeadline(
-      1, unreliable_msg, std::strlen(unreliable_msg), 100));
+    1, unreliable_msg, std::strlen(unreliable_msg), 100));
   ASSERT_EQ(client_socket.sentPackets.size(), 1u);
   const auto unreliable_packet = client_socket.sentPackets.back();
   ASSERT_EQ(unreliable_packet.data.at(0) & kPacketTypeMask,
             static_cast<std::uint8_t>(PacketType::kUnreliable));
   ASSERT_NE(unreliable_packet.data.at(0) & kDeadlineHeaderFlag, 0);
   EXPECT_EQ(
-      std::search(unreliable_packet.data.begin(), unreliable_packet.data.end(),
-                  unreliable_msg, unreliable_msg + std::strlen(unreliable_msg)),
-      unreliable_packet.data.end());
+    std::search(unreliable_packet.data.begin(), unreliable_packet.data.end(),
+                unreliable_msg, unreliable_msg + std::strlen(unreliable_msg)),
+    unreliable_packet.data.end());
 
   server.ProcessPacket(unreliable_packet.data.data(),
                        unreliable_packet.data.size(), addr, 23456);

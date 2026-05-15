@@ -82,7 +82,7 @@ class BitStream {
 
   /// Returns the read bits, or kEndOfStream if exhausted.
   [[nodiscard]] std::expected<std::uint32_t, BitStreamError> TryReadBits(
-      std::uint8_t bit_count) noexcept;
+    std::uint8_t bit_count) noexcept;
 
   /// Returns the read string, or an error if data is exhausted or invalid.
   [[nodiscard]] std::expected<std::string, BitStreamError>

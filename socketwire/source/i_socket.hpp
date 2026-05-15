@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 
 #if defined(_WIN32) || defined(_WIN64)
 #define SOCKETWIRE_PLATFORM_WINDOWS 1
@@ -52,7 +53,7 @@ struct SocketResult {
 /// IPv4 address stored in host byte order.
 struct SocketAddressIPv4 {
   std::uint32_t hostOrderAddress =
-      0;  // address in host-order (e.g., result of inet_addr conversions)
+    0;  // address in host-order (e.g., result of inet_addr conversions)
 };
 
 /// IPv6 address stored in network byte order.
@@ -124,6 +125,19 @@ struct SocketConfig {
   // Later: QoS, DSCP, broadcast, multicast, etc.
 };
 
+/// Browser WebSocket client creation options.
+///
+/// This transport is intended for Emscripten/browser clients. It exposes
+/// binary WebSocket messages through the datagram-shaped ISocket API so the
+/// reliable protocol can run without a separate transport abstraction.
+struct WebSocketConfig {
+  std::string url;        ///< ws:// or wss:// endpoint.
+  std::string protocols;  ///< Optional comma-separated subprotocol list.
+  bool createOnMainThread = true;
+  std::size_t maxQueuedMessages = 256;
+  std::size_t maxMessageSize = static_cast<std::size_t>(64 * 1024);
+};
+
 /// Event handler interface for socket-level notifications.
 class ISocketEventHandler {
  public:
@@ -167,8 +181,8 @@ class ISocket {
   virtual std::size_t SendMany(std::span<const OutgoingDatagram> datagrams) {
     std::size_t sent_count = 0;
     for (const auto& datagram : datagrams) {
-      const SocketResult result = SendTo(datagram.data, datagram.size,
-                                         datagram.toAddr, datagram.toPort);
+      const SocketResult result =
+        SendTo(datagram.data, datagram.size, datagram.toAddr, datagram.toPort);
       if (result.Failed()) break;
       ++sent_count;
     }
@@ -233,7 +247,7 @@ inline SocketResult ISocket::SendBitStream(BitStream& stream,
                                            const SocketAddress& to_addr,
                                            std::uint16_t to_port) {
   extern const std::uint8_t* BitstreamAccessData(
-      const BitStream&);  // can be implemented via friend
+    const BitStream&);  // can be implemented via friend
   extern std::size_t BitstreamAccessSize(const BitStream&);
 
   const std::uint8_t* data_ptr = BitstreamAccessData(stream);
@@ -252,6 +266,11 @@ class ISocketFactory {
   virtual ~ISocketFactory() = default;
 
   virtual std::unique_ptr<ISocket> CreateUdpSocket(const SocketConfig& cfg) = 0;
+
+  virtual std::unique_ptr<ISocket> CreateWebSocketClient(
+    [[maybe_unused]] const WebSocketConfig& cfg) {
+    return nullptr;
+  }
 };
 
 /// Global access to the registered socket factory.
@@ -267,6 +286,9 @@ void RegisterPosixSocketFactory();
 /// Registers the Windows socket factory implementation.
 void RegisterWindowsSocketFactory();
 
+/// Registers the Emscripten WebSocket socket factory implementation.
+void RegisterEmscriptenSocketFactory();
+
 }  // namespace socketwire
 
 // std::hash specialization so SocketAddress can be used as unordered_map key
@@ -277,8 +299,8 @@ struct hash<socketwire::SocketAddress> {
     if (a.isIPv6) {
       std::size_t seed = 0x9e3779b9u;
       for (auto b : a.ipv6.bytes) {
-        seed ^= static_cast<std::size_t>(b) + 0x9e3779b9u + (seed << 6) +
-                (seed >> 2);
+        seed ^=
+          static_cast<std::size_t>(b) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
       }
       seed ^= static_cast<std::size_t>(a.ipv6.scopeId) + 0x9e3779b9u +
               (seed << 6) + (seed >> 2);

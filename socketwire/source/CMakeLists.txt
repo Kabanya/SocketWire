@@ -15,7 +15,9 @@ add_library(SocketWire STATIC
   socket_address_utils.hpp
 )
 
-if(WIN32)
+if(EMSCRIPTEN)
+  target_sources(SocketWire PRIVATE emscripten_websocket_socket.cpp)
+elseif(WIN32)
   target_sources(SocketWire PRIVATE windows_udp_socket.cpp)
 else()
   target_sources(SocketWire PRIVATE posix_udp_socket.cpp)
@@ -26,4 +28,8 @@ target_compile_features(SocketWire PUBLIC cxx_std_23)
 
 if (TARGET socketwire_crypto)
   target_link_libraries(SocketWire PUBLIC socketwire_crypto)
+endif()
+
+if(EMSCRIPTEN)
+  target_link_options(SocketWire PUBLIC -lwebsocket.js)
 endif()

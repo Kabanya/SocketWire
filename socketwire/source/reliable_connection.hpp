@@ -152,7 +152,7 @@ struct PendingPacket {
   std::uint32_t retries = 0;
   std::uint8_t channel = 0;
   PacketType type =
-      PacketType::kReliable;  ///< Original type for retransmission
+    PacketType::kReliable;  ///< Original type for retransmission
   std::chrono::steady_clock::time_point createdTime;
   std::uint32_t deadline_ms = 0;
   std::chrono::steady_clock::time_point expireTime;
@@ -170,7 +170,7 @@ struct ReceivedPacket {
 struct FragmentGroup {
   std::uint16_t total = 0;  ///< Total number of fragments
   std::vector<std::optional<std::vector<std::uint8_t>>>
-      pieces;  ///< Indexed by fragmentIndex
+    pieces;  ///< Indexed by fragmentIndex
   std::uint16_t receivedCount = 0;
   std::chrono::steady_clock::time_point firstReceived;
   std::chrono::steady_clock::time_point expireTime;
@@ -362,15 +362,15 @@ class ReliableConnection {
   std::unordered_map<std::uint32_t, PendingHandle> pending_by_sequence_;
   std::unordered_map<std::uint32_t, std::uint32_t> pending_sequence_counts_;
   std::priority_queue<RetryEntry, std::vector<RetryEntry>, std::greater<>>
-      retry_heap_;
+    retry_heap_;
   std::uint32_t pending_active_count_ = 0;
 
   // Per-channel duplicate detection window with bounded memory.
   static constexpr std::uint32_t kSeqWindowSize = 1024;
   std::vector<std::uint32_t>
-      seq_window_high_;  // per-channel highest_seen_sequence + 1
+    seq_window_high_;  // per-channel highest_seen_sequence + 1
   std::vector<std::bitset<1024>>
-      seq_window_bits_;  // per-channel bit[seq % 1024]
+    seq_window_bits_;  // per-channel bit[seq % 1024]
 
   // Reliable packets pending ordered processing per channel.
   std::vector<std::vector<ReceivedSlot>> pending_received_;
@@ -394,17 +394,17 @@ class ReliableConnection {
 
   // Congestion control (AIMD)
   std::uint32_t current_send_window_ =
-      0;                         ///< Adaptive send window; 0 = unlimited
+    0;                           ///< Adaptive send window; 0 = unlimited
   std::uint32_t ssthresh_ = 32;  ///< Slow-start threshold
 
   // Fragment state per channel.
   static constexpr std::size_t kFragmentHeaderExtra =
-      6;  ///< groupId(2) + fragIdx(2) + fragTotal(2)
+    6;  ///< groupId(2) + fragIdx(2) + fragTotal(2)
   std::vector<std::uint16_t>
-      next_fragment_group_id_;  ///< Rolling group-ID counter, per channel
+    next_fragment_group_id_;  ///< Rolling group-ID counter, per channel
   /// Incomplete fragment groups indexed by [channel][groupId]
   std::vector<std::unordered_map<std::uint16_t, FragmentGroup>>
-      fragment_groups_;
+    fragment_groups_;
 
   // Optional secure transport state.
   crypto::HandshakeState crypto_handshake_{};
@@ -481,7 +481,7 @@ class ReliableConnection {
   void ErasePendingPacket(PendingHandle handle);
   [[nodiscard]] PendingPacket* GetPendingPacket(PendingHandle handle);
   [[nodiscard]] const PendingPacket* GetPendingPacket(
-      PendingHandle handle) const;
+    PendingHandle handle) const;
   [[nodiscard]] PendingHandle FindPendingPacket(std::uint32_t sequence) const;
   [[nodiscard]] bool IsPendingHandleValid(PendingHandle handle) const;
   void ClearPendingPackets();
@@ -490,13 +490,13 @@ class ReliableConnection {
   [[nodiscard]] bool ShouldEncryptPacket(PacketType type) const;
   [[nodiscard]] std::size_t CryptoEnvelopeOverhead() const;
   [[nodiscard]] std::size_t MaxPayloadForPacket(
-      bool has_deadline = false, std::size_t header_extra = 0) const;
+    bool has_deadline = false, std::size_t header_extra = 0) const;
   [[nodiscard]] bool PrepareDeadline(
-      std::uint32_t deadline_ms, DeadlineMetadata& deadline,
-      std::chrono::steady_clock::time_point now) const;
+    std::uint32_t deadline_ms, DeadlineMetadata& deadline,
+    std::chrono::steady_clock::time_point now) const;
   [[nodiscard]] static bool DeadlineExpired(
-      const DeadlineMetadata& deadline,
-      std::chrono::steady_clock::time_point now);
+    const DeadlineMetadata& deadline,
+    std::chrono::steady_clock::time_point now);
   static void CopyDeadlineToPending(PendingPacket& pending,
                                     const DeadlineMetadata& deadline);
 
@@ -599,7 +599,7 @@ class ConnectionManager {
   static ConnectionKey MakeAddressKey(const SocketAddress& addr,
                                       std::uint16_t port);
   std::unordered_map<ConnectionKey, RemoteClient*, ConnectionKeyHash>
-      client_map_;
+    client_map_;
   std::vector<std::uint8_t> receive_buffer_;
   std::vector<std::vector<std::uint8_t>> receive_batch_buffers_;
   std::vector<IncomingDatagram> receive_batch_;

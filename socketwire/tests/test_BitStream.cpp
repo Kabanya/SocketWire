@@ -17,7 +17,7 @@ TEST_F(BitStreamTest, WriteAndReadBit) {
 
   // Verify stream has data
   EXPECT_GT(bs.GetSizeBits(), 0)
-      << "BitStream should contain data after writing bits";
+    << "BitStream should contain data after writing bits";
   EXPECT_EQ(bs.GetSizeBits(), 5) << "BitStream should contain exactly 5 bits";
 
   // Read back and verify each bit
@@ -56,7 +56,7 @@ TEST_F(BitStreamTest, WriteAndReadBits) {
   bs3.WriteBits(test_value, 32);
   bs3.ResetRead();
   EXPECT_EQ(bs3.ReadBits(32), test_value)
-      << "Should correctly handle 32-bit values";
+    << "Should correctly handle 32-bit values";
 }
 
 TEST_F(BitStreamTest, WriteAndReadBytes) {
@@ -66,7 +66,7 @@ TEST_F(BitStreamTest, WriteAndReadBytes) {
   bs.WriteBytes(data, data_len);
 
   EXPECT_EQ(bs.GetSizeBytes(), data_len)
-      << "BitStream should contain " << data_len << " bytes";
+    << "BitStream should contain " << data_len << " bytes";
 
   bs.ResetRead();
   char buffer[6] = {0};  // +1 for null terminator
@@ -84,7 +84,7 @@ TEST_F(BitStreamTest, WriteAndReadBytes) {
 
   for (int i = 0; i < 6; ++i) {
     EXPECT_EQ(read_buffer[i], binary_data[i])
-        << "Binary data mismatch at index " << i;
+      << "Binary data mismatch at index " << i;
   }
 
   // Test empty data
@@ -98,7 +98,7 @@ TEST_F(BitStreamTest, WriteAndReadString) {
   std::string const original = "Test String";
   bs.Write(original);
   EXPECT_GT(bs.GetSizeBytes(), original.length())
-      << "BitStream should contain string data plus length encoding";
+    << "BitStream should contain string data plus length encoding";
 
   bs.ResetRead();
   std::string result;
@@ -123,7 +123,7 @@ TEST_F(BitStreamTest, WriteAndReadString) {
   std::string special_result;
   bs3.Read(special_result);
   EXPECT_EQ(special_result, special)
-      << "Special characters should be preserved";
+    << "Special characters should be preserved";
 
   // Test long string
   socketwire::BitStream bs4;
@@ -133,7 +133,7 @@ TEST_F(BitStreamTest, WriteAndReadString) {
   std::string long_result;
   bs4.Read(long_result);
   EXPECT_EQ(long_result.length(), 1000)
-      << "Long string length should be preserved";
+    << "Long string length should be preserved";
   EXPECT_EQ(long_result, long_str) << "Long string content should match";
 }
 
@@ -146,12 +146,12 @@ TEST_F(BitStreamTest, WriteAndReadBoolArray) {
   bs.ResetRead();
   auto result = bs.ReadBoolArray();
   ASSERT_EQ(original.size(), result.size())
-      << "Array sizes should match. Expected: " << original.size()
-      << ", Got: " << result.size();
+    << "Array sizes should match. Expected: " << original.size()
+    << ", Got: " << result.size();
 
   for (std::size_t i = 0; i < original.size(); ++i) {
     EXPECT_EQ(original.at(i), result.at(i))
-        << "Bool array mismatch at index " << i;
+      << "Bool array mismatch at index " << i;
   }
 
   // Test empty array
@@ -168,16 +168,16 @@ TEST_F(BitStreamTest, WriteAndReadBoolArray) {
   std::vector<bool> large(100);
   for (std::size_t i = 0; i < 100; ++i) {
     large.at(i) =
-        (i % 3 == 0);  // Pattern: true, false, false, true, false, false...
+      (i % 3 == 0);  // Pattern: true, false, false, true, false, false...
   }
   bs3.WriteBoolArray(large);
   bs3.ResetRead();
   auto large_result = bs3.ReadBoolArray();
   ASSERT_EQ(large.size(), large_result.size())
-      << "Large array size should match";
+    << "Large array size should match";
   for (std::size_t i = 0; i < large.size(); ++i) {
     EXPECT_EQ(large.at(i), large_result.at(i))
-        << "Large array mismatch at index " << i;
+      << "Large array mismatch at index " << i;
   }
 }
 
@@ -200,7 +200,7 @@ TEST_F(BitStreamTest, WriteAndReadInt) {
   int negative_result = 0;
   bs2.Read(negative_result);
   EXPECT_EQ(negative, negative_result)
-      << "Negative integer should be preserved";
+    << "Negative integer should be preserved";
 
   // Test zero
   socketwire::BitStream bs3;
@@ -240,8 +240,8 @@ TEST_F(BitStreamTest, WriteAndReadInt) {
     int read_val = 0;
     bs6.Read(read_val);
     EXPECT_EQ(values.at(i), read_val)
-        << "Integer mismatch at index " << i << ". Expected: " << values.at(i)
-        << ", Got: " << read_val;
+      << "Integer mismatch at index " << i << ". Expected: " << values.at(i)
+      << ", Got: " << read_val;
   }
 }
 
@@ -253,8 +253,8 @@ TEST_F(BitStreamTest, QuantizedFloat) {
   bs.ResetRead();
   float const result = bs.ReadQuantizedFloat(0.0f, 10.0f, 16);
   EXPECT_NEAR(original, result, 0.01f)
-      << "Quantized float should be close to original. Expected: " << original
-      << ", Got: " << result;
+    << "Quantized float should be close to original. Expected: " << original
+    << ", Got: " << result;
 
   // Test boundary values
   socketwire::BitStream bs2;
@@ -263,7 +263,7 @@ TEST_F(BitStreamTest, QuantizedFloat) {
   bs2.ResetRead();
   float const min_result = bs2.ReadQuantizedFloat(0.0f, 10.0f, 16);
   EXPECT_NEAR(min_val, min_result, 0.01f)
-      << "Minimum boundary value should be preserved";
+    << "Minimum boundary value should be preserved";
 
   socketwire::BitStream bs3;
   float const max_val = 10.0f;
@@ -271,7 +271,7 @@ TEST_F(BitStreamTest, QuantizedFloat) {
   bs3.ResetRead();
   float const max_result = bs3.ReadQuantizedFloat(0.0f, 10.0f, 16);
   EXPECT_NEAR(max_val, max_result, 0.01f)
-      << "Maximum boundary value should be preserved";
+    << "Maximum boundary value should be preserved";
 
   // Test different precision levels
   socketwire::BitStream bs4;
@@ -280,14 +280,14 @@ TEST_F(BitStreamTest, QuantizedFloat) {
   bs4.ResetRead();
   const float low_prec_result = bs4.ReadQuantizedFloat(0.0f, 10.0f, 8);
   EXPECT_NEAR(test_val, low_prec_result, 0.1f)
-      << "8-bit quantization should have lower precision";
+    << "8-bit quantization should have lower precision";
 
   socketwire::BitStream bs5;
   bs5.WriteQuantizedFloat(test_val, 0.0f, 10.0f, 16);  // Medium precision
   bs5.ResetRead();
   const float med_prec_result = bs5.ReadQuantizedFloat(0.0f, 10.0f, 16);
   EXPECT_NEAR(test_val, med_prec_result, 0.01f)
-      << "16-bit quantization should have medium precision";
+    << "16-bit quantization should have medium precision";
 
   // Test negative range
   socketwire::BitStream bs6;
@@ -296,7 +296,7 @@ TEST_F(BitStreamTest, QuantizedFloat) {
   bs6.ResetRead();
   const float neg_result = bs6.ReadQuantizedFloat(-10.0f, 10.0f, 16);
   EXPECT_NEAR(neg_val, neg_result, 0.01f)
-      << "Negative values should be quantized correctly";
+    << "Negative values should be quantized correctly";
 
   // Test multiple sequential quantized floats
   socketwire::BitStream bs7;
@@ -308,7 +308,7 @@ TEST_F(BitStreamTest, QuantizedFloat) {
   for (std::size_t i = 0; i < values.size(); ++i) {
     const float read_val = bs7.ReadQuantizedFloat(0.0f, 10.0f, 16);
     EXPECT_NEAR(values.at(i), read_val, 0.01f)
-        << "Sequential quantized float mismatch at index " << i;
+      << "Sequential quantized float mismatch at index " << i;
   }
 }
 
@@ -319,7 +319,7 @@ TEST_F(BitStreamTest, Alignment) {
 
   bs.AlignWrite();
   EXPECT_EQ(bs.GetSizeBits(), 8)
-      << "Should be aligned to 8 bits (1 byte) after alignWrite";
+    << "Should be aligned to 8 bits (1 byte) after alignWrite";
 
   // Write a byte after alignment
   bs.WriteBytes("A", 1);
@@ -347,7 +347,7 @@ TEST_F(BitStreamTest, Alignment) {
   EXPECT_EQ(bs3.GetSizeBits(), 24);
   bs3.AlignWrite();  // Should not change anything
   EXPECT_EQ(bs3.GetSizeBits(), 24)
-      << "Already aligned stream should remain unchanged";
+    << "Already aligned stream should remain unchanged";
 
   // Test alignment preserves data
   socketwire::BitStream bs4;
@@ -398,11 +398,11 @@ TEST_F(BitStreamTest, Size) {
   bs4.AlignWrite();  // Align to byte boundary (add 7 padding bits to reach 16)
   const std::size_t aligned_bits = bs4.GetSizeBits();
   EXPECT_EQ(aligned_bits % 8, 0)
-      << "After alignment, bit count should be multiple of 8";
+    << "After alignment, bit count should be multiple of 8";
 
   bs4.WriteBytes("A", 1);  // +8 bits
   EXPECT_EQ(bs4.GetSizeBits(), aligned_bits + 8)
-      << "Writing 1 byte should add 8 bits";
+    << "Writing 1 byte should add 8 bits";
 
   // Verify that reading doesn't change size
   socketwire::BitStream bs5;
@@ -414,9 +414,9 @@ TEST_F(BitStreamTest, Size) {
   bs5.ReadBits(8);  // Read half
 
   EXPECT_EQ(bs5.GetSizeBits(), orig_size_bits)
-      << "Reading should not change bit size";
+    << "Reading should not change bit size";
   EXPECT_EQ(bs5.GetSizeBytes(), orig_size_bytes)
-      << "Reading should not change byte size";
+    << "Reading should not change byte size";
 }
 
 // Safety and correctness tests.
@@ -434,9 +434,9 @@ TEST_F(BitStreamTest, DataConstructorSetsSizeCorrectly) {
   // Construct from raw data; write position should be set.
   socketwire::BitStream from_data(data, bytes);
   EXPECT_EQ(from_data.GetSizeBytes(), bytes)
-      << "BitStream constructed from data should report correct size in bytes";
+    << "BitStream constructed from data should report correct size in bytes";
   EXPECT_EQ(from_data.GetSizeBits(), bytes * 8)
-      << "BitStream constructed from data should report correct size in bits";
+    << "BitStream constructed from data should report correct size in bits";
 
   // Verify we can read back correctly
   uint32_t v1 = 0;
@@ -458,21 +458,21 @@ TEST_F(BitStreamTest, ReadStringRejectsExcessiveLength) {
   craft.ResetRead();
   std::string out;
   EXPECT_THROW(craft.Read(out), std::out_of_range)
-      << "Reading a string with length > kMaxBitStreamStringLength should "
-         "throw";
+    << "Reading a string with length > kMaxBitStreamStringLength should "
+       "throw";
 }
 
 TEST_F(BitStreamTest, ReadStringRejectsLengthExceedingBuffer) {
   // Length is within the max limit, but exceeds actual buffer contents
   socketwire::BitStream craft;
   craft.Write<uint32_t>(
-      1000);  // claim 1000 bytes, but buffer only has 4 bytes after the length
+    1000);  // claim 1000 bytes, but buffer only has 4 bytes after the length
   craft.WriteBytes("AB", 2);  // only 2 bytes of actual payload
 
   craft.ResetRead();
   std::string out;
   EXPECT_THROW(craft.Read(out), std::out_of_range)
-      << "Reading a string whose length exceeds remaining buffer should throw";
+    << "Reading a string whose length exceeds remaining buffer should throw";
 }
 
 TEST_F(BitStreamTest, ReadStringLegitimateStringsStillWork) {
@@ -502,8 +502,8 @@ TEST_F(BitStreamTest, ReadBoolArrayRejectsExcessiveSize) {
 
   craft.ResetRead();
   EXPECT_THROW(craft.ReadBoolArray(), std::out_of_range)
-      << "Reading a bool array with size > kMaxBitStreamBoolArraySize should "
-         "throw";
+    << "Reading a bool array with size > kMaxBitStreamBoolArraySize should "
+       "throw";
 }
 
 TEST_F(BitStreamTest, ReadBoolArrayRejectsSizeExceedingBuffer) {
@@ -515,7 +515,7 @@ TEST_F(BitStreamTest, ReadBoolArrayRejectsSizeExceedingBuffer) {
 
   craft.ResetRead();
   EXPECT_THROW(craft.ReadBoolArray(), std::out_of_range)
-      << "Reading a bool array whose size exceeds remaining bits should throw";
+    << "Reading a bool array whose size exceeds remaining bits should throw";
 }
 
 TEST_F(BitStreamTest, ReadBoolArrayLegitimateArraysStillWork) {

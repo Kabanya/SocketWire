@@ -53,7 +53,7 @@ TEST_F(UDPSocketTest, CreateWithCustomConfig) {
 
   ASSERT_NE(socket, nullptr);
   EXPECT_FALSE(socket->IsBlocking())
-      << "Should respect nonBlocking=false in config";
+    << "Should respect nonBlocking=false in config";
 }
 
 TEST_F(UDPSocketTest, BindToAnyPort)  // bind test
@@ -113,7 +113,7 @@ TEST_F(UDPSocketTest, BindMultipleSocketsDifferentPorts) {
   EXPECT_EQ(socket2->Bind(addr, 0), SocketError::kNone);
 
   EXPECT_NE(socket1->LocalPort(), socket2->LocalPort())
-      << "Different sockets should get different ports";
+    << "Different sockets should get different ports";
 }
 
 // SEND AND RECEIVE
@@ -137,11 +137,11 @@ TEST_F(UDPSocketTest, SendAndReceive) {
   const std::size_t message_len = std::strlen(message);
 
   const SocketResult send_result =
-      sender->SendTo(message, message_len, addr, receiver_port);
+    sender->SendTo(message, message_len, addr, receiver_port);
 
   EXPECT_TRUE(send_result.Succeeded()) << "Send should succeed";
   EXPECT_EQ(send_result.bytes, static_cast<std::ptrdiff_t>(message_len))
-      << "Should send all bytes";
+    << "Should send all bytes";
 
   // Small delay to ensure packet arrives
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -152,7 +152,7 @@ TEST_F(UDPSocketTest, SendAndReceive) {
   std::uint16_t from_port = 0;
 
   const SocketResult recv_result =
-      receiver->Receive(buffer, sizeof(buffer), from_addr, from_port);
+    receiver->Receive(buffer, sizeof(buffer), from_addr, from_port);
 
   EXPECT_TRUE(recv_result.Succeeded()) << "Receive should succeed";
   EXPECT_EQ(recv_result.bytes, static_cast<std::ptrdiff_t>(message_len));
@@ -170,7 +170,7 @@ TEST_F(UDPSocketTest, SendWithoutBind) {
 
   // UDP allows sending without explicit bind (lazy open)
   const SocketResult result =
-      sender->SendTo(message, std::strlen(message), addr, 12345);
+    sender->SendTo(message, std::strlen(message), addr, 12345);
 
   // Should succeed or fail gracefully (depending on whether port 12345 is
   // listening)
@@ -215,7 +215,7 @@ TEST_F(UDPSocketTest, ReceiveWithoutBindReturnsError) {
   std::uint16_t from_port = 0;
 
   const SocketResult result =
-      socket->Receive(buffer, sizeof(buffer), from_addr, from_port);
+    socket->Receive(buffer, sizeof(buffer), from_addr, from_port);
 
   EXPECT_FALSE(result.Succeeded());
   EXPECT_EQ(result.error, SocketError::kNotBound);
@@ -233,7 +233,7 @@ TEST_F(UDPSocketTest, ReceiveNullBufferReturnsError) {
   std::uint16_t from_port = 0;
 
   const SocketResult result =
-      socket->Receive(nullptr, 1024, from_addr, from_port);
+    socket->Receive(nullptr, 1024, from_addr, from_port);
 
   EXPECT_FALSE(result.Succeeded());
   EXPECT_EQ(result.error, SocketError::kInvalidParam);
@@ -256,7 +256,7 @@ TEST_F(UDPSocketTest, MultipleMessages) {
   for (int i = 0; i < num_messages; ++i) {
     const std::string message = "Message " + std::to_string(i);
     const SocketResult result =
-        sender->SendTo(message.c_str(), message.length(), addr, receiver_port);
+      sender->SendTo(message.c_str(), message.length(), addr, receiver_port);
     EXPECT_TRUE(result.Succeeded());
   }
 
@@ -269,7 +269,7 @@ TEST_F(UDPSocketTest, MultipleMessages) {
     std::uint16_t from_port = 0;
 
     const SocketResult result =
-        receiver->Receive(buffer, sizeof(buffer), from_addr, from_port);
+      receiver->Receive(buffer, sizeof(buffer), from_addr, from_port);
     EXPECT_TRUE(result.Succeeded());
     EXPECT_GT(result.bytes, 0);
   }
@@ -334,7 +334,7 @@ TEST_F(UDPSocketTest, NonBlockingReceiveReturnsWouldBlock) {
 
   // Should return WouldBlock when no data available
   const SocketResult result =
-      socket->Receive(buffer, sizeof(buffer), from_addr, from_port);
+    socket->Receive(buffer, sizeof(buffer), from_addr, from_port);
 
   EXPECT_FALSE(result.Succeeded());
   EXPECT_EQ(result.error, SocketError::kWouldBlock);
@@ -361,21 +361,21 @@ TEST_F(UDPSocketTest, PollWithHandler) {
   const std::size_t message_len = std::strlen(message);
 
   ASSERT_TRUE(
-      sender->SendTo(message, message_len, addr, receiver_port).Succeeded());
+    sender->SendTo(message, message_len, addr, receiver_port).Succeeded());
 
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
   // Expect OnDataReceived to be called.
   EXPECT_CALL(mock_handler, OnDataReceived(::testing::_, ::testing::_,
                                            ::testing::_, message_len))
-      .Times(1)
-      .WillOnce(::testing::Invoke(
-          [message, message_len](const SocketAddress& /*from*/,
-                                 std::uint16_t /*port*/, const void* data,
-                                 std::size_t bytes) {
-            EXPECT_EQ(bytes, message_len);
-            EXPECT_EQ(std::memcmp(data, message, message_len), 0);
-          }));
+    .Times(1)
+    .WillOnce(
+      ::testing::Invoke([message, message_len](
+                          const SocketAddress& /*from*/, std::uint16_t /*port*/,
+                          const void* data, std::size_t bytes) {
+        EXPECT_EQ(bytes, message_len);
+        EXPECT_EQ(std::memcmp(data, message, message_len), 0);
+      }));
 
   receiver->Poll(&mock_handler);
 
@@ -421,7 +421,7 @@ TEST_F(UDPSocketTest, PollMultiplePackets) {
   // and internal heuristics. We just verify at least one packet is received.
   EXPECT_CALL(mock_handler, OnDataReceived(::testing::_, ::testing::_,
                                            ::testing::_, ::testing::_))
-      .Times(::testing::AtLeast(1));
+    .Times(::testing::AtLeast(1));
 
   // Poll multiple times to ensure all packets are read
   for (int i = 0; i < num_packets; ++i) {
@@ -448,7 +448,7 @@ TEST_F(UDPSocketTest, CloseSocket) {
 
   EXPECT_EQ(socket->LocalPort(), 0) << "Port should be reset after close";
   EXPECT_EQ(socket->NativeHandle(), -1)
-      << "Handle should be invalid after close";
+    << "Handle should be invalid after close";
 }
 
 TEST_F(UDPSocketTest, CloseMultipleTimes) {
@@ -525,7 +525,7 @@ TEST_F(UDPSocketTest, LargePacket) {
   }
 
   const SocketResult send_result =
-      sender->SendTo(data.data(), data.size(), addr, receiver_port);
+    sender->SendTo(data.data(), data.size(), addr, receiver_port);
 
   EXPECT_TRUE(send_result.Succeeded());
   EXPECT_EQ(send_result.bytes, static_cast<std::ptrdiff_t>(data_size));
@@ -537,7 +537,7 @@ TEST_F(UDPSocketTest, LargePacket) {
   std::uint16_t from_port = 0;
 
   const SocketResult recv_result =
-      receiver->Receive(buffer.data(), buffer.size(), from_addr, from_port);
+    receiver->Receive(buffer.data(), buffer.size(), from_addr, from_port);
 
   EXPECT_TRUE(recv_result.Succeeded());
   EXPECT_EQ(recv_result.bytes, static_cast<std::ptrdiff_t>(data_size));

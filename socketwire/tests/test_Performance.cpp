@@ -40,11 +40,11 @@ class PerformanceTest : public ::testing::Test {
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration =
-        duration_cast<std::chrono::microseconds>(end - start).count();
+      duration_cast<std::chrono::microseconds>(end - start).count();
     const auto duration_value = static_cast<double>(duration);
     const double ms = duration_value / 1000.0;
     const double ops_per_sec =
-        (static_cast<double>(iterations) * 1000000.0) / duration_value;
+      (static_cast<double>(iterations) * 1000000.0) / duration_value;
 
     std::cout << "  " << operation_name << ":\n"
               << "    Iterations: " << iterations << "\n"
@@ -223,19 +223,19 @@ TEST_F(PerformanceTest, BitStreamMixedOperations) {
 
   // Complex write scenario
   const double write_time = MeasureTime(
-      "Write " + std::to_string(iterations) + " mixed data packets", iterations,
-      []() {
-        socketwire::BitStream bs;
+    "Write " + std::to_string(iterations) + " mixed data packets", iterations,
+    []() {
+      socketwire::BitStream bs;
 
-        // Simulate a game packet
-        bs.WriteBit(true);                                // connected flag
-        bs.Write(42);                                     // player ID
-        bs.WriteQuantizedFloat(10.5f, 0.0f, 100.0f, 16);  // position X
-        bs.WriteQuantizedFloat(20.3f, 0.0f, 100.0f, 16);  // position Y
-        bs.WriteQuantizedFloat(5.1f, 0.0f, 100.0f, 16);   // position Z
-        bs.Write(std::string("Player"));                  // name
-        bs.WriteBits(0xFF, 8);                            // flags
-      });
+      // Simulate a game packet
+      bs.WriteBit(true);                                // connected flag
+      bs.Write(42);                                     // player ID
+      bs.WriteQuantizedFloat(10.5f, 0.0f, 100.0f, 16);  // position X
+      bs.WriteQuantizedFloat(20.3f, 0.0f, 100.0f, 16);  // position Y
+      bs.WriteQuantizedFloat(5.1f, 0.0f, 100.0f, 16);   // position Z
+      bs.Write(std::string("Player"));                  // name
+      bs.WriteBits(0xFF, 8);                            // flags
+    });
 
   // Complex read scenario
   socketwire::BitStream bs_read;
@@ -250,27 +250,27 @@ TEST_F(PerformanceTest, BitStreamMixedOperations) {
   }
 
   const double read_time =
-      MeasureTime("Read 50K mixed data packets", iterations, [&bs_read]() {
-        bs_read.ResetRead();
+    MeasureTime("Read 50K mixed data packets", iterations, [&bs_read]() {
+      bs_read.ResetRead();
 
-        const bool flag = bs_read.ReadBit();
-        int id = 0;
-        bs_read.Read(id);
-        const float x = bs_read.ReadQuantizedFloat(0.0f, 100.0f, 16);
-        const float y = bs_read.ReadQuantizedFloat(0.0f, 100.0f, 16);
-        const float z = bs_read.ReadQuantizedFloat(0.0f, 100.0f, 16);
-        std::string name;
-        bs_read.Read(name);
-        const uint32_t flags = bs_read.ReadBits(8);
+      const bool flag = bs_read.ReadBit();
+      int id = 0;
+      bs_read.Read(id);
+      const float x = bs_read.ReadQuantizedFloat(0.0f, 100.0f, 16);
+      const float y = bs_read.ReadQuantizedFloat(0.0f, 100.0f, 16);
+      const float z = bs_read.ReadQuantizedFloat(0.0f, 100.0f, 16);
+      std::string name;
+      bs_read.Read(name);
+      const uint32_t flags = bs_read.ReadBits(8);
 
-        (void)flag;
-        (void)id;
-        (void)x;
-        (void)y;
-        (void)z;
-        (void)name;
-        (void)flags;
-      });
+      (void)flag;
+      (void)id;
+      (void)x;
+      (void)y;
+      (void)z;
+      (void)name;
+      (void)flags;
+    });
 
   std::cout << "  Write/Read ratio: " << (write_time / read_time) << "x\n";
 
@@ -287,7 +287,7 @@ TEST_F(PerformanceTest, NetSocketCreation) {
                 const SocketConfig config;
                 auto sock = factory->CreateUdpSocket(config);
                 const SocketAddress addr =
-                    SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
+                  SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
                 sock->Bind(addr, 0);
               });
 
@@ -334,12 +334,12 @@ TEST_F(PerformanceTest, BitStreamLargeDataTransfer) {
   std::vector<char> large_data(data_size, 'X');
 
   const double write_time =
-      MeasureTime("Write " + std::to_string(iterations) + " x " +
-                      std::to_string(data_size / 1024) + " blocks",
-                  iterations, [&large_data]() {
-                    socketwire::BitStream bs;
-                    bs.WriteBytes(large_data.data(), large_data.size());
-                  });
+    MeasureTime("Write " + std::to_string(iterations) + " x " +
+                  std::to_string(data_size / 1024) + " blocks",
+                iterations, [&large_data]() {
+                  socketwire::BitStream bs;
+                  bs.WriteBytes(large_data.data(), large_data.size());
+                });
 
   socketwire::BitStream bs_read;
   for (int i = 0; i < 100; ++i) {
@@ -348,12 +348,12 @@ TEST_F(PerformanceTest, BitStreamLargeDataTransfer) {
 
   std::vector<char> read_buffer(data_size);
   const double read_time =
-      MeasureTime("Read " + std::to_string(iterations) + " x " +
-                      std::to_string(data_size / 1024) + " blocks",
-                  iterations, [&bs_read, &read_buffer]() {
-                    bs_read.ResetRead();
-                    bs_read.ReadBytes(read_buffer.data(), read_buffer.size());
-                  });
+    MeasureTime("Read " + std::to_string(iterations) + " x " +
+                  std::to_string(data_size / 1024) + " blocks",
+                iterations, [&bs_read, &read_buffer]() {
+                  bs_read.ResetRead();
+                  bs_read.ReadBytes(read_buffer.data(), read_buffer.size());
+                });
 
   const double mb_written = (iterations * data_size) / (1024.0 * 1024.0);
   const double write_throughput = mb_written / (write_time / 1000.0);
@@ -409,7 +409,7 @@ TEST_F(PerformanceTest, SocketPollerAddRemoveSockets) {
                 const SocketConfig config;
                 auto socket = factory->CreateUdpSocket(config);
                 const SocketAddress addr =
-                    SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
+                  SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
                 socket->Bind(addr, 0);
                 poller.AddSocket(socket.get(), false);
                 poller.RemoveSocket(socket.get());
@@ -493,8 +493,8 @@ TEST_F(PerformanceTest, SocketPollerDispatchEvents) {
   events.push_back(ev);
 
   MeasureTime(
-      "Dispatch " + std::to_string(iterations) + " events", iterations,
-      [&poller, &events, &handler]() { poller.DispatchAll(events, &handler); });
+    "Dispatch " + std::to_string(iterations) + " events", iterations,
+    [&poller, &events, &handler]() { poller.DispatchAll(events, &handler); });
 
   SUCCEED();
 }
@@ -535,18 +535,18 @@ TEST_F(PerformanceTest, SocketPollerIntegrationSendReceive) {
   CountingHandler handler;
 
   MeasureTime(
-      "Send/Receive " + std::to_string(iterations) + " messages via poller",
-      iterations, [&]() {
-        // Send message
-        sender->SendTo(message, message_len, addr, receiver_port);
+    "Send/Receive " + std::to_string(iterations) + " messages via poller",
+    iterations, [&]() {
+      // Send message
+      sender->SendTo(message, message_len, addr, receiver_port);
 
-        // Poll and dispatch
-        auto events = poller.Poll(10);  // Short timeout
-        const SocketEvent& ev = events.at(0);
-        if (!events.empty()) {
-          poller.DispatchReadable(ev, &handler);
-        }
-      });
+      // Poll and dispatch
+      auto events = poller.Poll(10);  // Short timeout
+      const SocketEvent& ev = events.at(0);
+      if (!events.empty()) {
+        poller.DispatchReadable(ev, &handler);
+      }
+    });
 
   std::cout << "  Total messages received: " << handler.count << "\n";
 

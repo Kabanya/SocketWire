@@ -16,28 +16,33 @@
 #define SOCKETWIRE_PLATFORM_WINDOWS 0
 #endif
 
-#if SOCKETWIRE_PLATFORM_WINDOWS
-#define WIN32_LEAN_AND_MEAN
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#else
-#if defined(__linux__)
+#if !SOCKETWIRE_PLATFORM_WINDOWS && defined(__linux__)
 #define SOCKETWIRE_PLATFORM_LINUX 1
 #else
 #define SOCKETWIRE_PLATFORM_LINUX 0
 #endif
-#if defined(__APPLE__)
+
+#if !SOCKETWIRE_PLATFORM_WINDOWS && defined(__APPLE__)
 #define SOCKETWIRE_PLATFORM_APPLE 1
 #else
 #define SOCKETWIRE_PLATFORM_APPLE 0
 #endif
-#if SOCKETWIRE_PLATFORM_LINUX
+
+#if SOCKETWIRE_PLATFORM_WINDOWS
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#elif SOCKETWIRE_PLATFORM_LINUX
 #include <sys/epoll.h>
 #elif SOCKETWIRE_PLATFORM_APPLE
 #include <sys/event.h>
-#include <sys/time.h>
 #endif
+
+#if !SOCKETWIRE_PLATFORM_WINDOWS
 #include <sys/select.h>
+#include <sys/time.h>
 #include <unistd.h>
 #endif
 
