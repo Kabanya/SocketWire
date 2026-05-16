@@ -9,6 +9,7 @@ add_executable(SocketWireTests
   test_SocketPoller.cpp
   test_ReliableConnection.cpp
   test_ReliableConnection_Integration.cpp
+  test_ReliableConnection_NetworkProfiles.cpp
   test_ReliableConnection_Performance.cpp
 )
 

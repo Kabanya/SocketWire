@@ -1,4 +1,9 @@
 #pragma once
+/// Compact bit-level serialization for packet payloads.
+///
+/// Bit operations pack values least-significant bit first, while byte and typed
+/// reads align to byte boundaries and expose non-throwing variants for
+/// defensive packet parsing.
 
 #include <cstdint>
 #include <expected>
