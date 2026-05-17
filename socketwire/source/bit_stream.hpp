@@ -5,8 +5,11 @@
 /// reads align to byte boundaries and expose non-throwing variants for
 /// defensive packet parsing.
 
+#include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -32,6 +35,64 @@ class BitStream {
   std::size_t write_pos_ = 0;
   std::size_t read_pos_ = 0;
 
+  template <typename T>
+  static constexpr bool kSupportedTypedValue =
+    std::is_integral_v<T> || std::is_enum_v<T> || std::is_same_v<T, float> ||
+    std::is_same_v<T, double>;
+
+  template <typename U>
+  void WriteUnsignedBigEndian(U value) {
+    static_assert(CHAR_BIT == 8,
+                  "BitStream portable serialization requires 8-bit bytes");
+    static_assert(std::is_unsigned_v<U> && !std::is_same_v<U, bool>,
+                  "U must be a non-bool unsigned integer");
+    static_assert(std::numeric_limits<U>::digits == sizeof(U) * CHAR_BIT,
+                  "BitStream integer serialization requires no padding bits");
+
+    std::uint8_t bytes[sizeof(U)] = {};
+    for (std::size_t i = 0; i < sizeof(U); ++i) {
+      const std::size_t shift = (sizeof(U) - 1 - i) * CHAR_BIT;
+      bytes[i] = static_cast<std::uint8_t>((value >> shift) & U{0xFF});
+    }
+    WriteBytes(bytes, sizeof(bytes));
+  }
+
+  template <typename U>
+  U ReadUnsignedBigEndian() {
+    static_assert(CHAR_BIT == 8,
+                  "BitStream portable serialization requires 8-bit bytes");
+    static_assert(std::is_unsigned_v<U> && !std::is_same_v<U, bool>,
+                  "U must be a non-bool unsigned integer");
+    static_assert(std::numeric_limits<U>::digits == sizeof(U) * CHAR_BIT,
+                  "BitStream integer serialization requires no padding bits");
+
+    std::uint8_t bytes[sizeof(U)] = {};
+    ReadBytes(bytes, sizeof(bytes));
+
+    U value = 0;
+    for (const std::uint8_t byte : bytes) {
+      value = static_cast<U>((value << CHAR_BIT) | static_cast<U>(byte));
+    }
+    return value;
+  }
+
+  template <typename T, typename U>
+  static T DecodeSignedTwosComplement(U bits) {
+    static_assert(std::is_signed_v<T>);
+    static_assert(std::is_unsigned_v<U>);
+    static_assert(sizeof(T) == sizeof(U));
+    static_assert(std::numeric_limits<T>::digits == sizeof(T) * CHAR_BIT - 1,
+                  "BitStream signed integer serialization requires no padding "
+                  "bits");
+
+    constexpr U sign_bit = U{1} << (sizeof(U) * CHAR_BIT - 1);
+    if ((bits & sign_bit) == 0) return static_cast<T>(bits);
+
+    const U magnitude = U{0} - bits;
+    if (magnitude == sign_bit) return std::numeric_limits<T>::min();
+    return static_cast<T>(-static_cast<T>(magnitude));
+  }
+
  public:
   BitStream();
   BitStream(const std::uint8_t* data, std::size_t size);
@@ -56,20 +117,74 @@ class BitStream {
   /// Aligns the read pointer to a byte boundary.
   void AlignRead();
 
-  /// Writes a trivially copyable value to the stream.
+  /// Writes a portable scalar value to the stream.
   template <typename T>
   void Write(const T& value) {
-    static_assert(std::is_trivially_copyable_v<T>,
-                  "Type must be trivially copyable");
-    WriteBytes(&value, sizeof(T));
+    using Value = std::remove_cv_t<T>;
+    static_assert(kSupportedTypedValue<Value>,
+                  "BitStream::Write<T> supports only bool, integral, enum, "
+                  "float, and double; serialize structs field-by-field or use "
+                  "WriteBytes for raw data");
+
+    if constexpr (std::is_same_v<Value, bool>) {
+      const std::uint8_t byte = value ? 1 : 0;
+      WriteBytes(&byte, sizeof(byte));
+    } else if constexpr (std::is_enum_v<Value>) {
+      using Underlying = std::underlying_type_t<Value>;
+      Write<Underlying>(static_cast<Underlying>(value));
+    } else if constexpr (std::is_integral_v<Value>) {
+      using Unsigned = std::make_unsigned_t<Value>;
+      WriteUnsignedBigEndian(static_cast<Unsigned>(value));
+    } else if constexpr (std::is_same_v<Value, float>) {
+      static_assert(std::numeric_limits<float>::is_iec559 &&
+                      sizeof(float) == sizeof(std::uint32_t),
+                    "BitStream float serialization requires IEEE-754 float");
+      WriteUnsignedBigEndian(std::__bit_cast<std::uint32_t>(value));
+    } else if constexpr (std::is_same_v<Value, double>) {
+      static_assert(std::numeric_limits<double>::is_iec559 &&
+                      sizeof(double) == sizeof(std::uint64_t),
+                    "BitStream double serialization requires IEEE-754 double");
+      WriteUnsignedBigEndian(std::__bit_cast<std::uint64_t>(value));
+    }
   }
 
-  /// Reads a trivially copyable value from the stream.
+  /// Reads a portable scalar value from the stream.
   template <typename T>
   void Read(T& value) {
-    static_assert(std::is_trivially_copyable_v<T>,
-                  "Type must be trivially copyable");
-    ReadBytes(&value, sizeof(T));
+    using Value = std::remove_cv_t<T>;
+    static_assert(kSupportedTypedValue<Value>,
+                  "BitStream::Read<T> supports only bool, integral, enum, "
+                  "float, and double; serialize structs field-by-field or use "
+                  "ReadBytes for raw data");
+
+    if constexpr (std::is_same_v<Value, bool>) {
+      std::uint8_t byte = 0;
+      ReadBytes(&byte, sizeof(byte));
+      value = byte != 0;
+    } else if constexpr (std::is_enum_v<Value>) {
+      using Underlying = std::underlying_type_t<Value>;
+      Underlying underlying = {};
+      Read(underlying);
+      value = static_cast<Value>(underlying);
+    } else if constexpr (std::is_integral_v<Value>) {
+      using Unsigned = std::make_unsigned_t<Value>;
+      const Unsigned bits = ReadUnsignedBigEndian<Unsigned>();
+      if constexpr (std::is_signed_v<Value>) {
+        value = DecodeSignedTwosComplement<Value>(bits);
+      } else {
+        value = static_cast<Value>(bits);
+      }
+    } else if constexpr (std::is_same_v<Value, float>) {
+      static_assert(std::numeric_limits<float>::is_iec559 &&
+                      sizeof(float) == sizeof(std::uint32_t),
+                    "BitStream float serialization requires IEEE-754 float");
+      value = std::__bit_cast<float>(ReadUnsignedBigEndian<std::uint32_t>());
+    } else if constexpr (std::is_same_v<Value, double>) {
+      static_assert(std::numeric_limits<double>::is_iec559 &&
+                      sizeof(double) == sizeof(std::uint64_t),
+                    "BitStream double serialization requires IEEE-754 double");
+      value = std::__bit_cast<double>(ReadUnsignedBigEndian<std::uint64_t>());
+    }
   }
 
   /// Writes a string to the stream.
@@ -97,11 +212,12 @@ class BitStream {
   [[nodiscard]] std::expected<std::vector<bool>, BitStreamError>
   TryReadBoolArray() noexcept;
 
-  /// Non-throwing read for any trivially copyable type.
+  /// Non-throwing read for any portable scalar type.
   template <typename T>
   [[nodiscard]] std::expected<T, BitStreamError> TryRead() noexcept {
-    static_assert(std::is_trivially_copyable_v<T>,
-                  "Type must be trivially copyable");
+    static_assert(kSupportedTypedValue<std::remove_cv_t<T>>,
+                  "BitStream::TryRead<T> supports only bool, integral, enum, "
+                  "float, and double");
     try {
       T value{};
       Read(value);

@@ -1,6 +1,7 @@
 #include "reliable_protocol.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <utility>
 
 namespace socketwire::detail {
@@ -46,6 +47,13 @@ std::uint32_t DeadlineAgeMs(std::chrono::steady_clock::time_point created_time,
 }
 
 }  // namespace
+
+std::size_t PacketKeyHash::operator()(const PacketKey& key) const noexcept {
+  std::size_t h = std::hash<std::uint32_t>{}(key.sequence);
+  h ^= std::hash<std::uint8_t>{}(key.channel) + 0x9e3779b97f4a7c15ULL +
+       (h << 6) + (h >> 2);
+  return h;
+}
 
 std::size_t PacketCodec::HeaderSize(const PacketBuild& packet) {
   return kBaseHeaderSize +
@@ -295,8 +303,8 @@ void SendQueue::Configure(std::uint32_t max_pending_packets) {
     max_pending_packets_ == 0 ? 1024U : max_pending_packets_;
   slots_.reserve(reserve);
   free_slots_.reserve(reserve);
-  by_sequence_.reserve(reserve);
-  sequence_counts_.reserve(reserve);
+  by_packet_.reserve(reserve);
+  packet_counts_.reserve(reserve);
 }
 
 bool SendQueue::CanAllocate() const {
@@ -304,7 +312,7 @@ bool SendQueue::CanAllocate() const {
 }
 
 std::expected<SendQueue::PendingHandle, bool> SendQueue::Allocate(
-  std::uint32_t sequence) {
+  std::uint8_t channel, std::uint32_t sequence) {
   if (!CanAllocate()) return std::unexpected(false);
 
   std::size_t index = 0;
@@ -320,13 +328,14 @@ std::expected<SendQueue::PendingHandle, bool> SendQueue::Allocate(
   slot.active = true;
   ++slot.generation;
   if (slot.generation == 0) ++slot.generation;
-  ResetPendingPacketForReuse(slot.packet, sequence);
+  ResetPendingPacketForReuse(slot.packet, channel, sequence);
 
   const PendingHandle handle{index, slot.generation};
+  const PacketKey key{channel, sequence};
   ++active_count_;
-  ++sequence_counts_[sequence];
-  if (by_sequence_.find(sequence) == by_sequence_.end()) {
-    by_sequence_.emplace(sequence, handle);
+  ++packet_counts_[key];
+  if (by_packet_.find(key) == by_packet_.end()) {
+    by_packet_.emplace(key, handle);
   }
   return handle;
 }
@@ -360,37 +369,37 @@ void SendQueue::Erase(PendingHandle handle) {
   if (!IsValid(handle)) return;
 
   PendingSlot& slot = slots_.at(handle.index);
-  const std::uint32_t sequence = slot.packet.sequence;
-  const auto indexed = by_sequence_.find(sequence);
-  const bool erased_indexed = indexed != by_sequence_.end() &&
+  const PacketKey key{slot.packet.channel, slot.packet.sequence};
+  const auto indexed = by_packet_.find(key);
+  const bool erased_indexed = indexed != by_packet_.end() &&
                               indexed->second.index == handle.index &&
                               indexed->second.generation == handle.generation;
-  const auto count_it = sequence_counts_.find(sequence);
-  const bool has_sequence_collision =
-    count_it != sequence_counts_.end() && count_it->second > 1;
+  const auto count_it = packet_counts_.find(key);
+  const bool has_packet_key_collision =
+    count_it != packet_counts_.end() && count_it->second > 1;
 
   slot.active = false;
   if (active_count_ > 0) --active_count_;
-  if (count_it != sequence_counts_.end()) {
+  if (count_it != packet_counts_.end()) {
     if (count_it->second > 1) {
       --count_it->second;
     } else {
-      sequence_counts_.erase(count_it);
+      packet_counts_.erase(count_it);
     }
   }
 
   if (erased_indexed) {
-    by_sequence_.erase(indexed);
-    if (has_sequence_collision) {
+    by_packet_.erase(indexed);
+    if (has_packet_key_collision) {
       for (std::size_t index = 0; index < slots_.size(); ++index) {
         const PendingSlot& candidate = slots_.at(index);
         if (!candidate.active || (index == handle.index &&
                                   candidate.generation == handle.generation)) {
           continue;
         }
-        if (candidate.packet.sequence == sequence) {
-          by_sequence_.emplace(sequence,
-                               PendingHandle{index, candidate.generation});
+        if (candidate.packet.channel == key.channel &&
+            candidate.packet.sequence == key.sequence) {
+          by_packet_.emplace(key, PendingHandle{index, candidate.generation});
           break;
         }
       }
@@ -403,8 +412,8 @@ void SendQueue::Erase(PendingHandle handle) {
 void SendQueue::Clear() {
   slots_.clear();
   free_slots_.clear();
-  by_sequence_.clear();
-  sequence_counts_.clear();
+  by_packet_.clear();
+  packet_counts_.clear();
   retry_heap_ = {};
   active_count_ = 0;
 }
@@ -419,9 +428,10 @@ const PendingPacket* SendQueue::Get(PendingHandle handle) const {
   return &slots_.at(handle.index).packet;
 }
 
-SendQueue::PendingHandle SendQueue::Find(std::uint32_t sequence) const {
-  const auto it = by_sequence_.find(sequence);
-  return it == by_sequence_.end() ? PendingHandle{} : it->second;
+SendQueue::PendingHandle SendQueue::Find(std::uint8_t channel,
+                                         std::uint32_t sequence) const {
+  const auto it = by_packet_.find(PacketKey{channel, sequence});
+  return it == by_packet_.end() ? PendingHandle{} : it->second;
 }
 
 bool SendQueue::IsValid(PendingHandle handle) const {
@@ -434,12 +444,13 @@ bool SendQueue::IsValid(PendingHandle handle) const {
 }
 
 void SendQueue::ResetPendingPacketForReuse(PendingPacket& pending,
+                                           std::uint8_t channel,
                                            std::uint32_t sequence) {
   pending.sequence = sequence;
   pending.data.Clear();
   pending.sendTime = {};
   pending.retries = 0;
-  pending.channel = 0;
+  pending.channel = channel;
   pending.type = PacketType::kReliable;
   pending.createdTime = {};
   pending.deadline_ms = 0;
@@ -454,9 +465,10 @@ void AckBatcher::Configure(bool enabled, std::uint16_t max_commands) {
   queued_.reserve(max_commands_);
 }
 
-void AckBatcher::Add(std::uint32_t sequence) {
-  if (std::ranges::find(queued_, sequence) == queued_.end()) {
-    queued_.push_back(sequence);
+void AckBatcher::Add(std::uint8_t channel, std::uint32_t sequence) {
+  const PacketKey key{channel, sequence};
+  if (std::ranges::find(queued_, key) == queued_.end()) {
+    queued_.push_back(key);
   }
 }
 

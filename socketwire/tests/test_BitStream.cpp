@@ -1,6 +1,24 @@
 #include <gtest/gtest.h>
 
+#include <array>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <string>
+#include <vector>
+
 #include "bit_stream.hpp"
+
+namespace {
+
+enum class TestEnum : std::uint16_t { kValue = 0x1234 };
+
+std::vector<std::uint8_t> BytesOf(const socketwire::BitStream& stream) {
+  const auto* data = stream.GetData();
+  return {data, data + stream.GetSizeBytes()};
+}
+
+}  // namespace
 
 class BitStreamTest : public ::testing::Test {
  protected:
@@ -135,6 +153,89 @@ TEST_F(BitStreamTest, WriteAndReadString) {
   EXPECT_EQ(long_result.length(), 1000)
     << "Long string length should be preserved";
   EXPECT_EQ(long_result, long_str) << "Long string content should match";
+}
+
+TEST_F(BitStreamTest, TypedValuesUseBigEndianWireFormat) {
+  socketwire::BitStream stream;
+  stream.Write<std::uint16_t>(0x1234);
+  stream.Write<std::uint32_t>(0x01020304);
+  stream.Write<std::uint64_t>(0x0102030405060708ull);
+  stream.Write<std::int16_t>(-2);
+  stream.Write<std::int32_t>(-2);
+  stream.Write<std::int64_t>(-2);
+  stream.Write(TestEnum::kValue);
+  stream.Write<bool>(false);
+  stream.Write<bool>(true);
+  stream.Write<float>(1.0f);
+  stream.Write<double>(1.0);
+
+  const std::vector<std::uint8_t> expected = {
+    0x12, 0x34, 0x01, 0x02, 0x03, 0x04, 0x01, 0x02, 0x03, 0x04, 0x05,
+    0x06, 0x07, 0x08, 0xFF, 0xFE, 0xFF, 0xFF, 0xFF, 0xFE, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE, 0x12, 0x34, 0x00, 0x01, 0x3F,
+    0x80, 0x00, 0x00, 0x3F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  EXPECT_EQ(BytesOf(stream), expected);
+
+  stream.ResetRead();
+  std::uint16_t u16 = 0;
+  std::uint32_t u32 = 0;
+  std::uint64_t u64 = 0;
+  std::int16_t i16 = 0;
+  std::int32_t i32 = 0;
+  std::int64_t i64 = 0;
+  TestEnum enum_value = {};
+  bool false_value = true;
+  bool true_value = false;
+  float float_value = 0.0f;
+  double double_value = 0.0;
+
+  stream.Read(u16);
+  stream.Read(u32);
+  stream.Read(u64);
+  stream.Read(i16);
+  stream.Read(i32);
+  stream.Read(i64);
+  stream.Read(enum_value);
+  stream.Read(false_value);
+  stream.Read(true_value);
+  stream.Read(float_value);
+  stream.Read(double_value);
+
+  EXPECT_EQ(u16, 0x1234);
+  EXPECT_EQ(u32, 0x01020304u);
+  EXPECT_EQ(u64, 0x0102030405060708ull);
+  EXPECT_EQ(i16, -2);
+  EXPECT_EQ(i32, -2);
+  EXPECT_EQ(i64, -2);
+  EXPECT_EQ(enum_value, TestEnum::kValue);
+  EXPECT_FALSE(false_value);
+  EXPECT_TRUE(true_value);
+  EXPECT_EQ(float_value, 1.0f);
+  EXPECT_EQ(double_value, 1.0);
+}
+
+TEST_F(BitStreamTest, StringAndBoolArrayLengthsUseBigEndianWireFormat) {
+  socketwire::BitStream string_stream;
+  string_stream.Write(std::string("abc"));
+  const std::vector<std::uint8_t> expected_string = {0x00, 0x00, 0x00, 0x03,
+                                                     'a',  'b',  'c'};
+  EXPECT_EQ(BytesOf(string_stream), expected_string);
+
+  socketwire::BitStream bool_stream;
+  bool_stream.WriteBoolArray({true, false, true});
+  const std::vector<std::uint8_t> expected_bools = {0x00, 0x00, 0x00, 0x03,
+                                                    0x05};
+  EXPECT_EQ(BytesOf(bool_stream), expected_bools);
+}
+
+TEST_F(BitStreamTest, TryReadUsesBigEndianWireFormat) {
+  const std::array<std::uint8_t, 4> data = {0x01, 0x02, 0x03, 0x04};
+  socketwire::BitStream stream(data.data(), data.size());
+
+  const auto value = stream.TryRead<std::uint32_t>();
+
+  ASSERT_TRUE(value.has_value());
+  EXPECT_EQ(*value, 0x01020304u);
 }
 
 TEST_F(BitStreamTest, WriteAndReadBoolArray) {

@@ -184,7 +184,7 @@ bool ReliableConnection::SendReliableInternal(const std::uint8_t channel,
   if (size > max_payload) return SendFragmented(channel, data, size, deadline);
 
   const std::uint32_t seq = GetNextSequence(channel);
-  auto handle_result = send_queue_.Allocate(seq);
+  auto handle_result = send_queue_.Allocate(channel, seq);
   if (!handle_result.has_value()) return false;
 
   detail::PendingPacket* pending = send_queue_.Get(*handle_result);
@@ -243,7 +243,7 @@ bool ReliableConnection::SendUnsequencedInternal(const std::uint8_t channel,
   if (max_payload == 0 || size > max_payload) return false;
 
   const std::uint32_t seq = GetNextSequence(channel);
-  auto handle_result = send_queue_.Allocate(seq);
+  auto handle_result = send_queue_.Allocate(channel, seq);
   if (!handle_result.has_value()) return false;
 
   detail::PendingPacket* pending = send_queue_.Get(*handle_result);
@@ -335,6 +335,12 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
   }
 
   ProcessSinglePacket(bytes.data(), bytes.size(), *decoded, from, from_port);
+}
+
+bool ReliableConnection::IsConnectPacket(const void* data, std::size_t size) {
+  const auto decoded = detail::PacketCodec::Decode(AsBytes(data, size));
+  return decoded.has_value() &&
+         decoded->type == detail::PacketType::kConnect;
 }
 
 void ReliableConnection::ProcessSinglePacket(
@@ -459,7 +465,7 @@ void ReliableConnection::ProcessSinglePacket(
     }
 
     case detail::PacketType::kPong: {
-      const auto handle = send_queue_.Find(packet.sequence);
+      const auto handle = send_queue_.Find(0, packet.sequence);
       const detail::PendingPacket* pending = send_queue_.Get(handle);
       if (pending != nullptr) {
         const auto elapsed =
@@ -473,7 +479,7 @@ void ReliableConnection::ProcessSinglePacket(
     }
 
     case detail::PacketType::kAck: {
-      const auto handle = send_queue_.Find(packet.sequence);
+      const auto handle = send_queue_.Find(packet.channel, packet.sequence);
       const detail::PendingPacket* pending = send_queue_.Get(handle);
       if (pending != nullptr) {
         const auto elapsed =
@@ -489,7 +495,9 @@ void ReliableConnection::ProcessSinglePacket(
 
     case detail::PacketType::kReliable: {
       if (deadline_expired) {
-        if (config_.ackExpiredReliable) SendAck(packet.sequence, now);
+        if (config_.ackExpiredReliable) {
+          SendAck(packet.channel, packet.sequence, now);
+        }
         ++stats_deadline_receive_drops_;
         break;
       }
@@ -497,21 +505,23 @@ void ReliableConnection::ProcessSinglePacket(
       std::vector<detail::ReceiveSequencer::Message> ready;
       const auto result = receive_sequencer_.AcceptReliable(
         packet.channel, packet.sequence, payload, ready);
-      if (result.ack) SendAck(packet.sequence, now);
+      if (result.ack) SendAck(packet.channel, packet.sequence, now);
       DeliverReliableMessages(ready);
       break;
     }
 
     case detail::PacketType::kUnsequenced: {
       if (deadline_expired) {
-        if (config_.ackExpiredReliable) SendAck(packet.sequence, now);
+        if (config_.ackExpiredReliable) {
+          SendAck(packet.channel, packet.sequence, now);
+        }
         ++stats_deadline_receive_drops_;
         break;
       }
 
       const auto result =
         receive_sequencer_.AcceptUnsequenced(packet.channel, packet.sequence);
-      if (result.ack) SendAck(packet.sequence, now);
+      if (result.ack) SendAck(packet.channel, packet.sequence, now);
       if (result.status == detail::ReceiveSequencer::AcceptStatus::kDelivered &&
           event_handler_ != nullptr) {
         event_handler_->OnReliableReceived(packet.channel, payload.data(),
@@ -534,14 +544,16 @@ void ReliableConnection::ProcessSinglePacket(
 
     case detail::PacketType::kFragment: {
       if (deadline_expired) {
-        if (config_.ackExpiredReliable) SendAck(packet.sequence, now);
+        if (config_.ackExpiredReliable) {
+          SendAck(packet.channel, packet.sequence, now);
+        }
         ++stats_deadline_receive_drops_;
         break;
       }
 
       const auto seq_result =
         receive_sequencer_.AcceptUnsequenced(packet.channel, packet.sequence);
-      if (seq_result.ack) SendAck(packet.sequence, now);
+      if (seq_result.ack) SendAck(packet.channel, packet.sequence, now);
       if (seq_result.status !=
           detail::ReceiveSequencer::AcceptStatus::kDelivered) {
         break;
@@ -605,7 +617,7 @@ bool ReliableConnection::SendPacket(detail::PacketType type,
                                     const detail::FragmentMetadata& fragment,
                                     std::chrono::steady_clock::time_point now) {
   if (type == detail::PacketType::kAck && CanBatchPacket(type)) {
-    QueueAck(sequence, now);
+    QueueAck(channel, sequence, now);
     return true;
   }
 
@@ -655,7 +667,7 @@ bool ReliableConnection::BuildPacket(detail::PacketType type,
     return false;
   }
 
-  if (buffer.size() < config_.maxPacketSize){
+  if (buffer.size() < config_.maxPacketSize) {
     buffer.resize(config_.maxPacketSize);
   }
 
@@ -693,7 +705,7 @@ bool ReliableConnection::BuildPacket(detail::PacketType type,
 bool ReliableConnection::SendRawDatagram(
   const std::uint8_t* data, std::size_t size,
   std::chrono::steady_clock::time_point now, std::uint32_t logical_packets) {
-  if (data == nullptr || size == 0 || size > config_.maxPacketSize){
+  if (data == nullptr || size == 0 || size > config_.maxPacketSize) {
     return false;
   }
   const SocketResult result =
@@ -730,11 +742,11 @@ bool ReliableConnection::SendBatchWithCommand(
   std::vector<std::span<const std::uint8_t>> command_spans;
   command_spans.reserve(ack_batcher_.Size() + 1);
 
-  for (const std::uint32_t ack_sequence : ack_batcher_.Queued()) {
+  for (const detail::PacketKey ack : ack_batcher_.Queued()) {
     std::size_t ack_size = 0;
-    if (!BuildPacket(detail::PacketType::kAck, 0, nullptr, 0, ack_sequence,
-                     detail::DeadlineMetadata{}, detail::FragmentMetadata{},
-                     now, send_buffer_, ack_size)) {
+    if (!BuildPacket(detail::PacketType::kAck, ack.channel, nullptr, 0,
+                     ack.sequence, detail::DeadlineMetadata{},
+                     detail::FragmentMetadata{}, now, send_buffer_, ack_size)) {
       return false;
     }
     command_storage.emplace_back(
@@ -775,9 +787,9 @@ bool ReliableConnection::FlushQueuedAcks(
     const std::size_t count =
       std::min<std::size_t>(ack_batcher_.Size(), ack_batcher_.MaxCommands());
     if (count == 1) {
-      const std::uint32_t sequence = ack_batcher_.Queued().front();
-      if (!SendSinglePacket(detail::PacketType::kAck, 0, nullptr, 0, sequence,
-                            detail::DeadlineMetadata{},
+      const detail::PacketKey ack = ack_batcher_.Queued().front();
+      if (!SendSinglePacket(detail::PacketType::kAck, ack.channel, nullptr, 0,
+                            ack.sequence, detail::DeadlineMetadata{},
                             detail::FragmentMetadata{}, now)) {
         return false;
       }
@@ -790,11 +802,12 @@ bool ReliableConnection::FlushQueuedAcks(
     std::vector<std::span<const std::uint8_t>> command_spans;
     command_spans.reserve(count);
     for (std::size_t i = 0; i < count; ++i) {
+      const detail::PacketKey ack = ack_batcher_.Queued().data()[i];
       std::size_t ack_size = 0;
-      if (!BuildPacket(detail::PacketType::kAck, 0, nullptr, 0,
-                       ack_batcher_.Queued().data()[i],
-                       detail::DeadlineMetadata{}, detail::FragmentMetadata{},
-                       now, send_buffer_, ack_size)) {
+      if (!BuildPacket(detail::PacketType::kAck, ack.channel, nullptr, 0,
+                       ack.sequence, detail::DeadlineMetadata{},
+                       detail::FragmentMetadata{}, now, send_buffer_,
+                       ack_size)) {
         return false;
       }
       command_storage.emplace_back(
@@ -824,16 +837,16 @@ bool ReliableConnection::FlushQueuedAcks(
   return true;
 }
 
-void ReliableConnection::QueueAck(std::uint32_t sequence,
+void ReliableConnection::QueueAck(std::uint8_t channel, std::uint32_t sequence,
                                   std::chrono::steady_clock::time_point now) {
   if (!CanBatchPacket(detail::PacketType::kAck)) {
-    (void)SendSinglePacket(detail::PacketType::kAck, 0, nullptr, 0, sequence,
-                           detail::DeadlineMetadata{},
+    (void)SendSinglePacket(detail::PacketType::kAck, channel, nullptr, 0,
+                           sequence, detail::DeadlineMetadata{},
                            detail::FragmentMetadata{}, now);
     return;
   }
 
-  ack_batcher_.Add(sequence);
+  ack_batcher_.Add(channel, sequence);
   if (ack_batcher_.ShouldFlush()) (void)FlushQueuedAcks(now);
 }
 
@@ -889,7 +902,7 @@ bool ReliableConnection::SendFragmented(
     const std::size_t offset = i * max_frag_payload;
     const std::size_t frag_size = std::min(max_frag_payload, size - offset);
     const std::uint32_t seq = GetNextSequence(channel);
-    auto handle_result = send_queue_.Allocate(seq);
+    auto handle_result = send_queue_.Allocate(channel, seq);
     if (!handle_result.has_value()) return false;
 
     detail::PendingPacket* pending = send_queue_.Get(*handle_result);
@@ -915,13 +928,13 @@ bool ReliableConnection::SendFragmented(
   return true;
 }
 
-void ReliableConnection::SendAck(std::uint32_t sequence) {
-  (void)SendPacket(detail::PacketType::kAck, 0, nullptr, 0, sequence);
+void ReliableConnection::SendAck(std::uint8_t channel, std::uint32_t sequence) {
+  (void)SendPacket(detail::PacketType::kAck, channel, nullptr, 0, sequence);
 }
 
-void ReliableConnection::SendAck(std::uint32_t sequence,
+void ReliableConnection::SendAck(std::uint8_t channel, std::uint32_t sequence,
                                  std::chrono::steady_clock::time_point now) {
-  (void)SendPacket(detail::PacketType::kAck, 0, nullptr, 0, sequence,
+  (void)SendPacket(detail::PacketType::kAck, channel, nullptr, 0, sequence,
                    detail::DeadlineMetadata{}, now);
 }
 
@@ -934,7 +947,7 @@ void ReliableConnection::SendPing(std::chrono::steady_clock::time_point now) {
     return;
   }
 
-  auto handle_result = send_queue_.Allocate(seq);
+  auto handle_result = send_queue_.Allocate(0, seq);
   if (!handle_result.has_value()) return;
   detail::PendingPacket* pending = send_queue_.Get(*handle_result);
   if (pending == nullptr) return;
@@ -1161,10 +1174,7 @@ void ConnectionManager::ProcessPacket(const void* data, std::size_t size,
   const bool is_known = known_it != client_map_.end();
 
   if (!is_known) {
-    const auto decoded = detail::PacketCodec::Decode(AsBytes(data, size));
-    if (!decoded.has_value() || decoded->type != detail::PacketType::kConnect) {
-      return;
-    }
+    if (!ReliableConnection::IsConnectPacket(data, size)) return;
     if (clients_.size() >= config_.maxClients) return;
     if (!HandshakeAllowed()) return;
   }

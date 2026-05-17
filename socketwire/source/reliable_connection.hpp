@@ -210,6 +210,13 @@ class ReliableConnection {
   void ProcessPacket(const void* data, std::size_t size,
                      const SocketAddress& from, std::uint16_t from_port);
 
+  /// Returns true when the buffer contains a valid SocketWire connect packet.
+  ///
+  /// Intended for custom server-side demultiplexers that need to decide
+  /// whether to allocate a new ReliableConnection for an unknown endpoint.
+  [[nodiscard]] static bool IsConnectPacket(const void* data,
+                                            std::size_t size);
+
   void SetHandler(IReliableConnectionHandler* handler) {
     event_handler_ = handler;
   }
@@ -340,7 +347,7 @@ class ReliableConnection {
                             std::size_t command_size,
                             std::chrono::steady_clock::time_point now);
   bool FlushQueuedAcks(std::chrono::steady_clock::time_point now);
-  void QueueAck(std::uint32_t sequence,
+  void QueueAck(std::uint8_t channel, std::uint32_t sequence,
                 std::chrono::steady_clock::time_point now);
   void ProcessBatchPacket(const std::uint8_t* payload, std::size_t size,
                           const SocketAddress& from, std::uint16_t from_port);
@@ -351,8 +358,8 @@ class ReliableConnection {
   /// delivery.
   bool SendFragmented(std::uint8_t channel, const void* data, std::size_t size,
                       const detail::DeadlineMetadata& deadline);
-  void SendAck(std::uint32_t sequence);
-  void SendAck(std::uint32_t sequence,
+  void SendAck(std::uint8_t channel, std::uint32_t sequence);
+  void SendAck(std::uint8_t channel, std::uint32_t sequence,
                std::chrono::steady_clock::time_point now);
   void SendPing();
   void SendPing(std::chrono::steady_clock::time_point now);

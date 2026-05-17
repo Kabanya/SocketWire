@@ -569,9 +569,12 @@ TEST_F(ReliableConnectionTest, AckPiggybacksOnNextApplicationPacket) {
   conn.SetConnected();
 
   const auto inbound = MakeBasePacket(PacketType::kReliable, 0, 0, "in", 2);
+  const auto second_inbound =
+    MakeBasePacket(PacketType::kReliable, 1, 0, "ch", 2);
   socket.ClearSent();
   conn.ProcessPacket(inbound.data(), inbound.size(), addr, 12345);
-  ASSERT_EQ(handler.reliablePackets.size(), 1u);
+  conn.ProcessPacket(second_inbound.data(), second_inbound.size(), addr, 12345);
+  ASSERT_EQ(handler.reliablePackets.size(), 2u);
   EXPECT_EQ(socket.GetSentCount(), 0u);
 
   ASSERT_TRUE(conn.SendUnreliable(0, "out", 3));
@@ -584,15 +587,23 @@ TEST_F(ReliableConnectionTest, AckPiggybacksOnNextApplicationPacket) {
   const auto commands =
     socketwire::detail::PacketCodec::DecodeBatchPayload(batch.payload, 32);
   ASSERT_TRUE(commands.has_value());
-  ASSERT_EQ(commands->size(), 2u);
+  ASSERT_EQ(commands->size(), 3u);
 
   const auto ack = socketwire::detail::PacketCodec::Decode(commands->at(0));
   ASSERT_TRUE(ack.has_value());
   EXPECT_EQ(ack->type, PacketType::kAck);
+  EXPECT_EQ(ack->channel, 0u);
   EXPECT_EQ(ack->sequence, 0u);
 
-  const auto application =
+  const auto second_ack =
     socketwire::detail::PacketCodec::Decode(commands->at(1));
+  ASSERT_TRUE(second_ack.has_value());
+  EXPECT_EQ(second_ack->type, PacketType::kAck);
+  EXPECT_EQ(second_ack->channel, 1u);
+  EXPECT_EQ(second_ack->sequence, 0u);
+
+  const auto application =
+    socketwire::detail::PacketCodec::Decode(commands->at(2));
   ASSERT_TRUE(application.has_value());
   EXPECT_EQ(application->type, PacketType::kUnreliable);
   EXPECT_EQ(
@@ -707,6 +718,53 @@ TEST_F(ReliableConnectionTest, AcknowledgmentReceived) {
     << "Should not resend acknowledged packet";
   EXPECT_EQ(conn.GetLostPackets(), lost_before)
     << "Acknowledged packet should not be counted as lost";
+}
+
+TEST_F(ReliableConnectionTest, AcknowledgmentMatchesChannelAndSequence) {
+  config.pingIntervalMs = 10000;
+  ReliableConnection conn(&socket, config);
+
+  SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnected();
+
+  socket.ClearSent();
+  ASSERT_TRUE(conn.SendReliable(0, "zero", 4));
+  ASSERT_TRUE(conn.SendReliable(1, "one", 3));
+  ASSERT_EQ(conn.GetInflightCount(), 2u);
+  ASSERT_EQ(socket.GetSentCount(), 2u);
+
+  const auto channel0 = DecodePacket(socket.sentPackets.at(0).data);
+  const auto channel1 = DecodePacket(socket.sentPackets.at(1).data);
+  ASSERT_EQ(channel0.channel, 0u);
+  ASSERT_EQ(channel1.channel, 1u);
+  ASSERT_EQ(channel0.sequence, 0u);
+  ASSERT_EQ(channel1.sequence, 0u);
+
+  const auto ack_channel1 =
+    MakeBasePacket(PacketType::kAck, 1, channel1.sequence);
+  conn.ProcessPacket(ack_channel1.data(), ack_channel1.size(), addr, 12345);
+  EXPECT_EQ(conn.GetInflightCount(), 1u);
+
+  const std::size_t sent_after_ack = socket.GetSentCount();
+  std::this_thread::sleep_for(std::chrono::milliseconds(60));
+  conn.Update();
+  ASSERT_GT(socket.GetSentCount(), sent_after_ack);
+
+  const auto retry = DecodePacket(socket.sentPackets.back().data);
+  EXPECT_EQ(retry.type, PacketType::kReliable);
+  EXPECT_EQ(retry.channel, 0u);
+  EXPECT_EQ(retry.sequence, channel0.sequence);
+
+  const auto ack_channel0 =
+    MakeBasePacket(PacketType::kAck, 0, channel0.sequence);
+  conn.ProcessPacket(ack_channel0.data(), ack_channel0.size(), addr, 12345);
+  EXPECT_EQ(conn.GetInflightCount(), 0u);
+
+  const std::size_t sent_after_all_acks = socket.GetSentCount();
+  std::this_thread::sleep_for(std::chrono::milliseconds(60));
+  conn.Update();
+  EXPECT_EQ(socket.GetSentCount(), sent_after_all_acks);
 }
 
 TEST_F(ReliableConnectionTest, Disconnect) {

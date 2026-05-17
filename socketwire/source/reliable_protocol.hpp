@@ -82,6 +82,17 @@ struct PacketBuild {
   std::span<const std::uint8_t> payload{};
 };
 
+struct PacketKey {
+  std::uint8_t channel = 0;
+  std::uint32_t sequence = 0;
+
+  [[nodiscard]] bool operator==(const PacketKey& other) const = default;
+};
+
+struct PacketKeyHash {
+  [[nodiscard]] std::size_t operator()(const PacketKey& key) const noexcept;
+};
+
 class PacketCodec {
  public:
   static constexpr std::array<std::uint8_t, 2> kMagic = {0x53, 0x57};
@@ -195,7 +206,7 @@ class SendQueue {
   [[nodiscard]] bool CanAllocate() const;
   [[nodiscard]] std::uint32_t ActiveCount() const { return active_count_; }
   [[nodiscard]] std::expected<PendingHandle, bool> Allocate(
-    std::uint32_t sequence);
+    std::uint8_t channel, std::uint32_t sequence);
   void ScheduleRetry(PendingHandle handle,
                      std::chrono::steady_clock::time_point now,
                      std::uint32_t retry_timeout_ms);
@@ -205,7 +216,8 @@ class SendQueue {
   void Clear();
   [[nodiscard]] PendingPacket* Get(PendingHandle handle);
   [[nodiscard]] const PendingPacket* Get(PendingHandle handle) const;
-  [[nodiscard]] PendingHandle Find(std::uint32_t sequence) const;
+  [[nodiscard]] PendingHandle Find(std::uint8_t channel,
+                                   std::uint32_t sequence) const;
   [[nodiscard]] bool IsValid(PendingHandle handle) const;
 
  private:
@@ -224,14 +236,14 @@ class SendQueue {
     }
   };
 
-  void ResetPendingPacketForReuse(PendingPacket& pending,
+  void ResetPendingPacketForReuse(PendingPacket& pending, std::uint8_t channel,
                                   std::uint32_t sequence);
 
   std::uint32_t max_pending_packets_ = 4096;
   std::vector<PendingSlot> slots_;
   std::vector<std::size_t> free_slots_;
-  std::unordered_map<std::uint32_t, PendingHandle> by_sequence_;
-  std::unordered_map<std::uint32_t, std::uint32_t> sequence_counts_;
+  std::unordered_map<PacketKey, PendingHandle, PacketKeyHash> by_packet_;
+  std::unordered_map<PacketKey, std::uint32_t, PacketKeyHash> packet_counts_;
   std::priority_queue<RetryEntry, std::vector<RetryEntry>, std::greater<>>
     retry_heap_;
   std::uint32_t active_count_ = 0;
@@ -244,10 +256,8 @@ class AckBatcher {
   [[nodiscard]] bool Empty() const { return queued_.empty(); }
   [[nodiscard]] std::size_t Size() const { return queued_.size(); }
   [[nodiscard]] std::uint16_t MaxCommands() const { return max_commands_; }
-  [[nodiscard]] std::span<const std::uint32_t> Queued() const {
-    return queued_;
-  }
-  void Add(std::uint32_t sequence);
+  [[nodiscard]] std::span<const PacketKey> Queued() const { return queued_; }
+  void Add(std::uint8_t channel, std::uint32_t sequence);
   void RemovePrefix(std::size_t count);
   void Clear();
   [[nodiscard]] bool ShouldFlush() const {
@@ -257,7 +267,7 @@ class AckBatcher {
  private:
   bool enabled_ = true;
   std::uint16_t max_commands_ = 32;
-  std::vector<std::uint32_t> queued_;
+  std::vector<PacketKey> queued_;
 };
 
 class CongestionController {
