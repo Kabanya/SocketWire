@@ -6,44 +6,63 @@
 /// management, keep-alives, and separate reliable/unreliable channels.
 
 #include <array>
-#include <bitset>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
-#include <deque>
 #include <functional>
-#include <limits>
 #include <memory>
-#include <optional>
-#include <queue>
 #include <unordered_map>
 #include <vector>
 
 #include "bit_stream.hpp"
 #include "crypto.hpp"
 #include "i_socket.hpp"
+#include "reliable_protocol.hpp"
 
 namespace socketwire {
-
-enum class PacketType : std::uint8_t {
-  kUnreliable = 0,   ///< No delivery guarantees.
-  kReliable = 1,     ///< Guaranteed delivery, ordered.
-  kUnsequenced = 2,  ///< Guaranteed delivery, unordered.
-  kConnect = 3,      ///< Connection request.
-  kAccept = 4,       ///< Connection accepted.
-  kDisconnect = 5,   ///< Graceful disconnect.
-  kPing = 6,         ///< Keep-alive request.
-  kPong = 7,         ///< Keep-alive response.
-  kAck = 8,          ///< Acknowledgment.
-  kFragment = 9,     ///< Fragment of a large message.
-  kBatch = 10        ///< Internal container for multiple protocol packets.
-};
 
 enum class ConnectionState : std::uint8_t {
   kDisconnected = 0,
   kDisconnecting = 1,
   kConnected = 2,
   kConnecting = 3
+};
+
+class IClock {
+ public:
+  using TimePoint = std::chrono::steady_clock::time_point;
+
+  virtual ~IClock() = default;
+  [[nodiscard]] virtual TimePoint Now() const = 0;
+};
+
+class SystemClock final : public IClock {
+ public:
+  [[nodiscard]] TimePoint Now() const override {
+    return std::chrono::steady_clock::now();
+  }
+
+  [[nodiscard]] static SystemClock& Instance() {
+    static SystemClock clock;
+    return clock;
+  }
+};
+
+class ManualClock final : public IClock {
+ public:
+  explicit ManualClock(TimePoint initial = TimePoint{}) : now_(initial) {}
+
+  [[nodiscard]] TimePoint Now() const override { return now_; }
+
+  void Set(TimePoint now) { now_ = now; }
+
+  template <class Rep, class Period>
+  void Advance(std::chrono::duration<Rep, Period> delta) {
+    now_ += std::chrono::duration_cast<TimePoint::duration>(delta);
+  }
+
+ private:
+  TimePoint now_;
 };
 
 /// Configuration for reliable connections.
@@ -60,14 +79,24 @@ struct ReliableConnectionConfig {
   std::uint32_t disconnectTimeoutMs = 5000;
   std::uint32_t maxPacketSize = 1400;
   std::uint8_t numChannels = 2;
+  /// Maximum accepted clients per ConnectionManager.
+  std::uint32_t maxClients = 1024;
   /// Maximum new-connection handshakes accepted per second (0 = unlimited).
   std::uint32_t maxHandshakesPerSecond = 20;
   /// How long (ms) to wait for all fragments before discarding an incomplete
   /// group.
   std::uint32_t fragmentTimeoutMs = 5000;
+  /// Maximum application message size accepted before fragmentation/drop.
+  std::uint32_t maxMessageSize = 64 * 1024;
+  /// Maximum reliable/unsequenced packets awaiting ACK per connection.
+  std::uint32_t maxPendingReliablePackets = 4096;
+  /// Maximum incomplete fragment groups per channel.
+  std::uint32_t maxFragmentGroupsPerChannel = 32;
+  /// Maximum fragments accepted for one reassembled message.
+  std::uint32_t maxFragmentsPerMessage = 512;
   /// Maximum simultaneous unACKed reliable packets (send-window size). 0 =
-  /// unlimited. When > 0, enables AIMD congestion avoidance: window halves on
-  /// packet loss, grows by 1 per ACK up to this maximum.
+  /// unlimited. When > 0, enables packet-based AIMD congestion avoidance:
+  /// window halves on packet loss and grows by 1 per ACK up to this maximum.
   std::uint32_t sendWindowSize = 0;
   CryptoConfig crypto{};
   /// Enable deadline-aware packets sent through the WithDeadline APIs.
@@ -82,100 +111,8 @@ struct ReliableConnectionConfig {
   bool enablePacketBatching = true;
   /// Maximum protocol commands in one batch datagram.
   std::uint16_t maxBatchCommands = 32;
-  /// Reserved for delayed batching; 0 keeps application sends immediate.
-  std::uint32_t maxBatchDelayUs = 0;
   /// Ordered reliable receive window per channel.
   std::uint32_t receiveWindowSize = 1024;
-};
-
-/// Small reusable payload buffer for pending packets. Most game/ACK-sized
-/// reliable payloads avoid heap storage; large messages still use a vector and
-/// keep its capacity for reuse.
-class PendingPayloadBuffer {
- public:
-  static constexpr std::size_t kInlineCapacity = 256;
-
-  [[nodiscard]] bool Empty() const noexcept { return size_ == 0; }
-  [[nodiscard]] std::size_t Size() const noexcept { return size_; }
-
-  [[nodiscard]] std::uint8_t* Data() noexcept {
-    return using_heap_ ? heap_.data() : inline_.data();
-  }
-  [[nodiscard]] const std::uint8_t* Data() const noexcept {
-    return using_heap_ ? heap_.data() : inline_.data();
-  }
-
-  void Clear() noexcept {
-    size_ = 0;
-    using_heap_ = false;
-    heap_.clear();
-  }
-
-  void Resize(std::size_t size) {
-    size_ = size;
-    if (size > kInlineCapacity) {
-      using_heap_ = true;
-      heap_.resize(size);
-      return;
-    }
-    using_heap_ = false;
-    heap_.clear();
-  }
-
-  void Assign(const std::uint8_t* first, const std::uint8_t* last) {
-    if (first == nullptr || last == nullptr || last <= first) {
-      Clear();
-      return;
-    }
-    Assign(first, static_cast<std::size_t>(last - first));
-  }
-
-  void Assign(const std::uint8_t* src, std::size_t size) {
-    Resize(size);
-    if (size > 0 && src != nullptr) {
-      std::memcpy(Data(), src, size);
-    }
-  }
-
- private:
-  std::array<std::uint8_t, kInlineCapacity> inline_{};
-  std::vector<std::uint8_t> heap_;
-  std::size_t size_ = 0;
-  bool using_heap_ = false;
-};
-
-/// Packet waiting for acknowledgment.
-struct PendingPacket {
-  std::uint32_t sequence = 0;
-  PendingPayloadBuffer data;
-  std::chrono::steady_clock::time_point sendTime;
-  std::uint32_t retries = 0;
-  std::uint8_t channel = 0;
-  PacketType type =
-    PacketType::kReliable;  ///< Original type for retransmission
-  std::chrono::steady_clock::time_point createdTime;
-  std::uint32_t deadline_ms = 0;
-  std::chrono::steady_clock::time_point expireTime;
-  bool hasDeadline = false;
-};
-
-/// Received packet queued for ordered delivery.
-struct ReceivedPacket {
-  std::uint32_t sequence = 0;
-  PendingPayloadBuffer data;
-  std::uint8_t channel = 0;
-};
-
-/// State for accumulating fragments of a single fragmented message.
-struct FragmentGroup {
-  std::uint16_t total = 0;  ///< Total number of fragments
-  std::vector<std::optional<std::vector<std::uint8_t>>>
-    pieces;  ///< Indexed by fragmentIndex
-  std::uint16_t receivedCount = 0;
-  std::chrono::steady_clock::time_point firstReceived;
-  std::chrono::steady_clock::time_point expireTime;
-  bool hasDeadline = false;
-  std::uint8_t channel = 0;
 };
 
 /// Event callbacks for reliable connection state and payload delivery.
@@ -210,10 +147,16 @@ class IReliableConnectionHandler {
 };
 
 /// Manages a single reliable connection over UDP.
+///
+/// Threading contract: a ReliableConnection instance is owned by one network
+/// loop thread. Calls to Tick/Update/ProcessPacket and Send* must happen on
+/// that owner thread; cross-thread application sends should be marshalled into
+/// that loop by the caller.
 class ReliableConnection {
  public:
   explicit ReliableConnection(ISocket* socket,
-                              const ReliableConnectionConfig& cfg = {});
+                              const ReliableConnectionConfig& cfg = {},
+                              IClock* clock = nullptr);
   ~ReliableConnection();
 
   /// Starts a client-side connection attempt.
@@ -284,11 +227,11 @@ class ReliableConnection {
   [[nodiscard]] float GetRtt() const { return rtt_; }
   /// Current adaptive send window (0 = unlimited).
   [[nodiscard]] std::uint32_t GetSendWindow() const {
-    return current_send_window_;
+    return congestion_.Window();
   }
   /// Number of reliable packets currently awaiting acknowledgment.
   [[nodiscard]] std::uint32_t GetInflightCount() const {
-    return pending_active_count_;
+    return send_queue_.ActiveCount();
   }
   [[nodiscard]] std::uint32_t GetDeadlineSendDrops() const {
     return stats_deadline_send_drops_;
@@ -304,38 +247,9 @@ class ReliableConnection {
   }
 
  private:
-  struct DeadlineMetadata {
-    bool hasDeadline = false;
-    std::uint32_t deadline_ms = 0;
-    std::chrono::steady_clock::time_point createdTime;
-    std::chrono::steady_clock::time_point expireTime;
-  };
-
-  struct PendingHandle {
-    std::size_t index = std::numeric_limits<std::size_t>::max();
-    std::uint32_t generation = 0;
-  };
-  struct PendingSlot {
-    PendingPacket packet;
-    std::uint32_t generation = 0;
-    bool active = false;
-  };
-  struct ReceivedSlot {
-    ReceivedPacket packet;
-    bool occupied = false;
-  };
-  struct RetryEntry {
-    std::chrono::steady_clock::time_point dueTime{};
-    PendingHandle handle;
-    std::uint32_t retryGeneration = 0;
-
-    [[nodiscard]] bool operator>(const RetryEntry& other) const {
-      return dueTime > other.dueTime;
-    }
-  };
-
   ISocket* socket_ = nullptr;
   ReliableConnectionConfig config_;
+  IClock* clock_ = nullptr;
   IReliableConnectionHandler* event_handler_ = nullptr;
 
   ConnectionState state_ = ConnectionState::kDisconnected;
@@ -348,32 +262,15 @@ class ReliableConnection {
   std::vector<std::uint8_t> receive_buffer_;
   std::vector<std::vector<std::uint8_t>> receive_batch_buffers_;
   std::vector<IncomingDatagram> receive_batch_;
-  std::vector<std::uint32_t> queued_acks_;
 
   // Sequence numbers per channel.
   std::vector<std::uint32_t> send_sequence_;
-  std::vector<std::uint32_t> receive_sequence_;
 
-  // Pending packets waiting for ACK.
-  std::vector<PendingSlot> pending_packets_;
-  std::deque<PendingHandle> pending_order_;
-  std::deque<PendingHandle> pending_retry_order_;
-  std::vector<std::size_t> free_pending_slots_;
-  std::unordered_map<std::uint32_t, PendingHandle> pending_by_sequence_;
-  std::unordered_map<std::uint32_t, std::uint32_t> pending_sequence_counts_;
-  std::priority_queue<RetryEntry, std::vector<RetryEntry>, std::greater<>>
-    retry_heap_;
-  std::uint32_t pending_active_count_ = 0;
-
-  // Per-channel duplicate detection window with bounded memory.
-  static constexpr std::uint32_t kSeqWindowSize = 1024;
-  std::vector<std::uint32_t>
-    seq_window_high_;  // per-channel highest_seen_sequence + 1
-  std::vector<std::bitset<1024>>
-    seq_window_bits_;  // per-channel bit[seq % 1024]
-
-  // Reliable packets pending ordered processing per channel.
-  std::vector<std::vector<ReceivedSlot>> pending_received_;
+  detail::SendQueue send_queue_;
+  detail::AckBatcher ack_batcher_;
+  detail::CongestionController congestion_;
+  detail::ReceiveSequencer receive_sequencer_;
+  detail::FragmentReassembler fragment_reassembler_;
 
   // Timing
   std::chrono::steady_clock::time_point last_send_time_;
@@ -392,19 +289,9 @@ class ReliableConnection {
   std::uint32_t stats_deadline_retries_prevented_ = 0;
   std::uint32_t stats_deadline_expired_fragment_groups_ = 0;
 
-  // Congestion control (AIMD)
-  std::uint32_t current_send_window_ =
-    0;                           ///< Adaptive send window; 0 = unlimited
-  std::uint32_t ssthresh_ = 32;  ///< Slow-start threshold
-
   // Fragment state per channel.
-  static constexpr std::size_t kFragmentHeaderExtra =
-    6;  ///< groupId(2) + fragIdx(2) + fragTotal(2)
   std::vector<std::uint16_t>
     next_fragment_group_id_;  ///< Rolling group-ID counter, per channel
-  /// Incomplete fragment groups indexed by [channel][groupId]
-  std::vector<std::unordered_map<std::uint16_t, FragmentGroup>>
-    fragment_groups_;
 
   // Optional secure transport state.
   crypto::HandshakeState crypto_handshake_{};
@@ -418,28 +305,37 @@ class ReliableConnection {
                               std::size_t size, std::uint32_t deadline_ms);
   bool SendUnsequencedInternal(std::uint8_t channel, const void* data,
                                std::size_t size, std::uint32_t deadline_ms);
-  bool SendPacket(PacketType type, std::uint8_t channel, const void* data,
-                  std::size_t size, std::uint32_t sequence = 0);
-  bool SendPacket(PacketType type, std::uint8_t channel, const void* data,
-                  std::size_t size, std::uint32_t sequence,
-                  const DeadlineMetadata& deadline);
-  bool SendPacket(PacketType type, std::uint8_t channel, const void* data,
-                  std::size_t size, std::uint32_t sequence,
-                  const DeadlineMetadata& deadline,
+  bool SendPacket(detail::PacketType type, std::uint8_t channel,
+                  const void* data, std::size_t size,
+                  std::uint32_t sequence = 0);
+  bool SendPacket(detail::PacketType type, std::uint8_t channel,
+                  const void* data, std::size_t size, std::uint32_t sequence,
+                  const detail::DeadlineMetadata& deadline);
+  bool SendPacket(detail::PacketType type, std::uint8_t channel,
+                  const void* data, std::size_t size, std::uint32_t sequence,
+                  const detail::DeadlineMetadata& deadline,
                   std::chrono::steady_clock::time_point now);
-  bool SendSinglePacket(PacketType type, std::uint8_t channel, const void* data,
-                        std::size_t size, std::uint32_t sequence,
-                        const DeadlineMetadata& deadline,
+  bool SendPacket(detail::PacketType type, std::uint8_t channel,
+                  const void* data, std::size_t size, std::uint32_t sequence,
+                  const detail::DeadlineMetadata& deadline,
+                  const detail::FragmentMetadata& fragment,
+                  std::chrono::steady_clock::time_point now);
+  bool SendSinglePacket(detail::PacketType type, std::uint8_t channel,
+                        const void* data, std::size_t size,
+                        std::uint32_t sequence,
+                        const detail::DeadlineMetadata& deadline,
+                        const detail::FragmentMetadata& fragment,
                         std::chrono::steady_clock::time_point now);
-  bool BuildPacket(PacketType type, std::uint8_t channel, const void* data,
-                   std::size_t size, std::uint32_t sequence,
-                   const DeadlineMetadata& deadline,
+  bool BuildPacket(detail::PacketType type, std::uint8_t channel,
+                   const void* data, std::size_t size, std::uint32_t sequence,
+                   const detail::DeadlineMetadata& deadline,
+                   const detail::FragmentMetadata& fragment,
                    std::chrono::steady_clock::time_point now,
                    std::vector<std::uint8_t>& buffer, std::size_t& packet_size);
   bool SendRawDatagram(const std::uint8_t* data, std::size_t size,
                        std::chrono::steady_clock::time_point now,
                        std::uint32_t logical_packets = 1);
-  [[nodiscard]] bool CanBatchPacket(PacketType type) const;
+  [[nodiscard]] bool CanBatchPacket(detail::PacketType type) const;
   bool SendBatchWithCommand(const std::uint8_t* command,
                             std::size_t command_size,
                             std::chrono::steady_clock::time_point now);
@@ -449,69 +345,51 @@ class ReliableConnection {
   void ProcessBatchPacket(const std::uint8_t* payload, std::size_t size,
                           const SocketAddress& from, std::uint16_t from_port);
   void ProcessSinglePacket(const std::uint8_t* packet_data, std::size_t size,
-                           PacketType type, std::uint8_t channel,
-                           std::uint32_t sequence, bool has_deadline,
-                           std::uint32_t deadline_ms,
-                           std::uint32_t age_ms_at_send,
-                           std::size_t header_size, const SocketAddress& from,
-                           std::uint16_t from_port);
+                           const detail::DecodedPacket& packet,
+                           const SocketAddress& from, std::uint16_t from_port);
   /// Split a large payload into Fragment packets and enqueue each for reliable
   /// delivery.
   bool SendFragmented(std::uint8_t channel, const void* data, std::size_t size,
-                      const DeadlineMetadata& deadline);
+                      const detail::DeadlineMetadata& deadline);
   void SendAck(std::uint32_t sequence);
   void SendAck(std::uint32_t sequence,
                std::chrono::steady_clock::time_point now);
   void SendPing();
   void SendPing(std::chrono::steady_clock::time_point now);
-  void ProcessPendingReliable(std::chrono::steady_clock::time_point now);
-  void ProcessPendingReliableChannel(std::uint8_t channel,
-                                     std::chrono::steady_clock::time_point now);
+  void DeliverReliableMessages(
+    const std::vector<detail::ReceiveSequencer::Message>& messages);
   void RetryPendingPackets(std::chrono::steady_clock::time_point now);
   void CheckTimeout(std::chrono::steady_clock::time_point now);
   /// Discard fragment groups that have been waiting longer than
   /// fragmentTimeoutMs.
   void CleanupFragments(std::chrono::steady_clock::time_point now);
-  void ScheduleRetry(PendingHandle handle,
-                     std::chrono::steady_clock::time_point now);
   void EnsureReceiveBatchBuffers();
-  PendingHandle AllocatePendingPacket(std::uint32_t sequence);
-  void ResetPendingPacketForReuse(PendingPacket& pending,
-                                  std::uint32_t sequence);
-  void ErasePendingPacket(PendingHandle handle);
-  [[nodiscard]] PendingPacket* GetPendingPacket(PendingHandle handle);
-  [[nodiscard]] const PendingPacket* GetPendingPacket(
-    PendingHandle handle) const;
-  [[nodiscard]] PendingHandle FindPendingPacket(std::uint32_t sequence) const;
-  [[nodiscard]] bool IsPendingHandleValid(PendingHandle handle) const;
   void ClearPendingPackets();
   [[nodiscard]] bool SecureMode() const { return config_.crypto.enabled; }
   [[nodiscard]] bool CanUseCrypto() const;
-  [[nodiscard]] bool ShouldEncryptPacket(PacketType type) const;
+  [[nodiscard]] bool ShouldEncryptPacket(detail::PacketType type) const;
   [[nodiscard]] std::size_t CryptoEnvelopeOverhead() const;
   [[nodiscard]] std::size_t MaxPayloadForPacket(
-    bool has_deadline = false, std::size_t header_extra = 0) const;
+    bool has_deadline = false, bool has_fragment = false) const;
   [[nodiscard]] bool PrepareDeadline(
-    std::uint32_t deadline_ms, DeadlineMetadata& deadline,
+    std::uint32_t deadline_ms, detail::DeadlineMetadata& deadline,
     std::chrono::steady_clock::time_point now) const;
   [[nodiscard]] static bool DeadlineExpired(
-    const DeadlineMetadata& deadline,
+    const detail::DeadlineMetadata& deadline,
     std::chrono::steady_clock::time_point now);
-  static void CopyDeadlineToPending(PendingPacket& pending,
-                                    const DeadlineMetadata& deadline);
-
-  [[nodiscard]] bool IsDuplicateSequence(std::uint8_t channel,
-                                         std::uint32_t seq) const;
-  void MarkSequenceReceived(std::uint8_t channel, std::uint32_t seq);
+  static void CopyDeadlineToPending(detail::PendingPacket& pending,
+                                    const detail::DeadlineMetadata& deadline);
 
   std::uint32_t GetNextSequence(std::uint8_t channel) {
     if (channel >= send_sequence_.size()) return 0;
     return send_sequence_.at(channel)++;
   }
-  static bool IsSequenceNewer(std::uint32_t s1, std::uint32_t s2);
 };
 
 /// Manages multiple server-side reliable connections.
+///
+/// Threading contract: ConnectionManager has the same single-network-loop
+/// ownership as ReliableConnection. It does not add internal locking.
 class ConnectionManager {
  public:
   struct RemoteClient {
@@ -522,7 +400,8 @@ class ConnectionManager {
   };
 
   explicit ConnectionManager(ISocket* socket,
-                             const ReliableConnectionConfig& cfg = {});
+                             const ReliableConnectionConfig& cfg = {},
+                             IClock* clock = nullptr);
   ~ConnectionManager();
 
   void Update();
@@ -548,12 +427,15 @@ class ConnectionManager {
   }
 
   /// Optional server-side connection callbacks.
+  /// Called once, after the client's connection reaches established state.
   std::function<void(RemoteClient*)> onClientConnected;
+  /// Called when a disconnected client is removed from the manager.
   std::function<void(RemoteClient*)> onClientDisconnected;
 
  private:
   ISocket* socket_ = nullptr;
   ReliableConnectionConfig config_;
+  IClock* clock_ = nullptr;
   IReliableConnectionHandler* event_handler_ = nullptr;
 
   std::vector<std::unique_ptr<RemoteClient>> clients_;
@@ -609,6 +491,8 @@ class ConnectionManager {
   std::chrono::steady_clock::time_point connect_window_start_{};
   bool HandshakeAllowed();  ///< Returns true if a new connection may be
                             ///< accepted right now.
+  void EmitClientConnected(RemoteClient* client);
+  std::unordered_map<RemoteClient*, bool> connected_notified_;
 };
 
 }  // namespace socketwire

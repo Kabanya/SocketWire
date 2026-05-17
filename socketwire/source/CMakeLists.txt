@@ -7,6 +7,8 @@ add_library(SocketWire STATIC
   socket_poller.cpp
   crypto.hpp
   crypto.cpp
+  reliable_protocol.hpp
+  reliable_protocol.cpp
   reliable_connection.hpp
   reliable_connection.cpp
   socket_init.hpp
@@ -16,7 +18,7 @@ add_library(SocketWire STATIC
 )
 
 if(EMSCRIPTEN)
-  target_sources(SocketWire PRIVATE emscripten_websocket_socket.cpp)
+  target_sources(SocketWire PRIVATE emscripten_websocket.cpp)
 elseif(WIN32)
   target_sources(SocketWire PRIVATE windows_udp_socket.cpp)
 else()
