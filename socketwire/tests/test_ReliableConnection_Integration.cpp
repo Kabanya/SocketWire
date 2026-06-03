@@ -4,6 +4,7 @@
 #include <memory>
 #include <thread>
 
+#include "connection_manager.hpp"
 #include "i_socket.hpp"
 #include "reliable_connection.hpp"
 #include "socket_init.hpp"

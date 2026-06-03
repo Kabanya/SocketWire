@@ -7,6 +7,7 @@
 #include <thread>
 
 #include "bit_stream.hpp"
+#include "connection_manager.hpp"
 #include "i_socket.hpp"
 #include "reliable_connection.hpp"
 #include "socket_init.hpp"

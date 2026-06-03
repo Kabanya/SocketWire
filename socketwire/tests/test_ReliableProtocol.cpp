@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "connection_manager.hpp"
 #include "i_socket.hpp"
 #include "reliable_connection.hpp"
 #include "reliable_protocol.hpp"

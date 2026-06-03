@@ -17,7 +17,7 @@
 namespace socketwire {
 
 /// Safety limits for deserialization.
-constexpr std::uint32_t kMaxBitStreamStringLength = 65536;
+constexpr std::uint32_t kMaxBitStreamStringLength  = 65536;
 constexpr std::uint32_t kMaxBitStreamBoolArraySize = 65536;
 
 /// Error codes for non-throwing BitStream read operations.

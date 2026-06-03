@@ -11,6 +11,8 @@ add_library(SocketWire STATIC
   reliable_protocol.cpp
   reliable_connection.hpp
   reliable_connection.cpp
+  connection_manager.hpp
+  connection_manager.cpp
   socket_init.hpp
   socket_constants.hpp
   socket_constants.cpp
