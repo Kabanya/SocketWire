@@ -5,6 +5,10 @@ add_library(SocketWire STATIC
   i_socket.cpp
   socket_poller.hpp
   socket_poller.cpp
+  task_queue.hpp
+  task_queue.cpp
+  thread_pool.hpp
+  thread_pool.cpp
   crypto.hpp
   crypto.cpp
   reliable_protocol.hpp
@@ -19,6 +23,11 @@ add_library(SocketWire STATIC
   socket_address_utils.hpp
 )
 
+option(SOCKETWIRE_ENABLE_DARWIN_MSG_X
+  "Enable experimental macOS sendmsg_x UDP batching"
+  OFF
+)
+
 if(EMSCRIPTEN)
   target_sources(SocketWire PRIVATE emscripten_websocket.cpp)
 elseif(WIN32)
@@ -29,6 +38,12 @@ endif()
 
 target_include_directories(SocketWire PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(SocketWire PUBLIC cxx_std_23)
+
+if(APPLE AND SOCKETWIRE_ENABLE_DARWIN_MSG_X)
+  target_compile_definitions(SocketWire PRIVATE SOCKETWIRE_ENABLE_DARWIN_MSG_X=1)
+else()
+  target_compile_definitions(SocketWire PRIVATE SOCKETWIRE_ENABLE_DARWIN_MSG_X=0)
+endif()
 
 if (TARGET socketwire_crypto)
   target_link_libraries(SocketWire PUBLIC socketwire_crypto)

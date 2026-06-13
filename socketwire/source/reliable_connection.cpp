@@ -50,7 +50,6 @@ ReliableConnection::ReliableConnection(ISocket* socket,
                                 detail::PacketCodec::kBaseHeaderSize);
   batch_payload_buffer_.reserve(config_.maxPacketSize);
   batch_command_spans_.reserve(config_.maxBatchCommands);
-  receive_buffer_.resize(config_.maxPacketSize);
   send_queue_.Configure(config_.maxPendingReliablePackets);
   ack_batcher_.Configure(config_.enablePacketBatching,
                          config_.maxBatchCommands);
@@ -307,6 +306,10 @@ bool ReliableConnection::SendUnsequencedWithDeadline(
 
 void ReliableConnection::Update() {
   const auto now = clock_->Now();
+  Update(now);
+}
+
+void ReliableConnection::Update(std::chrono::steady_clock::time_point now) {
   RetryPendingPackets(now);
 
   if (state_ == ConnectionState::kConnected) {
@@ -1014,18 +1017,19 @@ void ReliableConnection::RetryPendingPackets(
 }
 
 void ReliableConnection::EnsureReceiveBatchBuffers() {
-  if (receive_batch_buffers_.size() != kReceiveBatchSize) {
-    receive_batch_buffers_.resize(kReceiveBatchSize);
+  const std::size_t packet_size =
+    std::max<std::size_t>(1, config_.maxPacketSize);
+  const std::size_t storage_size = kReceiveBatchSize * packet_size;
+  if (receive_batch_storage_.size() != storage_size) {
+    receive_batch_storage_.resize(storage_size);
+  }
+  if (receive_batch_.size() != kReceiveBatchSize) {
     receive_batch_.resize(kReceiveBatchSize);
   }
 
   for (std::size_t i = 0; i < kReceiveBatchSize; ++i) {
-    auto& buffer = receive_batch_buffers_.at(i);
-    if (buffer.size() < config_.maxPacketSize) {
-      buffer.resize(config_.maxPacketSize);
-    }
-    receive_batch_.at(i).data = buffer.data();
-    receive_batch_.at(i).capacity = buffer.size();
+    receive_batch_.at(i).data = receive_batch_storage_.data() + i * packet_size;
+    receive_batch_.at(i).capacity = packet_size;
     receive_batch_.at(i).result = {};
   }
 }
@@ -1118,14 +1122,14 @@ void ReliableConnection::Tick() {
     for (std::size_t i = 0; i < received; ++i) {
       const IncomingDatagram& datagram = receive_batch_.at(i);
       if (datagram.result.bytes > 0) {
-        ProcessPacket(receive_batch_buffers_.at(i).data(),
+        ProcessPacket(datagram.data,
                       static_cast<std::size_t>(datagram.result.bytes),
                       datagram.fromAddr, datagram.fromPort);
       }
     }
     if (received < receive_batch_.size()) break;
   }
-  Update();
+  Update(clock_->Now());
 }
 
 }  // namespace socketwire

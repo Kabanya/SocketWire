@@ -7,6 +7,7 @@ add_executable(SocketWireTests
   test_Performance.cpp
   test_PosixUDPSocket.cpp
   test_SocketPoller.cpp
+  test_ThreadPool.cpp
   test_ReliableProtocol.cpp
   test_ReliableConnection.cpp
   test_ReliableConnection_Integration.cpp

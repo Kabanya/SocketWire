@@ -343,6 +343,41 @@ void SocketPoller::DispatchReadable(const SocketEvent& ev,
   }
 }
 
+std::size_t SocketPoller::DispatchReadableMany(
+  const SocketEvent& ev, ISocketEventHandler* handler,
+  std::span<IncomingDatagram> datagrams) {
+  if (handler == nullptr || ev.socket == nullptr || !ev.readable ||
+      datagrams.empty()) {
+    return 0;
+  }
+
+  std::size_t total = 0;
+  for (;;) {
+    for (auto& datagram : datagrams) datagram.result = {};
+
+    const std::size_t received = ev.socket->ReceiveMany(datagrams);
+    if (received == 0) {
+      const SocketResult first_result = datagrams.front().result;
+      if (first_result.Failed() &&
+          first_result.error != SocketError::kWouldBlock) {
+        handler->OnSocketError(first_result.error);
+      }
+      break;
+    }
+
+    for (std::size_t i = 0; i < received; ++i) {
+      const IncomingDatagram& datagram = datagrams[i];
+      if (datagram.result.bytes <= 0) continue;
+      handler->OnDataReceived(datagram.fromAddr, datagram.fromPort,
+                              datagram.data,
+                              static_cast<std::size_t>(datagram.result.bytes));
+    }
+    total += received;
+    if (received < datagrams.size()) break;
+  }
+  return total;
+}
+
 void SocketPoller::DispatchAll(const std::vector<SocketEvent>& events,
                                ISocketEventHandler* handler) {
   if (handler == nullptr) return;

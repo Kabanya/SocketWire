@@ -2,9 +2,16 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
+#include <span>
+#include <string>
+#include <vector>
 
 #include "bit_stream.hpp"
 #include "i_socket.hpp"
@@ -28,6 +35,19 @@ class PerformanceTest : public ::testing::Test {
   void TearDown() override { std::cout << "\n"; }
 
   ISocketFactory* factory = nullptr;
+
+  static void AppendPerfMetric(const std::string& operation_name,
+                               double total_ms, double throughput,
+                               const std::string& unit) {
+    const char* results_path = std::getenv("SOCKETWIRE_PERF_RESULTS");
+    if (results_path == nullptr || results_path[0] == '\0') return;
+
+    std::ofstream out(results_path, std::ios::app);
+    if (!out) return;
+
+    out << operation_name << " total_ms=" << total_ms
+        << " throughput=" << throughput << " " << unit << "\n";
+  }
 
   template <typename Func>
   double MeasureTime(const std::string& operation_name, int iterations,
@@ -54,6 +74,8 @@ class PerformanceTest : public ::testing::Test {
               << " μs/op\n"
               << "    Throughput: " << static_cast<int>(ops_per_sec)
               << " ops/sec\n";
+
+    AppendPerfMetric(operation_name, ms, ops_per_sec, "ops/sec");
 
     return ms;
   }
@@ -503,7 +525,7 @@ TEST_F(PerformanceTest, SocketPollerDispatchEvents) {
 TEST_F(PerformanceTest, SocketPollerIntegrationSendReceive) {
   const int iterations = 10000 * kMultiplier;
 
-  std::cout << "SocketPoller Integration Send/Receive Performance:\n";
+  std::cout << "SocketPoller Single-Message Latency Performance:\n";
 
   // Create sender and receiver
   const SocketConfig config;
@@ -537,7 +559,8 @@ TEST_F(PerformanceTest, SocketPollerIntegrationSendReceive) {
   CountingHandler handler;
 
   MeasureTime(
-    "Send/Receive " + std::to_string(iterations) + " messages via poller",
+    "Single-message send/poll/receive " + std::to_string(iterations) +
+      " messages via poller",
     iterations, [&]() {
       // Send message
       sender->SendTo(message, message_len, addr, receiver_port);
@@ -552,4 +575,100 @@ TEST_F(PerformanceTest, SocketPollerIntegrationSendReceive) {
   std::cout << "  Total messages received: " << handler.count << "\n";
 
   SUCCEED();
+}
+
+TEST_F(PerformanceTest, SocketPollerFrameStyleThroughput) {
+  constexpr int kFrames = 40;
+  constexpr int kMessagesPerFrame = 256;
+  constexpr int kTotalMessages = kFrames * kMessagesPerFrame;
+  constexpr std::size_t kScratchDatagrams = 64;
+  constexpr std::size_t kPacketCapacity = 256;
+
+  std::cout << "SocketPoller Frame-Style Throughput Performance:\n";
+
+  SocketConfig config;
+  config.sendBufferSize = 4 * 1024 * 1024;
+  config.recvBufferSize = 4 * 1024 * 1024;
+
+  auto sender = factory->CreateUdpSocket(config);
+  auto receiver = factory->CreateUdpSocket(config);
+  ASSERT_NE(sender, nullptr);
+  ASSERT_NE(receiver, nullptr);
+
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(sender->Bind(addr, 0), SocketError::kNone);
+  ASSERT_EQ(receiver->Bind(addr, 0), SocketError::kNone);
+  const std::uint16_t receiver_port = receiver->LocalPort();
+
+  SocketPoller poller;
+  ASSERT_TRUE(poller.AddSocket(receiver.get(), false));
+
+  class CountingHandler : public ISocketEventHandler {
+   public:
+    int count = 0;
+    void OnDataReceived(const SocketAddress&, std::uint16_t, const void*,
+                        std::size_t) override {
+      ++count;
+    }
+    void OnSocketError(SocketError) override {}
+    void OnSocketClosed() override {}
+  };
+
+  CountingHandler handler;
+  std::vector<SocketEvent> events;
+  std::vector<std::uint8_t> scratch_storage(kScratchDatagrams *
+                                            kPacketCapacity);
+  std::vector<IncomingDatagram> datagrams(kScratchDatagrams);
+  for (std::size_t i = 0; i < datagrams.size(); ++i) {
+    datagrams[i].data = scratch_storage.data() + (i * kPacketCapacity);
+    datagrams[i].capacity = kPacketCapacity;
+  }
+
+  std::array<char, 64> message{};
+  std::memcpy(message.data(), "frame-style throughput packet", 29);
+
+  const auto start = std::chrono::high_resolution_clock::now();
+  for (int frame = 0; frame < kFrames; ++frame) {
+    const int frame_target = handler.count + kMessagesPerFrame;
+    for (int i = 0; i < kMessagesPerFrame; ++i) {
+      std::memcpy(message.data() + 32, &frame, sizeof(frame));
+      std::memcpy(message.data() + 40, &i, sizeof(i));
+      const SocketResult result =
+        sender->SendTo(message.data(), message.size(), addr, receiver_port);
+      ASSERT_TRUE(result.Succeeded());
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(500);
+    while (handler.count < frame_target) {
+      poller.PollInto(events, 100);
+      for (const auto& event : events) {
+        poller.DispatchReadableMany(
+          event, &handler,
+          std::span<IncomingDatagram>(datagrams.data(), datagrams.size()));
+      }
+      if (std::chrono::steady_clock::now() >= deadline) break;
+    }
+  }
+  const auto end = std::chrono::high_resolution_clock::now();
+
+  const auto duration_us =
+    std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+  const double duration_ms = static_cast<double>(duration_us) / 1000.0;
+  const double messages_per_sec =
+    (static_cast<double>(handler.count) * 1000000.0) /
+    static_cast<double>(duration_us);
+
+  std::cout << "  Frames: " << kFrames << "\n"
+            << "  Messages per frame: " << kMessagesPerFrame << "\n"
+            << "  Total messages received: " << handler.count << "\n"
+            << "  Total time: " << duration_ms << " ms\n"
+            << "  Throughput: " << static_cast<int>(messages_per_sec)
+            << " messages/sec\n";
+
+  AppendPerfMetric("Frame-style poller send/poll/drain " +
+                     std::to_string(kTotalMessages) + " messages",
+                   duration_ms, messages_per_sec, "messages/sec");
+
+  EXPECT_EQ(handler.count, kTotalMessages);
 }

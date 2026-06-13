@@ -4,7 +4,9 @@
 /// Uses epoll on Linux, kqueue on macOS/BSD, select as a POSIX fallback, and
 /// WSAPoll on Windows. SocketPoller does not own the sockets it watches.
 
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -98,6 +100,13 @@ class SocketPoller {
 
   /// Dispatches a readable event to an ISocketEventHandler.
   void DispatchReadable(const SocketEvent& ev, ISocketEventHandler* handler);
+  /// Dispatches readable datagrams using caller-owned batch storage.
+  ///
+  /// Each IncomingDatagram must provide data/capacity storage. The method
+  /// drains until ReceiveMany returns fewer datagrams than requested.
+  std::size_t DispatchReadableMany(const SocketEvent& ev,
+                                   ISocketEventHandler* handler,
+                                   std::span<IncomingDatagram> datagrams);
 
   /// Dispatches all events to an ISocketEventHandler.
   void DispatchAll(const std::vector<SocketEvent>& events,

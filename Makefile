@@ -20,11 +20,16 @@ TEST_JUNIT ?= $(TEST_RESULTS_DIR)/junit.xml
 TEST_LOG ?= $(TEST_RESULTS_DIR)/ctest.log
 NETWORK_PROFILE_RESULTS ?= $(TEST_RESULTS_DIR)/network-profiles.txt
 NETWORK_PROFILE_FILTER ?= ReliableConnectionNetworkProfiles.ReliableMessagesPreserveInvariantsAcrossPrProfiles:ReliableConnectionNetworkProfiles.VeryBadIsVisibleComparedToPerfectLan
+PERFORMANCE_RESULTS ?= $(TEST_RESULTS_DIR)/performance.txt
+PERFORMANCE_LOG ?= $(TEST_RESULTS_DIR)/performance.log
+PERFORMANCE_FILTER ?= PerformanceTest.*:ReliableConnectionPerformanceTest.*
 TEST_JUNIT_ABS := $(abspath $(TEST_JUNIT))
 TEST_LOG_ABS := $(abspath $(TEST_LOG))
 NETWORK_PROFILE_RESULTS_ABS := $(abspath $(NETWORK_PROFILE_RESULTS))
+PERFORMANCE_RESULTS_ABS := $(abspath $(PERFORMANCE_RESULTS))
+PERFORMANCE_LOG_ABS := $(abspath $(PERFORMANCE_LOG))
 
-.PHONY: help configure build test test-report network-profile-demo network-profile-report netem-start netem-status netem-stop netem-help netem-test-baseline netem-test netem-compare $(NETEM_PROFILE_TARGETS) $(NETEM_TEST_PROFILE_TARGETS) $(NETEM_COMPARE_PROFILE_TARGETS) clean
+.PHONY: help configure build test test-report performance-report network-profile-demo network-profile-report netem-start netem-status netem-stop netem-help netem-test-baseline netem-test netem-compare $(NETEM_PROFILE_TARGETS) $(NETEM_TEST_PROFILE_TARGETS) $(NETEM_COMPARE_PROFILE_TARGETS) clean
 
 help:
 	@printf '%s\n' \
@@ -34,6 +39,7 @@ help:
 		'  make build                     Configure and build the project' \
 		'  make test                      Build and run all CTest tests' \
 		'  make test-report               Run tests and write junit/log files' \
+		'  make performance-report        Run perf tests and write metrics' \
 		'  make network-profile-demo      Show visible perfect_lan vs very_bad metrics' \
 		'  make network-profile-report    Write network profile results to txt' \
 		'  make clean                     Remove the build directory' \
@@ -66,6 +72,12 @@ test: build
 test-report: build
 	$(CMAKE) -E make_directory $(TEST_RESULTS_DIR)
 	$(CTEST) --test-dir $(BUILD_DIR) --output-on-failure --output-junit $(TEST_JUNIT_ABS) -O $(TEST_LOG_ABS)
+
+performance-report: build
+	$(CMAKE) -E make_directory $(TEST_RESULTS_DIR)
+	@echo "Writing performance results to $(PERFORMANCE_RESULTS_ABS)"
+	@: > "$(PERFORMANCE_RESULTS_ABS)"
+	@bash -o pipefail -c 'SOCKETWIRE_PERF_RESULTS="$(PERFORMANCE_RESULTS_ABS)" ./$(BUILD_DIR)/socketwire/tests/SocketWireTests --gtest_filter="$(PERFORMANCE_FILTER)" | tee "$(PERFORMANCE_LOG_ABS)"'
 
 network-profile-demo: build
 	./$(BUILD_DIR)/socketwire/tests/SocketWireTests --gtest_filter=ReliableConnectionNetworkProfiles.VeryBadIsVisibleComparedToPerfectLan

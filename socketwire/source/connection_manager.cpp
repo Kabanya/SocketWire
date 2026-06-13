@@ -20,14 +20,7 @@ ConnectionManager::ConnectionManager(ISocket* socket,
     : socket_(socket),
       config_(cfg),
       clock_(clock != nullptr ? clock : &SystemClock::Instance()) {
-  receive_buffer_.resize(config_.maxPacketSize);
-  receive_batch_buffers_.resize(kReceiveBatchSize);
-  receive_batch_.resize(kReceiveBatchSize);
-  for (std::size_t i = 0; i < kReceiveBatchSize; ++i) {
-    receive_batch_buffers_.at(i).resize(config_.maxPacketSize);
-    receive_batch_.at(i).data = receive_batch_buffers_.at(i).data();
-    receive_batch_.at(i).capacity = receive_batch_buffers_.at(i).size();
-  }
+  EnsureReceiveBatchBuffers();
 }
 
 ConnectionManager::~ConnectionManager() {
@@ -37,9 +30,13 @@ ConnectionManager::~ConnectionManager() {
 }
 
 void ConnectionManager::Update() {
+  Update(clock_->Now());
+}
+
+void ConnectionManager::Update(std::chrono::steady_clock::time_point now) {
   for (auto& client : clients_) {
     if (client->connection != nullptr) {
-      client->connection->Update();
+      client->connection->Update(now);
       if (client->connection->IsConnected()) EmitClientConnected(client.get());
     }
   }
@@ -65,7 +62,7 @@ void ConnectionManager::ProcessPacket(const void* data, std::size_t size,
   if (!is_known) {
     if (!ReliableConnection::IsConnectPacket(data, size)) return;
     if (clients_.size() >= config_.maxClients) return;
-    if (!HandshakeAllowed()) return;
+    if (!HandshakeAllowed(clock_->Now())) return;
   }
 
   RemoteClient* client =
@@ -80,10 +77,10 @@ void ConnectionManager::ProcessPacket(const void* data, std::size_t size,
   }
 }
 
-bool ConnectionManager::HandshakeAllowed() {
+bool ConnectionManager::HandshakeAllowed(
+  std::chrono::steady_clock::time_point now) {
   if (config_.maxHandshakesPerSecond == 0) return true;
 
-  const auto now = clock_->Now();
   const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                          now - connect_window_start_)
                          .count();
@@ -184,17 +181,27 @@ void ConnectionManager::EmitClientConnected(RemoteClient* client) {
   if (onClientConnected != nullptr) onClientConnected(client);
 }
 
+void ConnectionManager::EnsureReceiveBatchBuffers() {
+  const std::size_t packet_size =
+    std::max<std::size_t>(1, config_.maxPacketSize);
+  const std::size_t storage_size = kReceiveBatchSize * packet_size;
+  if (receive_batch_storage_.size() != storage_size) {
+    receive_batch_storage_.resize(storage_size);
+  }
+  if (receive_batch_.size() != kReceiveBatchSize) {
+    receive_batch_.resize(kReceiveBatchSize);
+  }
+
+  for (std::size_t i = 0; i < kReceiveBatchSize; ++i) {
+    receive_batch_.at(i).data = receive_batch_storage_.data() + i * packet_size;
+    receive_batch_.at(i).capacity = packet_size;
+    receive_batch_.at(i).result = {};
+  }
+}
+
 void ConnectionManager::Tick() {
   while (true) {
-    for (std::size_t i = 0; i < receive_batch_buffers_.size(); ++i) {
-      auto& buffer = receive_batch_buffers_.at(i);
-      if (buffer.size() < config_.maxPacketSize) {
-        buffer.resize(config_.maxPacketSize);
-      }
-      receive_batch_.at(i).data = buffer.data();
-      receive_batch_.at(i).capacity = buffer.size();
-      receive_batch_.at(i).result = {};
-    }
+    EnsureReceiveBatchBuffers();
 
     const std::size_t received = socket_->ReceiveMany(receive_batch_);
     if (received == 0) break;
@@ -202,14 +209,14 @@ void ConnectionManager::Tick() {
     for (std::size_t i = 0; i < received; ++i) {
       const IncomingDatagram& datagram = receive_batch_.at(i);
       if (datagram.result.bytes > 0) {
-        ProcessPacket(receive_batch_buffers_.at(i).data(),
+        ProcessPacket(datagram.data,
                       static_cast<std::size_t>(datagram.result.bytes),
                       datagram.fromAddr, datagram.fromPort);
       }
     }
     if (received < receive_batch_.size()) break;
   }
-  Update();
+  Update(clock_->Now());
 }
 
 }  // namespace socketwire

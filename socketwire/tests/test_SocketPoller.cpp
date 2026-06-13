@@ -3,8 +3,12 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
+#include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <memory>
+#include <vector>
 
 #include "i_socket.hpp"
 #include "socket_init.hpp"
@@ -99,6 +103,17 @@ TEST_F(SocketPollerTest, PollEmptyPoller) {
   EXPECT_TRUE(events.empty());
 }
 
+TEST_F(SocketPollerTest, PollIntoUsesCallerStorage) {
+  SocketPoller poller;
+  std::vector<SocketEvent> events;
+  events.reserve(8);
+
+  poller.PollInto(events, 0);
+
+  EXPECT_TRUE(events.empty());
+  EXPECT_GE(events.capacity(), 8U);
+}
+
 TEST_F(SocketPollerTest, PollWithTimeout) {
   SocketPoller poller;
   auto socket = CreateUdpSocket();
@@ -142,6 +157,59 @@ TEST_F(SocketPollerTest, DispatchReadableNoEvent) {
   SocketEvent ev;
   ev.readable = false;
   poller.DispatchReadable(ev, &handler);  // Should not call anything
+}
+
+TEST_F(SocketPollerTest, DispatchReadableManyReceivesPacketsWithCallerStorage) {
+  auto sender_socket = CreateUdpSocket();
+  auto receiver_socket = CreateUdpSocket();
+  ASSERT_TRUE(sender_socket != nullptr);
+  ASSERT_TRUE(receiver_socket != nullptr);
+
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(receiver_socket->Bind(addr, 0), SocketError::kNone);
+  ASSERT_EQ(sender_socket->Bind(addr, 0), SocketError::kNone);
+
+  const std::uint16_t receiver_port = receiver_socket->LocalPort();
+  const std::uint16_t sender_port = sender_socket->LocalPort();
+
+  SocketPoller poller;
+  ASSERT_TRUE(poller.AddSocket(receiver_socket.get(), false));
+
+  constexpr std::array<const char*, 3> messages = {"one", "two", "three"};
+  for (const char* message : messages) {
+    const SocketResult result =
+      sender_socket->SendTo(message, std::strlen(message), addr, receiver_port);
+    ASSERT_TRUE(result.Succeeded());
+  }
+
+  std::array<std::array<std::uint8_t, 64>, 4> storage{};
+  std::array<IncomingDatagram, 4> datagrams{};
+  for (std::size_t i = 0; i < datagrams.size(); ++i) {
+    datagrams[i].data = storage[i].data();
+    datagrams[i].capacity = storage[i].size();
+  }
+
+  MockSocketEventHandler handler;
+  EXPECT_CALL(handler,
+              OnDataReceived(testing::_, sender_port, testing::_, testing::_))
+    .Times(static_cast<int>(messages.size()));
+
+  std::size_t received = 0;
+  std::vector<SocketEvent> events;
+  const auto deadline =
+    std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+
+  while (received < messages.size() &&
+         std::chrono::steady_clock::now() < deadline) {
+    poller.PollInto(events, 100);
+    for (const SocketEvent& event : events) {
+      EXPECT_EQ(event.socket, receiver_socket.get());
+      EXPECT_TRUE(event.readable);
+      received += poller.DispatchReadableMany(event, &handler, datagrams);
+    }
+  }
+
+  EXPECT_EQ(received, messages.size());
 }
 
 TEST_F(SocketPollerTest, DispatchAllEmptyEvents) {

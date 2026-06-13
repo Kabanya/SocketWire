@@ -34,6 +34,7 @@ class ConnectionManager {
   ~ConnectionManager();
 
   void Update();
+  void Update(std::chrono::steady_clock::time_point now);
 
   /// Drains pending socket packets, then updates all connections.
   ///
@@ -111,15 +112,14 @@ class ConnectionManager {
                                       std::uint16_t port);
   std::unordered_map<ConnectionKey, RemoteClient*, ConnectionKeyHash>
     client_map_;
-  std::vector<std::uint8_t> receive_buffer_;
-  std::vector<std::vector<std::uint8_t>> receive_batch_buffers_;
+  std::vector<std::uint8_t> receive_batch_storage_;
   std::vector<IncomingDatagram> receive_batch_;
 
   // Handshake rate-limiting state.
   std::uint32_t connect_window_count_ = 0;
   std::chrono::steady_clock::time_point connect_window_start_{};
-  bool HandshakeAllowed();  ///< Returns true if a new connection may be
-                            ///< accepted right now.
+  void EnsureReceiveBatchBuffers();
+  bool HandshakeAllowed(std::chrono::steady_clock::time_point now);
   void EmitClientConnected(RemoteClient* client);
   std::unordered_map<RemoteClient*, bool> connected_notified_;
 };

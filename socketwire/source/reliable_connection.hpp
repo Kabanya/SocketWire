@@ -198,6 +198,9 @@ class ReliableConnection {
 
   /// Processes retransmits, pings, timeouts, and pending ordered packets.
   void Update();
+  /// Processes retransmits, pings, timeouts, and pending ordered packets using
+  /// a caller-supplied tick timestamp.
+  void Update(std::chrono::steady_clock::time_point now);
 
   /// Drains pending socket packets, then calls Update().
   ///
@@ -265,8 +268,7 @@ class ReliableConnection {
   std::vector<std::uint8_t> batch_command_buffer_;
   std::vector<std::uint8_t> batch_payload_buffer_;
   std::vector<std::span<const std::uint8_t>> batch_command_spans_;
-  std::vector<std::uint8_t> receive_buffer_;
-  std::vector<std::vector<std::uint8_t>> receive_batch_buffers_;
+  std::vector<std::uint8_t> receive_batch_storage_;
   std::vector<IncomingDatagram> receive_batch_;
 
   // Sequence numbers per channel.

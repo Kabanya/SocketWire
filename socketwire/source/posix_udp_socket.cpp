@@ -1,7 +1,5 @@
-#if defined(__linux__)
 #include <algorithm>
 #include <array>
-#endif
 
 #include <cerrno>
 #include <utility>
@@ -16,6 +14,9 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#if defined(__APPLE__) && SOCKETWIRE_ENABLE_DARWIN_MSG_X
+#include <sys/syscall.h>
+#endif
 #include <unistd.h>
 
 #include "socket_address_utils.hpp"
@@ -71,6 +72,10 @@ class PosixUDPSocket final : public ISocket {
 
 #if defined(__linux__)
   std::size_t SendManyWithSendmmsg(std::span<const OutgoingDatagram> datagrams);
+#endif
+#if defined(__APPLE__) && SOCKETWIRE_ENABLE_DARWIN_MSG_X
+  std::size_t SendManyWithSendmsgX(
+    std::span<const OutgoingDatagram> datagrams);
 #endif
 
   int fd_ = -1;
@@ -211,6 +216,8 @@ std::size_t PosixUDPSocket::SendMany(
   std::span<const OutgoingDatagram> datagrams) {
 #if defined(__linux__)
   return SendManyWithSendmmsg(datagrams);
+#elif defined(__APPLE__) && SOCKETWIRE_ENABLE_DARWIN_MSG_X
+  return SendManyWithSendmsgX(datagrams);
 #else
   return SendManyPortable(datagrams);
 #endif
@@ -279,6 +286,74 @@ std::size_t PosixUDPSocket::SendManyWithSendmmsg(
     const int sent =
       ::sendmmsg(fd_, messages.data(), static_cast<unsigned int>(prepared), 0);
     if (sent == -1) break;
+
+    sent_count += static_cast<std::size_t>(sent);
+    datagrams = datagrams.subspan(static_cast<std::size_t>(sent));
+    if (static_cast<std::size_t>(sent) < prepared) break;
+  }
+
+  return sent_count;
+}
+#endif
+
+#if defined(__APPLE__) && SOCKETWIRE_ENABLE_DARWIN_MSG_X
+std::size_t PosixUDPSocket::SendManyWithSendmsgX(
+  std::span<const OutgoingDatagram> datagrams) {
+  if (datagrams.empty()) return 0;
+
+  std::size_t sent_count = 0;
+  if (fd_ == -1) {
+    const auto& first = datagrams.front();
+    const SocketResult first_result =
+      SendTo(first.data, first.size, first.toAddr, first.toPort);
+    if (first_result.Failed()) return 0;
+    sent_count = 1;
+    datagrams = datagrams.subspan(1);
+    if (datagrams.empty()) return sent_count;
+  }
+
+  static constexpr std::size_t kMaxBatch = 64;
+  while (!datagrams.empty()) {
+    const std::size_t count = std::min(kMaxBatch, datagrams.size());
+    std::array<msghdr, kMaxBatch> messages{};
+    std::array<iovec, kMaxBatch> iovecs{};
+    std::array<sockaddr_storage, kMaxBatch> addresses{};
+    std::array<socklen_t, kMaxBatch> address_lengths{};
+
+    std::size_t prepared = 0;
+    for (; prepared < count; ++prepared) {
+      const auto& datagram = datagrams[prepared];
+      if (datagram.data == nullptr || datagram.size == 0) break;
+      if (fd_ != -1 && datagram.toAddr.isIPv6 && family_ == AF_INET) break;
+      if (datagram.toAddr.isIPv6 && !config_.enableIPv6) break;
+
+      int target_family = AF_UNSPEC;
+      if (!detail::FillSockaddrStorage(
+            datagram.toAddr, datagram.toPort, family_ == AF_INET6,
+            addresses[prepared], target_family, address_lengths[prepared])) {
+        break;
+      }
+
+      iovecs[prepared].iov_base = const_cast<void*>(datagram.data);
+      iovecs[prepared].iov_len = datagram.size;
+      messages[prepared].msg_iov = &iovecs[prepared];
+      messages[prepared].msg_iovlen = 1;
+      messages[prepared].msg_name = &addresses[prepared];
+      messages[prepared].msg_namelen = address_lengths[prepared];
+    }
+
+    if (prepared == 0) break;
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
+    const auto sent =
+      ::syscall(SYS_sendmsg_x, fd_, messages.data(), prepared, 0);
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+    if (sent <= 0) break;
 
     sent_count += static_cast<std::size_t>(sent);
     datagrams = datagrams.subspan(static_cast<std::size_t>(sent));
