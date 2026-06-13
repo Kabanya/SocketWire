@@ -66,6 +66,9 @@ class PosixUDPSocket final : public ISocket {
   void Close() override;
 
  private:
+  std::size_t SendManyPortable(std::span<const OutgoingDatagram> datagrams);
+  std::size_t ReceiveManyPortable(std::span<IncomingDatagram> datagrams);
+
 #if defined(__linux__)
   std::size_t SendManyWithSendmmsg(std::span<const OutgoingDatagram> datagrams);
 #endif
@@ -209,8 +212,20 @@ std::size_t PosixUDPSocket::SendMany(
 #if defined(__linux__)
   return SendManyWithSendmmsg(datagrams);
 #else
-  return ISocket::SendMany(datagrams);
+  return SendManyPortable(datagrams);
 #endif
+}
+
+std::size_t PosixUDPSocket::SendManyPortable(
+  std::span<const OutgoingDatagram> datagrams) {
+  std::size_t sent_count = 0;
+  for (const auto& datagram : datagrams) {
+    const SocketResult result =
+      SendTo(datagram.data, datagram.size, datagram.toAddr, datagram.toPort);
+    if (result.Failed()) break;
+    ++sent_count;
+  }
+  return sent_count;
 }
 
 #if defined(__linux__)
@@ -347,8 +362,23 @@ std::size_t PosixUDPSocket::ReceiveMany(std::span<IncomingDatagram> datagrams) {
 
   return static_cast<std::size_t>(received);
 #else
-  return ISocket::ReceiveMany(datagrams);
+  return ReceiveManyPortable(datagrams);
 #endif
+}
+
+std::size_t PosixUDPSocket::ReceiveManyPortable(
+  std::span<IncomingDatagram> datagrams) {
+  if (fd_ == -1 || datagrams.empty()) return 0;
+
+  std::size_t received_count = 0;
+  for (auto& datagram : datagrams) {
+    datagram.result = Receive(datagram.data, datagram.capacity,
+                              datagram.fromAddr, datagram.fromPort);
+    if (datagram.result.Failed()) break;
+    if (datagram.result.bytes <= 0) break;
+    ++received_count;
+  }
+  return received_count;
 }
 
 void PosixUDPSocket::Poll(ISocketEventHandler* handler) {

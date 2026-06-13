@@ -62,6 +62,16 @@ class CounterHandler : public IReliableConnectionHandler {
   }
 };
 
+template <typename Predicate>
+bool SpinUntil(Predicate predicate, milliseconds timeout) {
+  const auto deadline = steady_clock::now() + timeout;
+  while (!predicate()) {
+    if (steady_clock::now() >= deadline) return predicate();
+    std::this_thread::yield();
+  }
+  return true;
+}
+
 TEST_F(ReliableConnectionPerformanceTest, SmallPacketThroughput) {
   const uint16_t server_port = 16001;
   const int packet_count = 1000;
@@ -121,15 +131,13 @@ TEST_F(ReliableConnectionPerformanceTest, SmallPacketThroughput) {
       server_manager->Update();
       client_conn->Update();
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      std::this_thread::yield();
     }
   });
 
   // Wait for connection
-  for (int i = 0; i < 100 && !client_handler.connected; i++) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  ASSERT_TRUE(client_handler.connected);
+  ASSERT_TRUE(SpinUntil([&]() { return client_handler.connected.load(); },
+                        milliseconds(1000)));
 
   // Prepare data
   std::vector<std::uint8_t> test_data(packet_size, 0xAB);
@@ -142,9 +150,9 @@ TEST_F(ReliableConnectionPerformanceTest, SmallPacketThroughput) {
   }
 
   // Wait for all packets to be received
-  for (int i = 0; i < 500 && server_handler.reliableCount < packet_count; i++) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+  EXPECT_TRUE(SpinUntil(
+    [&]() { return server_handler.reliableCount.load() >= packet_count; },
+    milliseconds(5000)));
 
   auto end_time = high_resolution_clock::now();
   auto duration = duration_cast<milliseconds>(end_time - start_time).count();
@@ -226,14 +234,12 @@ TEST_F(ReliableConnectionPerformanceTest, MediumPacketThroughput) {
 
       server_manager->Update();
       client_conn->Update();
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      std::this_thread::yield();
     }
   });
 
-  for (int i = 0; i < 100 && !client_handler.connected; i++) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  ASSERT_TRUE(client_handler.connected);
+  ASSERT_TRUE(SpinUntil([&]() { return client_handler.connected.load(); },
+                        milliseconds(1000)));
 
   std::vector<std::uint8_t> test_data(packet_size, 0xCD);
 
@@ -243,9 +249,9 @@ TEST_F(ReliableConnectionPerformanceTest, MediumPacketThroughput) {
     client_conn->SendReliable(0, test_data.data(), test_data.size());
   }
 
-  for (int i = 0; i < 500 && server_handler.reliableCount < packet_count; i++) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+  EXPECT_TRUE(SpinUntil(
+    [&]() { return server_handler.reliableCount.load() >= packet_count; },
+    milliseconds(5000)));
 
   auto end_time = high_resolution_clock::now();
   auto duration = duration_cast<milliseconds>(end_time - start_time).count();
@@ -326,16 +332,14 @@ TEST_F(ReliableConnectionPerformanceTest, LargePacketThroughput) {
 
       server_manager->Update();
       client_conn->Update();
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      std::this_thread::yield();
     }
   });
 
   // Wait for connection with timeout
-  bool connected = false;
-  for (int i = 0; i < 500 && !client_handler.connected; i++) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  connected = client_handler.connected;
+  const bool connected =
+    SpinUntil([&]() { return client_handler.connected.load(); },
+              milliseconds(5000));
 
   if (!connected) {
     running = false;
@@ -352,14 +356,9 @@ TEST_F(ReliableConnectionPerformanceTest, LargePacketThroughput) {
     client_conn->SendUnreliable(1, test_data.data(), test_data.size());
   }
 
-  // Give time for processing - wait until all packets are received or timeout
-  const int max_wait_iterations = 1000;  // 10 seconds max
-  int wait_iterations = 0;
-  while (server_handler.unreliableCount < packet_count &&
-         wait_iterations < max_wait_iterations) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    wait_iterations++;
-  }
+  const bool all_unreliable_received = SpinUntil(
+    [&]() { return server_handler.unreliableCount.load() >= packet_count; },
+    milliseconds(10000));
 
   auto end_time = high_resolution_clock::now();
   auto duration = duration_cast<milliseconds>(end_time - start_time).count();
@@ -380,7 +379,8 @@ TEST_F(ReliableConnectionPerformanceTest, LargePacketThroughput) {
   std::cout << "Throughput: " << packets_per_sec << " packets/sec" << "\n";
   std::cout << "Throughput: " << (bytes_per_sec / 1024.0) << " KB/sec"
             << "\n";
-  std::cout << "Wait iterations: " << wait_iterations << "\n";
+  std::cout << "Received all before timeout: "
+            << (all_unreliable_received ? "yes" : "no") << "\n";
 
   // Unreliable should be faster and have high delivery rate on localhost
   // Use a more realistic threshold for unreliable packets, especially under
@@ -460,22 +460,19 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionScalability) {
       }
 
       server_manager->Update();
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      std::this_thread::yield();
     }
   });
 
   // Wait for all connections
-  bool all_connected = false;
-  for (int attempt = 0; attempt < 200 && !all_connected; attempt++) {
-    all_connected = true;
-    for (const auto& handler : client_handlers) {
-      if (!handler->connected) {
-        all_connected = false;
-        break;
+  const bool all_connected = SpinUntil(
+    [&]() {
+      for (const auto& handler : client_handlers) {
+        if (!handler->connected.load()) return false;
       }
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+      return true;
+    },
+    milliseconds(2000));
   ASSERT_TRUE(all_connected);
 
   auto start_time = high_resolution_clock::now();
@@ -490,10 +487,9 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionScalability) {
 
   // Wait for all messages
   const uint32_t expected_total = num_clients * messages_per_client;
-  for (int i = 0; i < 1000 && server_handler.reliableCount < expected_total;
-       i++) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+  EXPECT_TRUE(SpinUntil(
+    [&]() { return server_handler.reliableCount.load() >= expected_total; },
+    milliseconds(10000)));
 
   auto end_time = high_resolution_clock::now();
   auto duration = duration_cast<milliseconds>(end_time - start_time).count();

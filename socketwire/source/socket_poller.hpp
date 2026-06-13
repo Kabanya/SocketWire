@@ -91,6 +91,10 @@ class SocketPoller {
   /// timeout_ms < 0 waits indefinitely, 0 returns immediately, and positive
   /// values wait that many milliseconds.
   std::vector<SocketEvent> Poll(int timeout_ms);
+  /// Polls for events into caller-owned storage.
+  ///
+  /// Reusing the same vector across ticks avoids hot-loop allocations.
+  void PollInto(std::vector<SocketEvent>& events, int timeout_ms);
 
   /// Dispatches a readable event to an ISocketEventHandler.
   void DispatchReadable(const SocketEvent& ev, ISocketEventHandler* handler);
@@ -132,7 +136,7 @@ class SocketPoller {
   bool BackendAdd(ISocket* socket, bool watch_writable);
   void BackendRemove(ISocket* socket);
 
-  std::vector<SocketEvent> BackendPoll(int timeout_ms);
+  void BackendPoll(std::vector<SocketEvent>& events, int timeout_ms);
 
   static SocketEvent MakeEvent(ISocket* sock, bool r, bool w, bool e, bool c) {
     SocketEvent ev;

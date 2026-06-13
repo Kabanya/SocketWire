@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "bit_stream.hpp"
@@ -261,6 +262,9 @@ class ReliableConnection {
   std::vector<std::uint8_t> send_buffer_;
   std::vector<std::uint8_t> batch_buffer_;
   std::vector<std::uint8_t> batch_scratch_buffer_;
+  std::vector<std::uint8_t> batch_command_buffer_;
+  std::vector<std::uint8_t> batch_payload_buffer_;
+  std::vector<std::span<const std::uint8_t>> batch_command_spans_;
   std::vector<std::uint8_t> receive_buffer_;
   std::vector<std::vector<std::uint8_t>> receive_batch_buffers_;
   std::vector<IncomingDatagram> receive_batch_;
@@ -342,6 +346,11 @@ class ReliableConnection {
                             std::size_t command_size,
                             std::chrono::steady_clock::time_point now);
   bool FlushQueuedAcks(std::chrono::steady_clock::time_point now);
+  void ResetBatchCommandScratch(std::size_t command_count_hint,
+                                std::size_t command_bytes_hint);
+  bool AppendAckBatchCommand(detail::PacketKey ack,
+                             std::chrono::steady_clock::time_point now);
+  bool EncodeAndSendCurrentBatch(std::chrono::steady_clock::time_point now);
   void QueueAck(std::uint8_t channel, std::uint32_t sequence,
                 std::chrono::steady_clock::time_point now);
   void ProcessBatchPacket(const std::uint8_t* payload, std::size_t size,

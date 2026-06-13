@@ -122,6 +122,10 @@ class PacketCodec {
                                      PacketEncodeError>
   EncodeBatchPayload(std::span<const std::span<const std::uint8_t>> commands,
                      std::uint16_t max_commands);
+  [[nodiscard]] static std::expected<std::size_t, PacketEncodeError>
+  EncodeBatchPayload(std::span<const std::span<const std::uint8_t>> commands,
+                     std::uint16_t max_commands,
+                     std::vector<std::uint8_t>& out);
 
   [[nodiscard]] static std::size_t HeaderSize(const PacketBuild& packet);
   [[nodiscard]] static const char* ToString(PacketDecodeError error) noexcept;

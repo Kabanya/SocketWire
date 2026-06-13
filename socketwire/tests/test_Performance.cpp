@@ -424,11 +424,11 @@ TEST_F(PerformanceTest, SocketPollerPollEmpty) {
   std::cout << "SocketPoller Poll Empty Performance:\n";
 
   SocketPoller poller;
+  std::vector<SocketEvent> events;
 
   MeasureTime("Poll empty poller " + std::to_string(iterations) + " times",
-              iterations, [&poller]() {
-                auto events = poller.Poll(0);  // Non-blocking
-                (void)events;
+              iterations, [&poller, &events]() {
+                poller.PollInto(events, 0);  // Non-blocking
               });
 
   SUCCEED();
@@ -442,6 +442,7 @@ TEST_F(PerformanceTest, SocketPollerPollWithSockets) {
 
   std::vector<std::unique_ptr<ISocket>> sockets;
   SocketPoller poller;
+  std::vector<SocketEvent> events;
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);  // 127.0.0.1
 
   // Create and add sockets
@@ -453,8 +454,8 @@ TEST_F(PerformanceTest, SocketPollerPollWithSockets) {
     poller.AddSocket(sockets.back().get(), false);
   }
 
-  MeasureTime("Poll 100 sockets 1K times", iterations, [&poller]() {
-    auto events = poller.Poll(0);  // Non-blocking
+  MeasureTime("Poll 100 sockets 1K times", iterations, [&poller, &events]() {
+    poller.PollInto(events, 0);  // Non-blocking
     (void)events;
   });
 
@@ -516,6 +517,7 @@ TEST_F(PerformanceTest, SocketPollerIntegrationSendReceive) {
 
   SocketPoller poller;
   poller.AddSocket(receiver.get(), false);
+  std::vector<SocketEvent> events;
 
   const char* message = "Perf test message";
   const size_t message_len = strlen(message);
@@ -541,10 +543,9 @@ TEST_F(PerformanceTest, SocketPollerIntegrationSendReceive) {
       sender->SendTo(message, message_len, addr, receiver_port);
 
       // Poll and dispatch
-      auto events = poller.Poll(10);  // Short timeout
-      const SocketEvent& ev = events.at(0);
+      poller.PollInto(events, 10);  // Short timeout
       if (!events.empty()) {
-        poller.DispatchReadable(ev, &handler);
+        poller.DispatchReadable(events.front(), &handler);
       }
     });
 

@@ -45,6 +45,11 @@ ReliableConnection::ReliableConnection(ISocket* socket,
   send_buffer_.resize(config_.maxPacketSize);
   batch_buffer_.resize(config_.maxPacketSize);
   batch_scratch_buffer_.resize(config_.maxPacketSize);
+  batch_command_buffer_.reserve(static_cast<std::size_t>(
+    std::max<std::uint16_t>(config_.maxBatchCommands, 1)) *
+                                detail::PacketCodec::kBaseHeaderSize);
+  batch_payload_buffer_.reserve(config_.maxPacketSize);
+  batch_command_spans_.reserve(config_.maxBatchCommands);
   receive_buffer_.resize(config_.maxPacketSize);
   send_queue_.Configure(config_.maxPendingReliablePackets);
   ack_batcher_.Configure(config_.enablePacketBatching,
@@ -735,45 +740,19 @@ bool ReliableConnection::CanBatchPacket(detail::PacketType type) const {
 bool ReliableConnection::SendBatchWithCommand(
   const std::uint8_t* command, std::size_t command_size,
   std::chrono::steady_clock::time_point now) {
-  if (ack_batcher_.Empty()) return false;
+  if (ack_batcher_.Empty() || command == nullptr || command_size == 0) {
+    return false;
+  }
 
-  std::vector<std::vector<std::uint8_t>> command_storage;
-  command_storage.reserve(ack_batcher_.Size() + 1);
-  std::vector<std::span<const std::uint8_t>> command_spans;
-  command_spans.reserve(ack_batcher_.Size() + 1);
-
+  const std::size_t ack_count = ack_batcher_.Size();
+  ResetBatchCommandScratch(ack_count + 1,
+                           ack_count * detail::PacketCodec::kBaseHeaderSize);
   for (const detail::PacketKey ack : ack_batcher_.Queued()) {
-    std::size_t ack_size = 0;
-    if (!BuildPacket(detail::PacketType::kAck, ack.channel, nullptr, 0,
-                     ack.sequence, detail::DeadlineMetadata{},
-                     detail::FragmentMetadata{}, now, send_buffer_, ack_size)) {
-      return false;
-    }
-    command_storage.emplace_back(
-      send_buffer_.begin(),
-      send_buffer_.begin() + static_cast<std::ptrdiff_t>(ack_size));
-    command_spans.emplace_back(command_storage.back());
+    if (!AppendAckBatchCommand(ack, now)) return false;
   }
-  command_spans.emplace_back(command, command_size);
+  batch_command_spans_.emplace_back(command, command_size);
 
-  const auto batch_payload_result = detail::PacketCodec::EncodeBatchPayload(
-    command_spans, ack_batcher_.MaxCommands());
-  if (!batch_payload_result.has_value()) return false;
-  const auto& batch_payload = *batch_payload_result;
-  if (batch_payload.size() + detail::PacketCodec::kBaseHeaderSize >
-      config_.maxPacketSize) {
-    return false;
-  }
-
-  std::size_t packet_size = 0;
-  if (!BuildPacket(detail::PacketType::kBatch, 0, batch_payload.data(),
-                   batch_payload.size(), 0, detail::DeadlineMetadata{},
-                   detail::FragmentMetadata{}, now, batch_buffer_,
-                   packet_size)) {
-    return false;
-  }
-  if (!SendRawDatagram(batch_buffer_.data(), packet_size, now,
-                       static_cast<std::uint32_t>(command_spans.size()))) {
+  if (!EncodeAndSendCurrentBatch(now)) {
     return false;
   }
 
@@ -797,44 +776,68 @@ bool ReliableConnection::FlushQueuedAcks(
       continue;
     }
 
-    std::vector<std::vector<std::uint8_t>> command_storage;
-    command_storage.reserve(count);
-    std::vector<std::span<const std::uint8_t>> command_spans;
-    command_spans.reserve(count);
+    ResetBatchCommandScratch(count,
+                             count * detail::PacketCodec::kBaseHeaderSize);
     for (std::size_t i = 0; i < count; ++i) {
       const detail::PacketKey ack = ack_batcher_.Queued().data()[i];
-      std::size_t ack_size = 0;
-      if (!BuildPacket(detail::PacketType::kAck, ack.channel, nullptr, 0,
-                       ack.sequence, detail::DeadlineMetadata{},
-                       detail::FragmentMetadata{}, now, send_buffer_,
-                       ack_size)) {
-        return false;
-      }
-      command_storage.emplace_back(
-        send_buffer_.begin(),
-        send_buffer_.begin() + static_cast<std::ptrdiff_t>(ack_size));
-      command_spans.emplace_back(command_storage.back());
+      if (!AppendAckBatchCommand(ack, now)) return false;
     }
 
-    const auto batch_payload_result = detail::PacketCodec::EncodeBatchPayload(
-      command_spans, ack_batcher_.MaxCommands());
-    if (!batch_payload_result.has_value()) return false;
-    const auto& batch_payload = *batch_payload_result;
-
-    std::size_t packet_size = 0;
-    if (!BuildPacket(detail::PacketType::kBatch, 0, batch_payload.data(),
-                     batch_payload.size(), 0, detail::DeadlineMetadata{},
-                     detail::FragmentMetadata{}, now, batch_buffer_,
-                     packet_size)) {
-      return false;
-    }
-    if (!SendRawDatagram(batch_buffer_.data(), packet_size, now,
-                         static_cast<std::uint32_t>(command_spans.size()))) {
-      return false;
-    }
+    if (!EncodeAndSendCurrentBatch(now)) return false;
     ack_batcher_.RemovePrefix(count);
   }
   return true;
+}
+
+void ReliableConnection::ResetBatchCommandScratch(
+  std::size_t command_count_hint, std::size_t command_bytes_hint) {
+  batch_command_spans_.clear();
+  batch_command_spans_.reserve(command_count_hint);
+  batch_command_buffer_.clear();
+  batch_command_buffer_.reserve(command_bytes_hint);
+}
+
+bool ReliableConnection::AppendAckBatchCommand(
+  detail::PacketKey ack, std::chrono::steady_clock::time_point now) {
+  const std::size_t offset = batch_command_buffer_.size();
+  batch_command_buffer_.resize(offset + detail::PacketCodec::kBaseHeaderSize);
+
+  detail::PacketBuild packet{.type = detail::PacketType::kAck,
+                             .channel = ack.channel,
+                             .sequence = ack.sequence,
+                             .payload = {}};
+  auto out = std::span<std::uint8_t>(batch_command_buffer_).subspan(offset);
+  const auto encoded = detail::PacketCodec::Encode(packet, now, out);
+  if (!encoded.has_value()) {
+    batch_command_buffer_.resize(offset);
+    return false;
+  }
+
+  batch_command_spans_.emplace_back(batch_command_buffer_.data() + offset,
+                                    *encoded);
+  return true;
+}
+
+bool ReliableConnection::EncodeAndSendCurrentBatch(
+  std::chrono::steady_clock::time_point now) {
+  const auto batch_payload_size = detail::PacketCodec::EncodeBatchPayload(
+    batch_command_spans_, ack_batcher_.MaxCommands(), batch_payload_buffer_);
+  if (!batch_payload_size.has_value()) return false;
+  if (*batch_payload_size + detail::PacketCodec::kBaseHeaderSize >
+      config_.maxPacketSize) {
+    return false;
+  }
+
+  std::size_t packet_size = 0;
+  if (!BuildPacket(detail::PacketType::kBatch, 0, batch_payload_buffer_.data(),
+                   *batch_payload_size, 0, detail::DeadlineMetadata{},
+                   detail::FragmentMetadata{}, now, batch_buffer_,
+                   packet_size)) {
+    return false;
+  }
+  return SendRawDatagram(
+    batch_buffer_.data(), packet_size, now,
+    static_cast<std::uint32_t>(batch_command_spans_.size()));
 }
 
 void ReliableConnection::QueueAck(std::uint8_t channel, std::uint32_t sequence,

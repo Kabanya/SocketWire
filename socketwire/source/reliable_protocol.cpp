@@ -240,8 +240,17 @@ PacketCodec::DecodeBatchPayload(std::span<const std::uint8_t> payload,
 
 std::expected<std::vector<std::uint8_t>, PacketEncodeError>
 PacketCodec::EncodeBatchPayload(
+    std::span<const std::span<const std::uint8_t>> commands,
+    std::uint16_t max_commands) {
+  std::vector<std::uint8_t> payload;
+  const auto encoded = EncodeBatchPayload(commands, max_commands, payload);
+  if (!encoded.has_value()) return std::unexpected(encoded.error());
+  return payload;
+}
+
+std::expected<std::size_t, PacketEncodeError> PacketCodec::EncodeBatchPayload(
   std::span<const std::span<const std::uint8_t>> commands,
-  std::uint16_t max_commands) {
+  std::uint16_t max_commands, std::vector<std::uint8_t>& out) {
   if (commands.empty() || commands.size() > max_commands) {
     return std::unexpected(PacketEncodeError::kInvalidPayload);
   }
@@ -257,19 +266,19 @@ PacketCodec::EncodeBatchPayload(
     return std::unexpected(PacketEncodeError::kUnsupportedPayload);
   }
 
-  std::vector<std::uint8_t> payload(size);
-  WriteU16(payload.data(), static_cast<std::uint16_t>(commands.size()));
+  out.resize(size);
+  WriteU16(out.data(), static_cast<std::uint16_t>(commands.size()));
   std::size_t offset = sizeof(std::uint16_t);
   for (const auto command : commands) {
-    WriteU16(payload.data() + offset,
+    WriteU16(out.data() + offset,
              static_cast<std::uint16_t>(command.size()));
     offset += sizeof(std::uint16_t);
     if (!command.empty()) {
-      std::memcpy(payload.data() + offset, command.data(), command.size());
+      std::memcpy(out.data() + offset, command.data(), command.size());
       offset += command.size();
     }
   }
-  return payload;
+  return size;
 }
 
 const char* PacketCodec::ToString(PacketDecodeError error) noexcept {

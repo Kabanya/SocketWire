@@ -1,9 +1,10 @@
 #include "socket_poller.hpp"
 
+#include <algorithm>
+#include <utility>
+
 #if !SOCKETWIRE_PLATFORM_WINDOWS
 #include <unistd.h>
-
-#include <utility>
 #endif
 
 namespace socketwire {
@@ -188,16 +189,24 @@ void SocketPoller::BackendRemove(ISocket* socket) {
 }
 
 std::vector<SocketEvent> SocketPoller::Poll(int timeout_ms) {
-  return BackendPoll(timeout_ms);
+  std::vector<SocketEvent> events;
+  PollInto(events, timeout_ms);
+  return events;
 }
 
-std::vector<SocketEvent> SocketPoller::BackendPoll(int timeout_ms) {
-  std::vector<SocketEvent> events;
+void SocketPoller::PollInto(std::vector<SocketEvent>& events,
+                            int timeout_ms) {
+  BackendPoll(events, timeout_ms);
+}
+
+void SocketPoller::BackendPoll(std::vector<SocketEvent>& events,
+                               int timeout_ms) {
+  events.clear();
   events.reserve(fd_map_.size());
 
 #if SOCKETWIRE_PLATFORM_WINDOWS
   if (backend_ == PollBackend::kWsaPoll) {
-    if (poll_fds_.empty()) return events;
+    if (poll_fds_.empty()) return;
 
     const int wait_time = (timeout_ms < 0) ? -1 : timeout_ms;
     const int n = ::WSAPoll(poll_fds_.data(),
@@ -218,9 +227,9 @@ std::vector<SocketEvent> SocketPoller::BackendPoll(int timeout_ms) {
         events.push_back(MakeEvent(it->second.socket, r, w, e, c));
       }
     }
-    return events;
+    return;
   }
-  return events;
+  return;
 #else
 
 #if SOCKETWIRE_PLATFORM_LINUX
@@ -239,7 +248,7 @@ std::vector<SocketEvent> SocketPoller::BackendPoll(int timeout_ms) {
       bool c = (evs[i].events & EPOLLHUP) != 0;
       events.push_back(MakeEvent(it->second.socket, r, w, e, c));
     }
-    return events;
+    return;
   }
 #endif
 
@@ -255,28 +264,31 @@ std::vector<SocketEvent> SocketPoller::BackendPoll(int timeout_ms) {
       pts = &ts;
     }
     const int n = ::kevent(kqueue_fd_, nullptr, 0, kev, max_events, pts);
-    // Aggregate read/write readiness per descriptor.
-    struct Agg {
-      bool r = false, w = false, e = false, c = false;
-    };
-    std::unordered_map<int, Agg> agg;
+
     for (int i = 0; i < n; ++i) {
       const int fd = static_cast<int>(kev[i].ident);
       auto it = fd_map_.find(fd);
       if (it == fd_map_.end()) continue;
-      Agg& a = agg[fd];
-      if (kev[i].filter == EVFILT_READ) a.r = true;
-      if (kev[i].filter == EVFILT_WRITE) a.w = true;
-      if ((kev[i].flags & EV_ERROR) != 0) a.e = true;
-      if ((kev[i].flags & EV_EOF) != 0) a.c = true;
+
+      SocketEvent* event = nullptr;
+      for (auto& candidate : events) {
+        if (candidate.socket == it->second.socket) {
+          event = &candidate;
+          break;
+        }
+      }
+      if (event == nullptr) {
+        events.push_back(MakeEvent(it->second.socket, false, false, false,
+                                   false));
+        event = &events.back();
+      }
+
+      if (kev[i].filter == EVFILT_READ) event->readable = true;
+      if (kev[i].filter == EVFILT_WRITE) event->writable = true;
+      if ((kev[i].flags & EV_ERROR) != 0) event->error = true;
+      if ((kev[i].flags & EV_EOF) != 0) event->closed = true;
     }
-    for (auto& kv : agg) {
-      auto it = fd_map_.find(kv.first);
-      if (it == fd_map_.end()) continue;
-      events.push_back(MakeEvent(it->second.socket, kv.second.r, kv.second.w,
-                                 kv.second.e, kv.second.c));
-    }
-    return events;
+    return;
   }
 #endif
 
@@ -298,12 +310,13 @@ std::vector<SocketEvent> SocketPoller::BackendPoll(int timeout_ms) {
         const bool r = FD_ISSET(fd, &r_set) != 0;
         const bool w = FD_ISSET(fd, &w_set) != 0;
         const bool e = FD_ISSET(fd, &e_set) != 0;
+        if (!r && !w && !e) continue;
         events.push_back(MakeEvent(kv.second.socket, r, w, e, false));
       }
     }
   }
 
-  return events;
+  return;
 #endif
 }
 
