@@ -271,10 +271,8 @@ class ApplicationWorkloadClientHandler final
 class ApplicationWorkloadServerHandler final
     : public IReliableConnectionHandler {
  public:
-  ApplicationWorkloadServerHandler(ApplicationWorkloadMode mode,
-                                   TaskQueue& network_queue,
-                                   ThreadPool* workers)
-      : mode_(mode), network_queue_(network_queue), workers_(workers) {}
+  explicit ApplicationWorkloadServerHandler(ApplicationWorkloadMode mode)
+      : mode_(mode) {}
 
   void OnReliableReceived(std::uint8_t channel, const void* data,
                           std::size_t size) override {
@@ -291,36 +289,26 @@ class ApplicationWorkloadServerHandler final
       return;
     }
 
-    if (workers_ == nullptr) {
-      worker_post_failed.store(true);
-      return;
-    }
+    auto response = BuildApplicationResponse(std::move(payload));
+    ++processed;
+    if (manager == nullptr) return;
 
-    const bool posted =
-      workers_->Post([this, channel, payload = std::move(payload)]() mutable {
-        auto response = BuildApplicationResponse(std::move(payload));
-        ++processed;
-        const bool queued =
-          network_queue_.Post([this, channel, response = std::move(response)] {
-            if (manager != nullptr) {
-              manager->BroadcastReliable(channel, response.data(),
-                                         response.size());
-            }
-          });
-        if (!queued) network_post_failed.store(true);
+    const bool queued =
+      manager->Post([this, channel, response = std::move(response)] {
+        if (manager != nullptr) {
+          manager->BroadcastReliable(channel, response.data(),
+                                     response.size());
+        }
       });
-    if (!posted) worker_post_failed.store(true);
+    if (!queued) network_post_failed.store(true);
   }
 
   ConnectionManager* manager = nullptr;
   std::atomic<std::uint32_t> processed{0};
-  std::atomic<bool> worker_post_failed{false};
   std::atomic<bool> network_post_failed{false};
 
  private:
   ApplicationWorkloadMode mode_;
-  TaskQueue& network_queue_;
-  ThreadPool* workers_ = nullptr;
 };
 
 ApplicationWorkloadResult RunApplicationWorkloadScenario(
@@ -360,17 +348,13 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
   conn_cfg.pingIntervalMs = 1000;
   conn_cfg.disconnectTimeoutMs = 5000;
   conn_cfg.maxPendingReliablePackets = 4096;
-
-  TaskQueue network_queue;
-  std::unique_ptr<ThreadPool> workers;
   if (mode == ApplicationWorkloadMode::kThreadPool) {
-    workers = std::make_unique<ThreadPool>(
-      ThreadPool::DefaultWorkerCount(), kApplicationWorkloadMessages * 2);
-    result.workerCount = workers->WorkerCount();
+    conn_cfg.handlerDispatchMode = HandlerDispatchMode::kAsyncPayload;
+    conn_cfg.handlerMaxQueueSize = kApplicationWorkloadMessages * 2;
+    result.workerCount = ThreadPool::DefaultWorkerCount();
   }
 
-  ApplicationWorkloadServerHandler server_handler(
-    mode, network_queue, workers.get());
+  ApplicationWorkloadServerHandler server_handler(mode);
   auto server_manager =
     std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
   server_handler.manager = server_manager.get();
@@ -388,19 +372,16 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
   std::thread network_thread([&] {
     while (running.load()) {
       const auto tick_start = steady_clock::now();
-      network_queue.Drain();
       server_manager->Tick();
       client_conn->Tick();
-      network_queue.Drain();
       const auto tick_ns =
         duration_cast<nanoseconds>(steady_clock::now() - tick_start).count();
       UpdateAtomicMax(max_tick_ns, tick_ns);
       std::this_thread::yield();
     }
-    network_queue.Drain();
   });
 
-  const bool connect_queued = network_queue.Post([&] {
+  const bool connect_queued = client_conn->Post([&] {
     client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
   });
   if (!connect_queued ||
@@ -408,7 +389,6 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
                  milliseconds(2000))) {
     running.store(false);
     network_thread.join();
-    if (workers != nullptr) workers->Shutdown(false);
     result.error = "Connection failed to establish";
     return result;
   }
@@ -431,16 +411,15 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
 
     if (next_to_send.load() < kApplicationWorkloadMessages) {
       if (const auto next = weak_send_more.lock(); next != nullptr) {
-        if (!network_queue.Post(*next)) send_failed.store(true);
+        if (!client_conn->Post(*next)) send_failed.store(true);
       }
     }
   };
 
   const auto start = high_resolution_clock::now();
-  if (!network_queue.Post(*send_more)) {
+  if (!client_conn->Post(*send_more)) {
     running.store(false);
     network_thread.join();
-    if (workers != nullptr) workers->Shutdown(false);
     result.error = "Failed to queue send task";
     return result;
   }
@@ -454,7 +433,6 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
 
   running.store(false);
   network_thread.join();
-  if (workers != nullptr) workers->Shutdown(true);
 
   if (!delivered) {
     result.error = "Timed out waiting for echoed workload messages";
@@ -464,9 +442,8 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
     result.error = "One or more reliable sends failed";
     return result;
   }
-  if (server_handler.worker_post_failed.load() ||
-      server_handler.network_post_failed.load()) {
-    result.error = "Worker or network queue post failed";
+  if (server_handler.network_post_failed.load()) {
+    result.error = "Network queue post failed";
     return result;
   }
 

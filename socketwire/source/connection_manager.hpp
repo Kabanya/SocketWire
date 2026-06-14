@@ -7,11 +7,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <unordered_map>
 #include <vector>
 
 #include "reliable_connection.hpp"
+#include "task_queue.hpp"
+#include "thread_pool.hpp"
 
 namespace socketwire {
 
@@ -52,9 +55,13 @@ class ConnectionManager {
   std::vector<RemoteClient*> GetConnections();
   RemoteClient* GetConnection(const SocketAddress& addr, std::uint16_t port);
 
-  void SetHandler(IReliableConnectionHandler* handler) {
-    event_handler_ = handler;
-  }
+  void SetHandler(IReliableConnectionHandler* handler);
+
+  /// Posts work that must run on this manager's network owner thread.
+  bool Post(std::function<void()> task);
+  /// Runs posted network-thread work on the calling thread.
+  std::size_t DrainPostedTasks(
+    std::size_t max_tasks = std::numeric_limits<std::size_t>::max());
 
   /// Optional server-side connection callbacks.
   /// Called once, after the client's connection reaches established state.
@@ -67,6 +74,9 @@ class ConnectionManager {
   ReliableConnectionConfig config_;
   IClock* clock_ = nullptr;
   IReliableConnectionHandler* event_handler_ = nullptr;
+  std::unique_ptr<ThreadPool> owned_handler_pool_;
+  ThreadPool* handler_pool_ = nullptr;
+  TaskQueue posted_network_tasks_;
 
   std::vector<std::unique_ptr<RemoteClient>> clients_;
 

@@ -19,43 +19,48 @@ Socket-level receive batching (`ReceiveMany`) can still be used by socket implem
 
 ## Thread pool usage
 
-`socketwire::ThreadPool` is intended for application-side work that should not
-run inside the network loop. `ReliableConnection`, `ConnectionManager`, and
-`ISocket` still belong to one network thread; worker tasks should not call
-`Send*`, `Broadcast*`, `Tick`, `Update`, or socket I/O directly.
+By default, all `IReliableConnectionHandler` callbacks run inline on the
+network thread, matching the original behavior.
 
-Use `socketwire::TaskQueue` to marshal results back to the network thread:
+For heavier application payload handlers, enable async payload dispatch:
 
 ```cpp
-socketwire::ThreadPool workers;
-socketwire::TaskQueue network_queue;
+socketwire::ReliableConnectionConfig config;
+config.handlerDispatchMode = socketwire::HandlerDispatchMode::kAsyncPayload;
 
+socketwire::ConnectionManager manager(socket, config);
+manager.SetHandler(&handler);
+```
+
+In this mode, `OnReliableReceived` and `OnUnreliableReceived` copy their
+payload and run on a worker pool owned by SocketWire. Control callbacks
+(`OnConnected`, `OnDisconnected`, `OnTimeout`) still run on the network thread.
+
+Network operations still belong to the network thread. Use `Post()` when an
+async payload callback needs to send a response:
+
+```cpp
 void OnReliableReceived(std::uint8_t channel, const void* data,
                         std::size_t size) {
   std::vector<std::uint8_t> payload(
     static_cast<const std::uint8_t*>(data),
     static_cast<const std::uint8_t*>(data) + size);
 
-  workers.Post([payload = std::move(payload), channel, &network_queue,
-                manager]() mutable {
-    auto response = BuildResponse(payload);
+  auto response = BuildResponse(payload);
 
-    network_queue.Post([manager, channel, response = std::move(response)] {
-      manager->BroadcastReliable(channel, response.data(), response.size());
-    });
+  manager.Post([this, channel, response = std::move(response)] {
+    manager.BroadcastReliable(channel, response.data(), response.size());
   });
 }
 ```
 
-The network loop should drain queued network work before or after ticking:
+`ConnectionManager::Tick()` / `Update()` and `ReliableConnection::Tick()` /
+`Update()` drain posted network tasks automatically. Low-level
+`socketwire::ThreadPool` and `socketwire::TaskQueue` remain available when an
+application needs full manual control.
 
-```cpp
-while (running) {
-  network_queue.Drain();
-  manager.Tick();
-  network_queue.Drain();
-}
-```
+If the async worker queue is full, SocketWire falls back to inline delivery for
+that payload callback so the message callback is not dropped.
 
 ## License
 
