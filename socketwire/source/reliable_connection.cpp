@@ -5,6 +5,7 @@
 #include <cstring>
 #include <limits>
 #include <span>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -30,6 +31,12 @@ std::size_t DecodedHeaderSize(const detail::DecodedPacket& packet) {
 bool SameEndpoint(const SocketAddress& lhs_addr, std::uint16_t lhs_port,
                   const SocketAddress& rhs_addr, std::uint16_t rhs_port) {
   return lhs_port == rhs_port && lhs_addr == rhs_addr;
+}
+
+std::size_t DefaultHandlerWorkerCount() {
+  const auto hardware_threads = std::thread::hardware_concurrency();
+  if (hardware_threads <= 1) return 1;
+  return static_cast<std::size_t>(hardware_threads - 1);
 }
 
 }  // namespace
@@ -82,7 +89,7 @@ class ReliableConnection::AsyncReliableConnectionHandler final
         }
       };
 
-    if (pool_ != nullptr && pool_->Post(task)) return;
+    if (pool_ != nullptr && pool_->Submit(task)) return;
     task();
   }
 
@@ -125,7 +132,7 @@ ReliableConnection::ReliableConnection(ISocket* socket,
 }
 
 ReliableConnection::~ReliableConnection() {
-  if (owned_handler_pool_ != nullptr) owned_handler_pool_->Shutdown(true);
+  if (owned_handler_pool_ != nullptr) owned_handler_pool_->Stop();
   (void)DrainPostedTasks();
   state_ = ConnectionState::kDisconnected;
   ClearPendingPackets();
@@ -201,7 +208,7 @@ void ReliableConnection::SetHandlerThreadPool(ThreadPool* pool) {
   if (handler_pool_ == pool && owned_handler_pool_ == nullptr) return;
 
   if (owned_handler_pool_ != nullptr) {
-    owned_handler_pool_->Shutdown(true);
+    owned_handler_pool_->Stop();
     owned_handler_pool_.reset();
   }
   handler_pool_ = pool;
@@ -219,10 +226,10 @@ std::size_t ReliableConnection::DrainPostedTasks(std::size_t max_tasks) {
 void ReliableConnection::EnsureOwnedHandlerThreadPool() {
   if (handler_pool_ != nullptr) return;
   const std::size_t worker_count =
-    config_.handlerWorkerThreads == 0 ? ThreadPool::DefaultWorkerCount()
+    config_.handlerWorkerThreads == 0 ? DefaultHandlerWorkerCount()
                                       : config_.handlerWorkerThreads;
-  owned_handler_pool_ =
-    std::make_unique<ThreadPool>(worker_count, config_.handlerMaxQueueSize);
+  owned_handler_pool_ = std::make_unique<ThreadPool>(worker_count);
+  owned_handler_pool_->Start();
   handler_pool_ = owned_handler_pool_.get();
 }
 

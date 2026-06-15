@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -12,6 +13,12 @@ namespace socketwire {
 namespace {
 
 constexpr std::size_t kReceiveBatchSize = 32;
+
+std::size_t DefaultHandlerWorkerCount() {
+  const auto hardware_threads = std::thread::hardware_concurrency();
+  if (hardware_threads <= 1) return 1;
+  return static_cast<std::size_t>(hardware_threads - 1);
+}
 
 }  // namespace
 
@@ -23,17 +30,17 @@ ConnectionManager::ConnectionManager(ISocket* socket,
       clock_(clock != nullptr ? clock : &SystemClock::Instance()) {
   if (config_.handlerDispatchMode == HandlerDispatchMode::kAsyncPayload) {
     const std::size_t worker_count =
-      config_.handlerWorkerThreads == 0 ? ThreadPool::DefaultWorkerCount()
+      config_.handlerWorkerThreads == 0 ? DefaultHandlerWorkerCount()
                                         : config_.handlerWorkerThreads;
-    owned_handler_pool_ =
-      std::make_unique<ThreadPool>(worker_count, config_.handlerMaxQueueSize);
+    owned_handler_pool_ = std::make_unique<ThreadPool>(worker_count);
+    owned_handler_pool_->Start();
     handler_pool_ = owned_handler_pool_.get();
   }
   EnsureReceiveBatchBuffers();
 }
 
 ConnectionManager::~ConnectionManager() {
-  if (owned_handler_pool_ != nullptr) owned_handler_pool_->Shutdown(true);
+  if (owned_handler_pool_ != nullptr) owned_handler_pool_->Stop();
   (void)DrainPostedTasks();
   clients_.clear();
   client_map_.clear();

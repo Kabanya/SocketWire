@@ -124,8 +124,6 @@ struct ReliableConnectionConfig {
   HandlerDispatchMode handlerDispatchMode = HandlerDispatchMode::kInline;
   /// Worker count for async payload callbacks. 0 = ThreadPool default.
   std::size_t handlerWorkerThreads = 0;
-  /// Maximum queued async payload callbacks. 0 = unlimited.
-  std::size_t handlerMaxQueueSize = 1024;
   /// Maximum posted network-thread tasks drained per pass.
   std::size_t maxNetworkTasksPerDrain =
     std::numeric_limits<std::size_t>::max();

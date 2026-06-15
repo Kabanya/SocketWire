@@ -50,8 +50,8 @@ class AsyncEchoServerHandler final : public IReliableConnectionHandler {
       static_cast<const std::uint8_t*>(data) + size);
 
     const bool posted =
-      workers_.Post([this, channel, payload = std::move(payload),
-                     callback_thread]() mutable {
+      workers_.Submit([this, channel, payload = std::move(payload),
+                       callback_thread]() mutable {
         worker_thread_distinct.store(std::this_thread::get_id() !=
                                      callback_thread);
         for (auto& byte : payload) {
@@ -195,42 +195,6 @@ class ThreadRecordingHandler final : public IReliableConnectionHandler {
 
  private:
   std::thread::id expected_thread_;
-};
-
-class BlockingFallbackHandler final : public IReliableConnectionHandler {
- public:
-  explicit BlockingFallbackHandler(std::thread::id network_thread)
-      : network_thread_(network_thread) {}
-
-  void OnReliableReceived(std::uint8_t channel, const void* data,
-                          std::size_t size) override {
-    (void)channel;
-    (void)data;
-    (void)size;
-
-    const int index = callbacks.fetch_add(1);
-    if (std::this_thread::get_id() == network_thread_) {
-      inline_callbacks.fetch_add(1);
-    } else {
-      worker_callbacks.fetch_add(1);
-    }
-
-    if (index == 0) {
-      first_worker_started.store(true);
-      while (!release_first_worker.load()) {
-        std::this_thread::sleep_for(1ms);
-      }
-    }
-  }
-
-  std::atomic<int> callbacks{0};
-  std::atomic<int> inline_callbacks{0};
-  std::atomic<int> worker_callbacks{0};
-  std::atomic<bool> first_worker_started{false};
-  std::atomic<bool> release_first_worker{false};
-
- private:
-  std::thread::id network_thread_;
 };
 
 class HighLevelAsyncServerHandler final : public IReliableConnectionHandler {
@@ -469,38 +433,27 @@ TEST(AsyncHandlerDispatchTest, DefaultConfigKeepsPayloadCallbacksInline) {
   EXPECT_EQ(handler.expected_thread_callbacks.load(), 1);
 }
 
-TEST(AsyncHandlerDispatchTest, QueueFullFallbackPreservesCallbackInline) {
+TEST(AsyncHandlerDispatchTest, NotStartedExternalPoolFallbackPreservesCallbackInline) {
   ReliableConnectionConfig cfg;
   cfg.handlerDispatchMode = HandlerDispatchMode::kAsyncPayload;
-  cfg.handlerWorkerThreads = 1;
-  cfg.handlerMaxQueueSize = 1;
 
   DiscardSocket socket;
+  ThreadPool workers(1);
   ReliableConnection conn(&socket, cfg);
-  BlockingFallbackHandler handler(std::this_thread::get_id());
+  ThreadRecordingHandler handler(std::this_thread::get_id());
+  conn.SetHandlerThreadPool(&workers);
   conn.SetHandler(&handler);
   conn.SetRemoteAddress(SocketAddress::FromIPv4(0x7F000001), 12345);
   conn.SetConnected();
 
   const std::array<std::uint8_t, 4> payload{1, 2, 3, 4};
-  const auto packet0 = MakeReliablePacket(0, payload.data(), payload.size());
-  const auto packet1 = MakeReliablePacket(1, payload.data(), payload.size());
-  const auto packet2 = MakeReliablePacket(2, payload.data(), payload.size());
+  const auto packet = MakeReliablePacket(0, payload.data(), payload.size());
 
-  conn.ProcessPacket(packet0.data(), packet0.size(),
-                     SocketAddress::FromIPv4(0x7F000001), 12345);
-  ASSERT_TRUE(WaitUntil([&] { return handler.first_worker_started.load(); },
-                        1s));
-
-  conn.ProcessPacket(packet1.data(), packet1.size(),
-                     SocketAddress::FromIPv4(0x7F000001), 12345);
-  conn.ProcessPacket(packet2.data(), packet2.size(),
+  conn.ProcessPacket(packet.data(), packet.size(),
                      SocketAddress::FromIPv4(0x7F000001), 12345);
 
-  handler.release_first_worker.store(true);
-  EXPECT_TRUE(WaitUntil([&] { return handler.callbacks.load() == 3; }, 1s));
-  EXPECT_GE(handler.worker_callbacks.load(), 1);
-  EXPECT_GE(handler.inline_callbacks.load(), 1);
+  EXPECT_EQ(handler.callback_count.load(), 1);
+  EXPECT_EQ(handler.expected_thread_callbacks.load(), 1);
 }
 
 TEST(AsyncHandlerDispatchTest, ConnectionManagerAsyncPayloadEchoesViaPost) {
@@ -524,7 +477,6 @@ TEST(AsyncHandlerDispatchTest, ConnectionManagerAsyncPayloadEchoesViaPost) {
   ReliableConnectionConfig server_cfg;
   server_cfg.handlerDispatchMode = HandlerDispatchMode::kAsyncPayload;
   server_cfg.handlerWorkerThreads = 2;
-  server_cfg.handlerMaxQueueSize = 16;
   server_cfg.retryTimeoutMs = 50;
   server_cfg.disconnectTimeoutMs = 1000;
 
@@ -621,7 +573,6 @@ TEST(AsyncHandlerDispatchTest, ClientAsyncPayloadCanPostNetworkSend) {
   ReliableConnectionConfig client_cfg;
   client_cfg.handlerDispatchMode = HandlerDispatchMode::kAsyncPayload;
   client_cfg.handlerWorkerThreads = 2;
-  client_cfg.handlerMaxQueueSize = 16;
   client_cfg.retryTimeoutMs = 50;
   client_cfg.disconnectTimeoutMs = 1000;
 
@@ -708,7 +659,8 @@ TEST(ThreadPoolIntegrationTest, WorkerPostsResultBackToNetworkThread) {
   conn_cfg.pingIntervalMs = 100;
   conn_cfg.disconnectTimeoutMs = 1000;
 
-  ThreadPool workers(2, 16);
+  ThreadPool workers(2);
+  workers.Start();
   TaskQueue network_queue;
 
   AsyncEchoServerHandler server_handler(workers, network_queue);
@@ -758,7 +710,7 @@ TEST(ThreadPoolIntegrationTest, WorkerPostsResultBackToNetworkThread) {
 
   running.store(false);
   network_thread.join();
-  workers.Shutdown(true);
+  workers.Stop();
 
   EXPECT_FALSE(server_handler.worker_post_failed.load());
   EXPECT_FALSE(server_handler.network_post_failed.load());

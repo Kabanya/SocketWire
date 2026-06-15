@@ -166,6 +166,12 @@ constexpr std::size_t kApplicationWorkloadPayloadSize = 256;
 constexpr std::size_t kApplicationWorkloadSendBatch = 16;
 constexpr std::uint32_t kApplicationWorkloadRounds = 96;
 
+std::size_t DefaultHandlerWorkerCount() {
+  const auto hardware_threads = std::thread::hardware_concurrency();
+  if (hardware_threads <= 1) return 1;
+  return static_cast<std::size_t>(hardware_threads - 1);
+}
+
 void StoreMessageId(std::vector<std::uint8_t>& payload, std::uint32_t id) {
   payload.at(0) = static_cast<std::uint8_t>((id >> 24) & 0xFFu);
   payload.at(1) = static_cast<std::uint8_t>((id >> 16) & 0xFFu);
@@ -350,8 +356,7 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
   conn_cfg.maxPendingReliablePackets = 4096;
   if (mode == ApplicationWorkloadMode::kThreadPool) {
     conn_cfg.handlerDispatchMode = HandlerDispatchMode::kAsyncPayload;
-    conn_cfg.handlerMaxQueueSize = kApplicationWorkloadMessages * 2;
-    result.workerCount = ThreadPool::DefaultWorkerCount();
+    result.workerCount = DefaultHandlerWorkerCount();
   }
 
   ApplicationWorkloadServerHandler server_handler(mode);

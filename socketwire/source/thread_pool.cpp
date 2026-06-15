@@ -15,7 +15,7 @@ void ThreadPool::Start() {
   assert(thread_count_ > 0);
 
   {
-    const std::lock_guard lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     assert(!started_);
     started_ = true;
     accepting_ = true;
@@ -31,7 +31,7 @@ bool ThreadPool::Submit(Task task) {
   if (!task) return false;
 
   {
-    const std::lock_guard lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     if (!started_) return false;
     if (!accepting_) return false;
     tasks_.push_back(std::move(task));
@@ -43,7 +43,7 @@ bool ThreadPool::Submit(Task task) {
 
 void ThreadPool::Stop() {
   {
-    const std::lock_guard lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     if (!started_ && workers_.empty()) return;
     accepting_ = false;
   }
