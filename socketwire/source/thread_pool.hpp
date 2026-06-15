@@ -1,6 +1,6 @@
 #pragma once
 
-/// Small bounded thread pool for application-side SocketWire work.
+/// Small thread pool for application-side SocketWire work.
 
 #include <condition_variable>
 #include <cstddef>
@@ -21,8 +21,7 @@ class ThreadPool {
  public:
   using Task = std::function<void()>;
 
-  explicit ThreadPool(std::size_t worker_count = DefaultWorkerCount(),
-                      std::size_t max_queue_size = 1024);
+  explicit ThreadPool(std::size_t thread_count);
   ~ThreadPool();
 
   ThreadPool(const ThreadPool&) = delete;
@@ -30,32 +29,27 @@ class ThreadPool {
   ThreadPool(ThreadPool&&) = delete;
   ThreadPool& operator=(ThreadPool&&) = delete;
 
-  /// Queues a task without blocking. Returns false when stopped, full, or empty.
-  bool Post(Task task);
+  /// Starts worker threads. Must be called exactly once before Submit().
+  void Start();
 
-  /// Waits until all queued and currently executing tasks finish.
-  void WaitIdle();
+  /// Queues a task without blocking. Returns false before Start(), after Stop(),
+  /// or for an empty task.
+  bool Submit(Task task);
 
-  /// Stops accepting new tasks. When drain is false, queued tasks are dropped.
-  void Shutdown(bool drain = true);
-
-  [[nodiscard]] std::size_t WorkerCount() const;
-  [[nodiscard]] std::size_t PendingCount() const;
-  [[nodiscard]] static std::size_t DefaultWorkerCount();
+  /// Stops accepting tasks, drains queued work, and joins all workers.
+  void Stop();
 
  private:
   void WorkerLoop();
 
-  const std::size_t configured_worker_count_ = 0;
-  const std::size_t max_queue_size_ = 0;
+  const std::size_t thread_count_ = 0;
 
   mutable std::mutex mutex_;
   std::condition_variable task_cv_;
-  std::condition_variable idle_cv_;
   std::deque<Task> tasks_;
-  std::vector<std::jthread> workers_;
-  std::size_t active_tasks_ = 0;
-  bool accepting_ = true;
+  std::vector<std::thread> workers_;
+  bool started_ = false;
+  bool accepting_ = false;
 };
 
 }  // namespace socketwire

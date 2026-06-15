@@ -341,76 +341,61 @@ class EchoAndCountServerHandler final : public IReliableConnectionHandler {
 
 }  // namespace
 
-TEST(ThreadPoolTest, ExecutesAllPostedTasks) {
-  ThreadPool pool(4, 128);
+TEST(ThreadPoolTest, StartRequiredBeforeSubmit) {
+  ThreadPool pool(1);
+
+  EXPECT_FALSE(pool.Submit([] {}));
+}
+
+TEST(ThreadPoolTest, ExecutesSubmittedTasks) {
+  ThreadPool pool(4);
   std::atomic<int> count{0};
 
+  pool.Start();
   for (int i = 0; i < 100; ++i) {
-    EXPECT_TRUE(pool.Post([&count] { count.fetch_add(1); }));
+    EXPECT_TRUE(pool.Submit([&count] { count.fetch_add(1); }));
   }
 
-  pool.WaitIdle();
+  EXPECT_TRUE(WaitUntil([&] { return count.load() == 100; }, 1s));
   EXPECT_EQ(count.load(), 100);
+  pool.Stop();
 }
 
-TEST(ThreadPoolTest, RejectsPostsAfterShutdown) {
-  ThreadPool pool(1, 1);
-  pool.Shutdown();
+TEST(ThreadPoolTest, RejectsSubmitAfterStop) {
+  ThreadPool pool(1);
 
-  EXPECT_FALSE(pool.Post([] {}));
+  pool.Start();
+  pool.Stop();
+
+  EXPECT_FALSE(pool.Submit([] {}));
+  pool.Stop();
 }
 
-TEST(ThreadPoolTest, RespectsBoundedQueue) {
-  ThreadPool pool(1, 1);
-  std::atomic<bool> first_started{false};
-  std::atomic<bool> release_first{false};
+TEST(ThreadPoolTest, StopDrainsAlreadySubmittedTasks) {
+  ThreadPool pool(1);
+  std::atomic<int> count{0};
 
-  EXPECT_TRUE(pool.Post([&] {
-    first_started.store(true);
-    while (!release_first.load()) {
-      std::this_thread::sleep_for(1ms);
-    }
-  }));
-
-  const bool started = WaitUntil([&] { return first_started.load(); }, 1s);
-  EXPECT_TRUE(started);
-
-  bool second_posted = false;
-  bool third_posted = false;
-  if (started) {
-    second_posted = pool.Post([] {});
-    third_posted = pool.Post([] {});
+  pool.Start();
+  for (int i = 0; i < 32; ++i) {
+    EXPECT_TRUE(pool.Submit([&count] { count.fetch_add(1); }));
   }
+  pool.Stop();
 
-  release_first.store(true);
-  pool.WaitIdle();
-
-  EXPECT_TRUE(second_posted);
-  EXPECT_FALSE(third_posted);
+  EXPECT_EQ(count.load(), 32);
 }
 
-TEST(ThreadPoolTest, WaitIdleWaitsForActiveTasks) {
-  ThreadPool pool(1, 8);
+TEST(ThreadPoolTest, StopWaitsForActiveTasks) {
+  ThreadPool pool(1);
   std::atomic<bool> completed{false};
 
-  EXPECT_TRUE(pool.Post([&] {
+  pool.Start();
+  EXPECT_TRUE(pool.Submit([&] {
     std::this_thread::sleep_for(20ms);
     completed.store(true);
   }));
+  pool.Stop();
 
-  pool.WaitIdle();
   EXPECT_TRUE(completed.load());
-}
-
-TEST(ThreadPoolTest, DestructorDrainsQueuedTasks) {
-  std::atomic<int> count{0};
-
-  {
-    ThreadPool pool(1, 8);
-    EXPECT_TRUE(pool.Post([&] { count.fetch_add(1); }));
-  }
-
-  EXPECT_EQ(count.load(), 1);
 }
 
 TEST(TaskQueueTest, DrainsOnCallingThread) {
