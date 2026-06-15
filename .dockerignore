@@ -1,9 +1,0 @@
-.git
-.cache
-build
-site
-out
-*.o
-*.a
-*.so
-*.exe

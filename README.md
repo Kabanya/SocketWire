@@ -9,8 +9,9 @@ Cross-platform C++23 networking framework for multiplayer games.
 
 ## Documentation
 
-- [Documentation site](https://socketwire.example.com/)
-- Sources: [docs/](docs/)
+- Deployed docs: `https://<chosen-domain>/`
+- Website source: [Kabanya/SocketWire-Site](https://github.com/Kabanya/SocketWire-Site)
+- Temporary local tunnel: [http://127.0.0.1:18080/](http://127.0.0.1:18080/)
 
 ## Examples
 
