@@ -2,6 +2,9 @@ BUILD_DIR ?= build
 BUILD_TYPE ?= Debug
 CMAKE ?= cmake
 CTEST ?= ctest
+TSAN_BUILD_DIR ?= build-tsan
+TSAN_FILTER ?= ThreadPoolTest.*:TaskQueueTest.*:HandlerDispatchTest.*:ThreadPoolIntegrationTest.*
+TSAN_OPTIONS ?= halt_on_error=1
 NETEM_SCRIPT ?= socketwire/tests/socketwire_netem.sh
 NETEM_PROFILE ?= bad_wifi
 NETEM_PORT ?= 15001
@@ -29,7 +32,7 @@ NETWORK_PROFILE_RESULTS_ABS := $(abspath $(NETWORK_PROFILE_RESULTS))
 PERFORMANCE_RESULTS_ABS := $(abspath $(PERFORMANCE_RESULTS))
 PERFORMANCE_LOG_ABS := $(abspath $(PERFORMANCE_LOG))
 
-.PHONY: help configure build test test-report performance-report network-profile-demo network-profile-report netem-start netem-status netem-stop netem-help netem-test-baseline netem-test netem-compare $(NETEM_PROFILE_TARGETS) $(NETEM_TEST_PROFILE_TARGETS) $(NETEM_COMPARE_PROFILE_TARGETS) clean
+.PHONY: help configure build test tsan test-report performance-report network-profile-demo network-profile-report netem-start netem-status netem-stop netem-help netem-test-baseline netem-test netem-compare $(NETEM_PROFILE_TARGETS) $(NETEM_TEST_PROFILE_TARGETS) $(NETEM_COMPARE_PROFILE_TARGETS) clean
 
 help:
 	@printf '%s\n' \
@@ -38,6 +41,7 @@ help:
 		'  make configure                 Configure CMake build directory' \
 		'  make build                     Configure and build the project' \
 		'  make test                      Build and run all CTest tests' \
+		'  make tsan                      Run concurrency tests with ThreadSanitizer' \
 		'  make test-report               Run tests and write junit/log files' \
 		'  make performance-report        Run perf tests and write metrics' \
 		'  make network-profile-demo      Show visible perfect_lan vs very_bad metrics' \
@@ -68,6 +72,11 @@ build: configure
 
 test: build
 	$(CTEST) --test-dir $(BUILD_DIR) --output-on-failure
+
+tsan:
+	$(CMAKE) -S . -B $(TSAN_BUILD_DIR) -DCMAKE_BUILD_TYPE=Debug -DSOCKETWIRE_ENABLE_TSAN=ON
+	$(CMAKE) --build $(TSAN_BUILD_DIR) --target SocketWireTests --parallel
+	TSAN_OPTIONS="$(TSAN_OPTIONS)" ./$(TSAN_BUILD_DIR)/socketwire/tests/SocketWireTests --gtest_filter='$(TSAN_FILTER)'
 
 test-report: build
 	$(CMAKE) -E make_directory $(TEST_RESULTS_DIR)

@@ -325,6 +325,18 @@ TEST(ThreadPoolTest, StopWaitsForActiveTasks) {
   EXPECT_TRUE(completed.load());
 }
 
+TEST(ThreadPoolTest, DestructorStopsWorkers) {
+  std::atomic<bool> completed{false};
+
+  {
+    ThreadPool pool(1);
+    pool.Start();
+    ASSERT_TRUE(pool.Submit([&] { completed.store(true); }));
+  }
+
+  EXPECT_TRUE(completed.load());
+}
+
 TEST(TaskQueueTest, DrainsOnCallingThread) {
   TaskQueue queue;
   const auto caller_thread = std::this_thread::get_id();

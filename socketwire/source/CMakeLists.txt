@@ -28,6 +28,11 @@ option(SOCKETWIRE_ENABLE_DARWIN_MSG_X
   OFF
 )
 
+option(SOCKETWIRE_ENABLE_TSAN
+  "Build SocketWire with ThreadSanitizer"
+  OFF
+)
+
 if(EMSCRIPTEN)
   target_sources(SocketWire PRIVATE emscripten_websocket.cpp)
 elseif(WIN32)
@@ -38,6 +43,19 @@ endif()
 
 target_include_directories(SocketWire PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(SocketWire PUBLIC cxx_std_23)
+
+if(SOCKETWIRE_ENABLE_TSAN)
+  if(MSVC)
+    message(FATAL_ERROR "SOCKETWIRE_ENABLE_TSAN requires Clang or GCC")
+  endif()
+  target_compile_options(SocketWire PUBLIC
+    -fsanitize=thread
+    -g
+    -O1
+    -fno-omit-frame-pointer
+  )
+  target_link_options(SocketWire PUBLIC -fsanitize=thread)
+endif()
 
 if(APPLE AND SOCKETWIRE_ENABLE_DARWIN_MSG_X)
   target_compile_definitions(SocketWire PRIVATE SOCKETWIRE_ENABLE_DARWIN_MSG_X=1)

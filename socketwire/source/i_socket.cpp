@@ -18,11 +18,11 @@ std::size_t BitstreamAccessSize(const BitStream& bs) {
 static std::atomic<ISocketFactory*> g_factory_instance{nullptr};
 
 void SocketFactoryRegistry::SetFactory(ISocketFactory* factory) {
-  g_factory_instance.store(factory, std::memory_order_release);
+  g_factory_instance.store(factory);
 }
 
 ISocketFactory* SocketFactoryRegistry::GetFactory() {
-  return g_factory_instance.load(std::memory_order_acquire);
+  return g_factory_instance.load();
 }
 
 const char* ToString(SocketError error) noexcept {

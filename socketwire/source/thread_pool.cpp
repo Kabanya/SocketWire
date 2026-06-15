@@ -9,7 +9,7 @@ ThreadPool::ThreadPool(std::size_t thread_count) : thread_count_(thread_count) {
   assert(thread_count_ > 0);
 }
 
-ThreadPool::~ThreadPool() { assert(workers_.empty()); }
+ThreadPool::~ThreadPool() { Stop(); }
 
 void ThreadPool::Start() {
   assert(thread_count_ > 0);
