@@ -5,7 +5,6 @@
 #include <cstring>
 #include <limits>
 #include <span>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -33,69 +32,7 @@ bool SameEndpoint(const SocketAddress& lhs_addr, std::uint16_t lhs_port,
   return lhs_port == rhs_port && lhs_addr == rhs_addr;
 }
 
-std::size_t DefaultHandlerWorkerCount() {
-  const auto hardware_threads = std::thread::hardware_concurrency();
-  if (hardware_threads <= 1) return 1;
-  return static_cast<std::size_t>(hardware_threads - 1);
-}
-
 }  // namespace
-
-class ReliableConnection::AsyncReliableConnectionHandler final
-    : public IReliableConnectionHandler {
- public:
-  void Configure(IReliableConnectionHandler* target, ThreadPool* pool) {
-    target_ = target;
-    pool_ = pool;
-  }
-
-  void OnConnected() override {
-    if (target_ != nullptr) target_->OnConnected();
-  }
-
-  void OnDisconnected() override {
-    if (target_ != nullptr) target_->OnDisconnected();
-  }
-
-  void OnReliableReceived(std::uint8_t channel, const void* data,
-                          std::size_t size) override {
-    DispatchPayload(channel, data, size, true);
-  }
-
-  void OnUnreliableReceived(std::uint8_t channel, const void* data,
-                            std::size_t size) override {
-    DispatchPayload(channel, data, size, false);
-  }
-
-  void OnTimeout() override {
-    if (target_ != nullptr) target_->OnTimeout();
-  }
-
- private:
-  void DispatchPayload(std::uint8_t channel, const void* data,
-                       std::size_t size, bool reliable) {
-    if (target_ == nullptr) return;
-
-    const auto bytes = AsBytes(data, size);
-    std::vector<std::uint8_t> payload(bytes.begin(), bytes.end());
-    IReliableConnectionHandler* target = target_;
-    const ThreadPool::Task task =
-      [target, channel, reliable, payload = std::move(payload)]() mutable {
-        if (reliable) {
-          target->OnReliableReceived(channel, payload.data(), payload.size());
-        } else {
-          target->OnUnreliableReceived(channel, payload.data(),
-                                       payload.size());
-        }
-      };
-
-    if (pool_ != nullptr && pool_->Submit(task)) return;
-    task();
-  }
-
-  IReliableConnectionHandler* target_ = nullptr;
-  ThreadPool* pool_ = nullptr;
-};
 
 ReliableConnection::ReliableConnection(ISocket* socket,
                                        const ReliableConnectionConfig& cfg,
@@ -132,7 +69,6 @@ ReliableConnection::ReliableConnection(ISocket* socket,
 }
 
 ReliableConnection::~ReliableConnection() {
-  if (owned_handler_pool_ != nullptr) owned_handler_pool_->Stop();
   (void)DrainPostedTasks();
   state_ = ConnectionState::kDisconnected;
   ClearPendingPackets();
@@ -200,19 +136,7 @@ void ReliableConnection::SetRemoteAddress(const SocketAddress& addr,
 }
 
 void ReliableConnection::SetHandler(IReliableConnectionHandler* handler) {
-  user_event_handler_ = handler;
-  ApplyHandlerDispatch();
-}
-
-void ReliableConnection::SetHandlerThreadPool(ThreadPool* pool) {
-  if (handler_pool_ == pool && owned_handler_pool_ == nullptr) return;
-
-  if (owned_handler_pool_ != nullptr) {
-    owned_handler_pool_->Stop();
-    owned_handler_pool_.reset();
-  }
-  handler_pool_ = pool;
-  ApplyHandlerDispatch();
+  event_handler_ = handler;
 }
 
 bool ReliableConnection::Post(std::function<void()> task) {
@@ -221,35 +145,6 @@ bool ReliableConnection::Post(std::function<void()> task) {
 
 std::size_t ReliableConnection::DrainPostedTasks(std::size_t max_tasks) {
   return posted_network_tasks_.Drain(max_tasks);
-}
-
-void ReliableConnection::EnsureOwnedHandlerThreadPool() {
-  if (handler_pool_ != nullptr) return;
-  const std::size_t worker_count =
-    config_.handlerWorkerThreads == 0 ? DefaultHandlerWorkerCount()
-                                      : config_.handlerWorkerThreads;
-  owned_handler_pool_ = std::make_unique<ThreadPool>(worker_count);
-  owned_handler_pool_->Start();
-  handler_pool_ = owned_handler_pool_.get();
-}
-
-void ReliableConnection::ApplyHandlerDispatch() {
-  if (user_event_handler_ == nullptr) {
-    event_handler_ = nullptr;
-    return;
-  }
-
-  if (config_.handlerDispatchMode != HandlerDispatchMode::kAsyncPayload) {
-    event_handler_ = user_event_handler_;
-    return;
-  }
-
-  EnsureOwnedHandlerThreadPool();
-  if (async_handler_ == nullptr) {
-    async_handler_ = std::make_unique<AsyncReliableConnectionHandler>();
-  }
-  async_handler_->Configure(user_event_handler_, handler_pool_);
-  event_handler_ = async_handler_.get();
 }
 
 bool ReliableConnection::SendReliable(const std::uint8_t channel,

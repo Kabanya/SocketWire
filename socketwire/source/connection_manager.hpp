@@ -14,7 +14,6 @@
 
 #include "reliable_connection.hpp"
 #include "task_queue.hpp"
-#include "thread_pool.hpp"
 
 namespace socketwire {
 
@@ -74,8 +73,6 @@ class ConnectionManager {
   ReliableConnectionConfig config_;
   IClock* clock_ = nullptr;
   IReliableConnectionHandler* event_handler_ = nullptr;
-  std::unique_ptr<ThreadPool> owned_handler_pool_;
-  ThreadPool* handler_pool_ = nullptr;
   TaskQueue posted_network_tasks_;
 
   std::vector<std::unique_ptr<RemoteClient>> clients_;

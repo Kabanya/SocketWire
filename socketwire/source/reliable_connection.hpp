@@ -10,7 +10,6 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
-#include <memory>
 #include <span>
 #include <vector>
 
@@ -19,7 +18,6 @@
 #include "i_socket.hpp"
 #include "reliable_protocol.hpp"
 #include "task_queue.hpp"
-#include "thread_pool.hpp"
 
 namespace socketwire {
 
@@ -28,11 +26,6 @@ enum class ConnectionState : std::uint8_t {
   kDisconnecting = 1,
   kConnected = 2,
   kConnecting = 3
-};
-
-enum class HandlerDispatchMode : std::uint8_t {
-  kInline = 0,
-  kAsyncPayload = 1
 };
 
 class IClock {
@@ -120,10 +113,6 @@ struct ReliableConnectionConfig {
   std::uint16_t maxBatchCommands = 32;
   /// Ordered reliable receive window per channel.
   std::uint32_t receiveWindowSize = 1024;
-  /// Controls how IReliableConnectionHandler callbacks are dispatched.
-  HandlerDispatchMode handlerDispatchMode = HandlerDispatchMode::kInline;
-  /// Worker count for async payload callbacks. 0 = ThreadPool default.
-  std::size_t handlerWorkerThreads = 0;
   /// Maximum posted network-thread tasks drained per pass.
   std::size_t maxNetworkTasksPerDrain =
     std::numeric_limits<std::size_t>::max();
@@ -234,9 +223,6 @@ class ReliableConnection {
   [[nodiscard]] static bool IsConnectPacket(const void* data, std::size_t size);
 
   void SetHandler(IReliableConnectionHandler* handler);
-  /// Optional low-level override used to share an external payload callback
-  /// pool. The caller must keep the pool alive until pending callbacks finish.
-  void SetHandlerThreadPool(ThreadPool* pool);
 
   /// Posts work that must run on this connection's network owner thread.
   bool Post(std::function<void()> task);
@@ -280,12 +266,7 @@ class ReliableConnection {
   ISocket* socket_ = nullptr;
   ReliableConnectionConfig config_;
   IClock* clock_ = nullptr;
-  IReliableConnectionHandler* user_event_handler_ = nullptr;
   IReliableConnectionHandler* event_handler_ = nullptr;
-  std::unique_ptr<ThreadPool> owned_handler_pool_;
-  ThreadPool* handler_pool_ = nullptr;
-  class AsyncReliableConnectionHandler;
-  std::unique_ptr<AsyncReliableConnectionHandler> async_handler_;
   TaskQueue posted_network_tasks_;
 
   ConnectionState state_ = ConnectionState::kDisconnected;
@@ -407,8 +388,6 @@ class ReliableConnection {
   /// fragmentTimeoutMs.
   void CleanupFragments(std::chrono::steady_clock::time_point now);
   void EnsureReceiveBatchBuffers();
-  void ApplyHandlerDispatch();
-  void EnsureOwnedHandlerThreadPool();
   void ClearPendingPackets();
   [[nodiscard]] bool SecureMode() const { return config_.crypto.enabled; }
   [[nodiscard]] bool CanUseCrypto() const;

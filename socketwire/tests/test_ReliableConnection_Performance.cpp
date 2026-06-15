@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdlib>
 #include <cstdint>
 #include <cmath>
@@ -20,7 +21,6 @@
 #include "i_socket.hpp"
 #include "reliable_connection.hpp"
 #include "socket_init.hpp"
-#include "task_queue.hpp"
 #include "thread_pool.hpp"
 
 using namespace std::chrono;  // NOLINT
@@ -122,12 +122,12 @@ class PerfNullSocket final : public ISocket {
     return SocketError::kNone;
   }
 
-  bool IsBlocking() const override { return blocking_; }
-  std::uint16_t LocalPort() const override { return bound_port_; }
-  int NativeHandle() const override { return 1; }
+  [[nodiscard]] bool IsBlocking() const override { return blocking_; }
+  [[nodiscard]] std::uint16_t LocalPort() const override { return bound_port_; }
+  [[nodiscard]] int NativeHandle() const override { return 1; }
   void Close() override {}
 
-  std::uint32_t SendCount() const { return send_count_; }
+  [[nodiscard]] std::uint32_t SendCount() const { return send_count_; }
 
  private:
   bool blocking_ = false;
@@ -193,7 +193,7 @@ std::vector<std::uint8_t> MakeApplicationPayload(std::uint32_t id) {
   StoreMessageId(payload, id);
   for (std::size_t i = 4; i < payload.size(); ++i) {
     payload.at(i) =
-      static_cast<std::uint8_t>((id * 131u + i * 17u + 0x5Au) & 0xFFu);
+      static_cast<std::uint8_t>((static_cast<std::size_t>(id * 131u) + i * 17u + 0x5Au) & 0xFFu);
   }
   return payload;
 }
@@ -295,22 +295,33 @@ class ApplicationWorkloadServerHandler final
       return;
     }
 
-    auto response = BuildApplicationResponse(std::move(payload));
-    ++processed;
-    if (manager == nullptr) return;
+    if (workers == nullptr) {
+      worker_post_failed.store(true);
+      return;
+    }
 
-    const bool queued =
-      manager->Post([this, channel, response = std::move(response)] {
+    const bool submitted =
+      workers->Submit([this, channel, payload = std::move(payload)]() mutable {
+        auto response = BuildApplicationResponse(std::move(payload));
+        ++processed;
         if (manager != nullptr) {
-          manager->BroadcastReliable(channel, response.data(),
-                                     response.size());
+          const bool queued =
+            manager->Post([this, channel, response = std::move(response)] {
+              if (manager != nullptr) {
+                manager->BroadcastReliable(channel, response.data(),
+                                           response.size());
+              }
+            });
+          if (!queued) network_post_failed.store(true);
         }
       });
-    if (!queued) network_post_failed.store(true);
+    if (!submitted) worker_post_failed.store(true);
   }
 
   ConnectionManager* manager = nullptr;
+  ThreadPool* workers = nullptr;
   std::atomic<std::uint32_t> processed{0};
+  std::atomic<bool> worker_post_failed{false};
   std::atomic<bool> network_post_failed{false};
 
  private:
@@ -354,12 +365,18 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
   conn_cfg.pingIntervalMs = 1000;
   conn_cfg.disconnectTimeoutMs = 5000;
   conn_cfg.maxPendingReliablePackets = 4096;
+  std::unique_ptr<ThreadPool> workers;
   if (mode == ApplicationWorkloadMode::kThreadPool) {
-    conn_cfg.handlerDispatchMode = HandlerDispatchMode::kAsyncPayload;
     result.workerCount = DefaultHandlerWorkerCount();
+    workers = std::make_unique<ThreadPool>(result.workerCount);
+    workers->Start();
   }
+  const auto stop_workers = [&workers] {
+    if (workers != nullptr) workers->Stop();
+  };
 
   ApplicationWorkloadServerHandler server_handler(mode);
+  server_handler.workers = workers.get();
   auto server_manager =
     std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
   server_handler.manager = server_manager.get();
@@ -394,6 +411,7 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
                  milliseconds(2000))) {
     running.store(false);
     network_thread.join();
+    stop_workers();
     result.error = "Connection failed to establish";
     return result;
   }
@@ -401,7 +419,7 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
   std::atomic<bool> send_failed{false};
   std::atomic<std::uint32_t> next_to_send{0};
   auto send_more = std::make_shared<std::function<void()>>();
-  std::weak_ptr<std::function<void()>> weak_send_more = send_more;
+  const std::weak_ptr<std::function<void()>> weak_send_more = send_more;
   *send_more = [&, weak_send_more] {
     for (std::size_t i = 0; i < kApplicationWorkloadSendBatch; ++i) {
       const std::uint32_t id = next_to_send.fetch_add(1);
@@ -425,6 +443,7 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
   if (!client_conn->Post(*send_more)) {
     running.store(false);
     network_thread.join();
+    stop_workers();
     result.error = "Failed to queue send task";
     return result;
   }
@@ -438,6 +457,7 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
 
   running.store(false);
   network_thread.join();
+  stop_workers();
 
   if (!delivered) {
     result.error = "Timed out waiting for echoed workload messages";
@@ -449,6 +469,10 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
   }
   if (server_handler.network_post_failed.load()) {
     result.error = "Network queue post failed";
+    return result;
+  }
+  if (server_handler.worker_post_failed.load()) {
+    result.error = "Worker queue post failed";
     return result;
   }
 
@@ -878,8 +902,8 @@ TEST_F(ReliableConnectionPerformanceTest,
 }
 
 TEST_F(ReliableConnectionPerformanceTest, ConnectionManagerUpdateScalability) {
-  constexpr std::array<int, 3> kClientCounts = {100, 500, 1000};
-  constexpr int kIterations = 1000;
+  constexpr std::array<int, 3> k_client_counts = {100, 500, 1000};
+  constexpr int k_iterations = 1000;
 
   const auto now = steady_clock::time_point{};
   std::array<std::uint8_t, 64> packet_storage{};
@@ -893,7 +917,7 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionManagerUpdateScalability) {
 
   std::cout << "\n=== ConnectionManager Update Scalability ===" << "\n";
 
-  for (const int client_count : kClientCounts) {
+  for (const int client_count : k_client_counts) {
     PerfNullSocket socket;
     ReliableConnectionConfig cfg;
     cfg.maxClients = static_cast<std::uint32_t>(client_count);
@@ -914,7 +938,7 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionManagerUpdateScalability) {
               static_cast<std::size_t>(client_count));
 
     const auto start = high_resolution_clock::now();
-    for (int i = 0; i < kIterations; ++i) {
+    for (int i = 0; i < k_iterations; ++i) {
       manager.Update(now);
     }
     const auto end = high_resolution_clock::now();
@@ -923,12 +947,12 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionManagerUpdateScalability) {
     if (duration_us == 0) duration_us = 1;
     const double duration_ms = static_cast<double>(duration_us) / 1000.0;
     const double updates_per_sec =
-      (kIterations * 1000000.0) / static_cast<double>(duration_us);
+      (k_iterations * 1000000.0) / static_cast<double>(duration_us);
     const double us_per_update =
-      static_cast<double>(duration_us) / static_cast<double>(kIterations);
+      static_cast<double>(duration_us) / static_cast<double>(k_iterations);
 
     std::cout << "Clients: " << client_count << "\n"
-              << "Iterations: " << kIterations << "\n"
+              << "Iterations: " << k_iterations << "\n"
               << "Total time: " << duration_ms << " ms\n"
               << "Avg update: " << us_per_update << " μs\n"
               << "Throughput: " << updates_per_sec << " updates/sec\n";

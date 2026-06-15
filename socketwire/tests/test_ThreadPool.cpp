@@ -37,8 +37,7 @@ bool WaitUntil(Predicate predicate, std::chrono::milliseconds timeout,
 
 class AsyncEchoServerHandler final : public IReliableConnectionHandler {
  public:
-  AsyncEchoServerHandler(ThreadPool& workers, TaskQueue& network_queue)
-      : workers_(workers), network_queue_(network_queue) {}
+  explicit AsyncEchoServerHandler(ThreadPool& workers) : workers_(workers) {}
 
   void OnReliableReceived(std::uint8_t channel, const void* data,
                           std::size_t size) override {
@@ -59,7 +58,8 @@ class AsyncEchoServerHandler final : public IReliableConnectionHandler {
         }
 
         const bool queued =
-          network_queue_.Post([this, channel, payload = std::move(payload)] {
+          manager != nullptr &&
+          manager->Post([this, channel, payload = std::move(payload)] {
             network_tasks.fetch_add(1);
             if (manager != nullptr) {
               manager->BroadcastReliable(channel, payload.data(),
@@ -80,7 +80,6 @@ class AsyncEchoServerHandler final : public IReliableConnectionHandler {
 
  private:
   ThreadPool& workers_;
-  TaskQueue& network_queue_;
 };
 
 class CollectingClientHandler final : public IReliableConnectionHandler {
@@ -197,56 +196,10 @@ class ThreadRecordingHandler final : public IReliableConnectionHandler {
   std::thread::id expected_thread_;
 };
 
-class HighLevelAsyncServerHandler final : public IReliableConnectionHandler {
- public:
-  explicit HighLevelAsyncServerHandler(std::thread::id& network_thread)
-      : network_thread_(network_thread) {}
-
-  void OnConnected() override {
-    if (std::this_thread::get_id() == network_thread_) {
-      control_on_network.store(true);
-    }
-  }
-
-  void OnReliableReceived(std::uint8_t channel, const void* data,
-                          std::size_t size) override {
-    if (std::this_thread::get_id() != network_thread_) {
-      payload_off_network.store(true);
-    }
-
-    std::this_thread::sleep_for(5ms);
-    std::vector<std::uint8_t> payload(
-      static_cast<const std::uint8_t*>(data),
-      static_cast<const std::uint8_t*>(data) + size);
-    payload_callbacks.fetch_add(1);
-
-    if (manager != nullptr) {
-      const bool posted = manager->Post(
-        [this, channel, payload = std::move(payload)]() mutable {
-          if (std::this_thread::get_id() == network_thread_) {
-            post_ran_on_network.store(true);
-          }
-          manager->BroadcastReliable(channel, payload.data(), payload.size());
-        });
-      if (!posted) post_failed.store(true);
-    }
-  }
-
-  ConnectionManager* manager = nullptr;
-  std::atomic<bool> control_on_network{false};
-  std::atomic<bool> payload_off_network{false};
-  std::atomic<bool> post_ran_on_network{false};
-  std::atomic<bool> post_failed{false};
-  std::atomic<int> payload_callbacks{0};
-
- private:
-  std::thread::id& network_thread_;
-};
-
 class ClientSideAsyncHandler final : public IReliableConnectionHandler {
  public:
-  explicit ClientSideAsyncHandler(std::thread::id& network_thread)
-      : network_thread_(network_thread) {}
+  ClientSideAsyncHandler(ThreadPool& workers, std::thread::id& network_thread)
+      : workers_(workers), network_thread_(network_thread) {}
 
   void OnConnected() override { connected.store(true); }
 
@@ -255,11 +208,16 @@ class ClientSideAsyncHandler final : public IReliableConnectionHandler {
     (void)channel;
     (void)data;
     (void)size;
-    if (std::this_thread::get_id() != network_thread_) {
-      payload_off_network.store(true);
+    if (std::this_thread::get_id() == network_thread_) {
+      callback_on_network.store(true);
     }
 
-    if (connection != nullptr) {
+    const bool submitted = workers_.Submit([this] {
+      if (std::this_thread::get_id() != network_thread_) {
+        worker_thread_distinct.store(true);
+      }
+      if (connection == nullptr) return;
+
       const std::array<std::uint8_t, 3> response{9, 8, 7};
       const bool posted = connection->Post([this, response] {
         if (std::this_thread::get_id() == network_thread_) {
@@ -269,16 +227,20 @@ class ClientSideAsyncHandler final : public IReliableConnectionHandler {
                                          response.size());
       });
       if (!posted) post_failed.store(true);
-    }
+    });
+    if (!submitted) worker_post_failed.store(true);
   }
 
   ReliableConnection* connection = nullptr;
   std::atomic<bool> connected{false};
-  std::atomic<bool> payload_off_network{false};
+  std::atomic<bool> callback_on_network{false};
+  std::atomic<bool> worker_thread_distinct{false};
+  std::atomic<bool> worker_post_failed{false};
   std::atomic<bool> post_ran_on_network{false};
   std::atomic<bool> post_failed{false};
 
  private:
+  ThreadPool& workers_;
   std::thread::id& network_thread_;
 };
 
@@ -416,7 +378,7 @@ TEST(TaskQueueTest, ClearDropsPendingTasks) {
   EXPECT_EQ(count.load(), 0);
 }
 
-TEST(AsyncHandlerDispatchTest, DefaultConfigKeepsPayloadCallbacksInline) {
+TEST(HandlerDispatchTest, CallbacksRunInline) {
   DiscardSocket socket;
   ReliableConnection conn(&socket);
   ThreadRecordingHandler handler(std::this_thread::get_id());
@@ -433,122 +395,7 @@ TEST(AsyncHandlerDispatchTest, DefaultConfigKeepsPayloadCallbacksInline) {
   EXPECT_EQ(handler.expected_thread_callbacks.load(), 1);
 }
 
-TEST(AsyncHandlerDispatchTest, NotStartedExternalPoolFallbackPreservesCallbackInline) {
-  ReliableConnectionConfig cfg;
-  cfg.handlerDispatchMode = HandlerDispatchMode::kAsyncPayload;
-
-  DiscardSocket socket;
-  ThreadPool workers(1);
-  ReliableConnection conn(&socket, cfg);
-  ThreadRecordingHandler handler(std::this_thread::get_id());
-  conn.SetHandlerThreadPool(&workers);
-  conn.SetHandler(&handler);
-  conn.SetRemoteAddress(SocketAddress::FromIPv4(0x7F000001), 12345);
-  conn.SetConnected();
-
-  const std::array<std::uint8_t, 4> payload{1, 2, 3, 4};
-  const auto packet = MakeReliablePacket(0, payload.data(), payload.size());
-
-  conn.ProcessPacket(packet.data(), packet.size(),
-                     SocketAddress::FromIPv4(0x7F000001), 12345);
-
-  EXPECT_EQ(handler.callback_count.load(), 1);
-  EXPECT_EQ(handler.expected_thread_callbacks.load(), 1);
-}
-
-TEST(AsyncHandlerDispatchTest, ConnectionManagerAsyncPayloadEchoesViaPost) {
-  InitializeSockets();
-  auto* factory = SocketFactoryRegistry::GetFactory();
-  ASSERT_NE(factory, nullptr);
-
-  SocketConfig cfg;
-  cfg.nonBlocking = true;
-
-  auto server_socket = factory->CreateUdpSocket(cfg);
-  ASSERT_NE(server_socket, nullptr);
-  ASSERT_EQ(server_socket->Bind(SocketAddress::FromIPv4(0), 0),
-            SocketError::kNone);
-  const std::uint16_t server_port = server_socket->LocalPort();
-  ASSERT_GT(server_port, 0);
-
-  auto client_socket = factory->CreateUdpSocket(cfg);
-  ASSERT_NE(client_socket, nullptr);
-
-  ReliableConnectionConfig server_cfg;
-  server_cfg.handlerDispatchMode = HandlerDispatchMode::kAsyncPayload;
-  server_cfg.handlerWorkerThreads = 2;
-  server_cfg.retryTimeoutMs = 50;
-  server_cfg.disconnectTimeoutMs = 1000;
-
-  ReliableConnectionConfig client_cfg;
-  client_cfg.retryTimeoutMs = 50;
-  client_cfg.disconnectTimeoutMs = 1000;
-
-  std::thread::id network_thread_id;
-  HighLevelAsyncServerHandler server_handler(network_thread_id);
-  auto server_manager =
-    std::make_unique<ConnectionManager>(server_socket.get(), server_cfg);
-  server_handler.manager = server_manager.get();
-  server_manager->SetHandler(&server_handler);
-
-  CollectingClientHandler client_handler;
-  auto client_conn =
-    std::make_unique<ReliableConnection>(client_socket.get(), client_cfg);
-  client_conn->SetHandler(&client_handler);
-
-  std::atomic<bool> running{true};
-  std::atomic<bool> network_ready{false};
-  std::thread network_thread([&] {
-    network_thread_id = std::this_thread::get_id();
-    network_ready.store(true);
-    while (running.load()) {
-      server_manager->Tick();
-      client_conn->Tick();
-      std::this_thread::sleep_for(1ms);
-    }
-  });
-  ASSERT_TRUE(WaitUntil([&] { return network_ready.load(); }, 1s));
-
-  std::atomic<int> connect_result{-1};
-  ASSERT_TRUE(client_conn->Post([&] {
-    connect_result.store(
-      client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port)
-        ? 1
-        : 0);
-  }));
-  ASSERT_TRUE(WaitUntil([&] { return connect_result.load() != -1; }, 1s));
-  ASSERT_EQ(connect_result.load(), 1);
-  ASSERT_TRUE(WaitUntil([&] { return client_handler.connected.load(); }, 2s));
-
-  const std::array<std::uint8_t, 6> payload{1, 2, 3, 4, 5, 6};
-  std::atomic<int> send_result{-1};
-  ASSERT_TRUE(client_conn->Post([&] {
-    send_result.store(client_conn->SendReliable(0, payload.data(),
-                                                payload.size())
-                        ? 1
-                        : 0);
-  }));
-  ASSERT_TRUE(WaitUntil([&] { return send_result.load() != -1; }, 1s));
-  ASSERT_EQ(send_result.load(), 1);
-
-  ASSERT_TRUE(WaitUntil(
-    [&] { return client_handler.reliable_received.load() > 0; }, 3s));
-
-  running.store(false);
-  network_thread.join();
-
-  EXPECT_TRUE(server_handler.control_on_network.load());
-  EXPECT_TRUE(server_handler.payload_off_network.load());
-  EXPECT_TRUE(server_handler.post_ran_on_network.load());
-  EXPECT_FALSE(server_handler.post_failed.load());
-  EXPECT_GT(server_handler.payload_callbacks.load(), 0);
-
-  const auto messages = client_handler.Messages();
-  const std::vector<std::uint8_t> expected(payload.begin(), payload.end());
-  EXPECT_NE(std::ranges::find(messages, expected), messages.end());
-}
-
-TEST(AsyncHandlerDispatchTest, ClientAsyncPayloadCanPostNetworkSend) {
+TEST(ThreadPoolIntegrationTest, ClientWorkerPostsNetworkSend) {
   InitializeSockets();
   auto* factory = SocketFactoryRegistry::GetFactory();
   ASSERT_NE(factory, nullptr);
@@ -571,8 +418,6 @@ TEST(AsyncHandlerDispatchTest, ClientAsyncPayloadCanPostNetworkSend) {
   server_cfg.disconnectTimeoutMs = 1000;
 
   ReliableConnectionConfig client_cfg;
-  client_cfg.handlerDispatchMode = HandlerDispatchMode::kAsyncPayload;
-  client_cfg.handlerWorkerThreads = 2;
   client_cfg.retryTimeoutMs = 50;
   client_cfg.disconnectTimeoutMs = 1000;
 
@@ -583,7 +428,8 @@ TEST(AsyncHandlerDispatchTest, ClientAsyncPayloadCanPostNetworkSend) {
   server_manager->SetHandler(&server_handler);
 
   std::thread::id network_thread_id;
-  ClientSideAsyncHandler client_handler(network_thread_id);
+  ThreadPool workers(2);
+  ClientSideAsyncHandler client_handler(workers, network_thread_id);
   auto client_conn =
     std::make_unique<ReliableConnection>(client_socket.get(), client_cfg);
   client_handler.connection = client_conn.get();
@@ -613,25 +459,29 @@ TEST(AsyncHandlerDispatchTest, ClientAsyncPayloadCanPostNetworkSend) {
   ASSERT_EQ(connect_result.load(), 1);
   ASSERT_TRUE(WaitUntil([&] { return client_handler.connected.load(); }, 2s));
 
+  workers.Start();
   const std::array<std::uint8_t, 4> payload{5, 6, 7, 8};
   std::atomic<int> send_result{-1};
-  ASSERT_TRUE(client_conn->Post([&] {
+  EXPECT_TRUE(client_conn->Post([&] {
     send_result.store(client_conn->SendReliable(0, payload.data(),
                                                 payload.size())
                         ? 1
                         : 0);
   }));
-  ASSERT_TRUE(WaitUntil([&] { return send_result.load() != -1; }, 1s));
-  ASSERT_EQ(send_result.load(), 1);
+  EXPECT_TRUE(WaitUntil([&] { return send_result.load() != -1; }, 1s));
+  EXPECT_EQ(send_result.load(), 1);
 
-  ASSERT_TRUE(WaitUntil(
+  EXPECT_TRUE(WaitUntil(
     [&] { return server_handler.unreliable_received.load() > 0; }, 3s));
 
   running.store(false);
   network_thread.join();
+  workers.Stop();
 
-  EXPECT_TRUE(client_handler.payload_off_network.load());
+  EXPECT_TRUE(client_handler.callback_on_network.load());
+  EXPECT_TRUE(client_handler.worker_thread_distinct.load());
   EXPECT_TRUE(client_handler.post_ran_on_network.load());
+  EXPECT_FALSE(client_handler.worker_post_failed.load());
   EXPECT_FALSE(client_handler.post_failed.load());
   EXPECT_GT(server_handler.reliable_received.load(), 0);
 }
@@ -661,9 +511,8 @@ TEST(ThreadPoolIntegrationTest, WorkerPostsResultBackToNetworkThread) {
 
   ThreadPool workers(2);
   workers.Start();
-  TaskQueue network_queue;
 
-  AsyncEchoServerHandler server_handler(workers, network_queue);
+  AsyncEchoServerHandler server_handler(workers);
   auto server_manager =
     std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
   server_handler.manager = server_manager.get();
@@ -678,13 +527,10 @@ TEST(ThreadPoolIntegrationTest, WorkerPostsResultBackToNetworkThread) {
   std::atomic<bool> running{true};
   std::thread network_thread([&] {
     while (running.load()) {
-      network_queue.Drain();
       server_manager->Tick();
       client_conn->Tick();
-      network_queue.Drain();
       std::this_thread::sleep_for(1ms);
     }
-    network_queue.Drain();
   });
 
   const bool connected =
@@ -694,7 +540,7 @@ TEST(ThreadPoolIntegrationTest, WorkerPostsResultBackToNetworkThread) {
   std::array<std::uint8_t, 5> payload{1, 2, 3, 4, 5};
   std::atomic<int> send_result{-1};
   if (connected) {
-    EXPECT_TRUE(network_queue.Post([&] {
+    EXPECT_TRUE(client_conn->Post([&] {
       send_result.store(client_conn->SendReliable(0, payload.data(),
                                                   payload.size())
                           ? 1

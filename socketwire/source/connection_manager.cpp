@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -13,12 +12,6 @@ namespace socketwire {
 namespace {
 
 constexpr std::size_t kReceiveBatchSize = 32;
-
-std::size_t DefaultHandlerWorkerCount() {
-  const auto hardware_threads = std::thread::hardware_concurrency();
-  if (hardware_threads <= 1) return 1;
-  return static_cast<std::size_t>(hardware_threads - 1);
-}
 
 }  // namespace
 
@@ -28,19 +21,10 @@ ConnectionManager::ConnectionManager(ISocket* socket,
     : socket_(socket),
       config_(cfg),
       clock_(clock != nullptr ? clock : &SystemClock::Instance()) {
-  if (config_.handlerDispatchMode == HandlerDispatchMode::kAsyncPayload) {
-    const std::size_t worker_count =
-      config_.handlerWorkerThreads == 0 ? DefaultHandlerWorkerCount()
-                                        : config_.handlerWorkerThreads;
-    owned_handler_pool_ = std::make_unique<ThreadPool>(worker_count);
-    owned_handler_pool_->Start();
-    handler_pool_ = owned_handler_pool_.get();
-  }
   EnsureReceiveBatchBuffers();
 }
 
 ConnectionManager::~ConnectionManager() {
-  if (owned_handler_pool_ != nullptr) owned_handler_pool_->Stop();
   (void)DrainPostedTasks();
   clients_.clear();
   client_map_.clear();
@@ -138,7 +122,6 @@ void ConnectionManager::SetHandler(IReliableConnectionHandler* handler) {
   event_handler_ = handler;
   for (auto& client : clients_) {
     if (client->connection != nullptr) {
-      client->connection->SetHandlerThreadPool(handler_pool_);
       client->connection->SetHandler(event_handler_);
     }
   }
@@ -178,7 +161,6 @@ ConnectionManager::RemoteClient* ConnectionManager::FindOrCreateClient(
   client->connection =
     std::make_unique<ReliableConnection>(socket_, config_, clock_);
   client->connection->SetRemoteAddress(addr, port);
-  client->connection->SetHandlerThreadPool(handler_pool_);
   client->connection->SetHandler(event_handler_);
 
   RemoteClient* raw = client.get();
