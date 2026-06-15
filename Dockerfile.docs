@@ -1,0 +1,9 @@
+FROM python:3.12-alpine AS build
+WORKDIR /src
+COPY requirements-docs.txt mkdocs.yml ./
+COPY docs ./docs
+RUN pip install --no-cache-dir -r requirements-docs.txt && mkdocs build --strict
+
+FROM nginx:alpine
+COPY --from=build /src/site /usr/share/nginx/html
+EXPOSE 80
