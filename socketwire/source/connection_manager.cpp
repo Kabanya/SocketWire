@@ -92,25 +92,6 @@ bool ConnectionManager::HandshakeAllowed(
   return true;
 }
 
-void ConnectionManager::BroadcastReliable(std::uint8_t channel,
-                                          const void* data, std::size_t size) {
-  for (auto& client : clients_) {
-    if (client->connection != nullptr && client->connection->IsConnected()) {
-      (void)client->connection->SendReliable(channel, data, size);
-    }
-  }
-}
-
-void ConnectionManager::BroadcastUnreliable(std::uint8_t channel,
-                                            const void* data,
-                                            std::size_t size) {
-  for (auto& client : clients_) {
-    if (client->connection != nullptr && client->connection->IsConnected()) {
-      (void)client->connection->SendUnreliable(channel, data, size);
-    }
-  }
-}
-
 void ConnectionManager::SetHandler(IReliableConnectionHandler* handler) {
   event_handler_ = handler;
   for (auto& client : clients_) {
@@ -225,6 +206,24 @@ void ConnectionManager::Tick() {
     if (received < receive_batch_.size()) break;
   }
   Update(clock_->Now());
+}
+
+void BroadcastReliable(ConnectionManager& manager, std::uint8_t channel,
+                       const void* data, std::size_t size) {
+  for (auto* client : manager.GetConnections()) {
+    if (client->connection != nullptr && client->connection->IsConnected()) {
+      (void)client->connection->SendReliable(channel, data, size);
+    }
+  }
+}
+
+void BroadcastUnreliable(ConnectionManager& manager, std::uint8_t channel,
+                         const void* data, std::size_t size) {
+  for (auto* client : manager.GetConnections()) {
+    if (client->connection != nullptr && client->connection->IsConnected()) {
+      (void)client->connection->SendUnreliable(channel, data, size);
+    }
+  }
 }
 
 }  // namespace socketwire

@@ -165,10 +165,12 @@ class ReliableConnection {
   }
   [[nodiscard]] ConnectionState GetState() const { return state_; }
   [[nodiscard]] bool IsCryptoReady() const { return crypto_ready_; }
-
-  /// Sets the remote address for server-side connections that start connected.
+  /// Sets the remote address for server-side demultiplexed connections.
   void SetRemoteAddress(const SocketAddress& addr, std::uint16_t port);
-  void SetConnected() { state_ = ConnectionState::kConnected; }
+  // TODO: kabanya - убрать
+#if defined(SOCKETWIRE_TESTING)
+  void SetConnectedForTest() { state_ = ConnectionState::kConnected; }
+#endif
 
   bool SendReliable(const std::uint8_t channel, const void* data,
                     std::size_t size);

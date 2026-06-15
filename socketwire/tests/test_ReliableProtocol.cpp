@@ -302,7 +302,7 @@ TEST(ManualClockReliableConnectionTest, DrivesRetryTimeoutDeadlineAndPing) {
 
   ReliableConnection conn(&socket, config, &clock);
   conn.SetRemoteAddress(SocketAddress::FromIPv4(0x7F000001), 7777);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   ASSERT_TRUE(conn.SendReliable(0, "a", 1));
   ASSERT_EQ(socket.sent.size(), 1u);
@@ -318,7 +318,7 @@ TEST(ManualClockReliableConnectionTest, DrivesRetryTimeoutDeadlineAndPing) {
   deadline_config.deadlinesEnabled = true;
   ReliableConnection deadline_conn(&deadline_socket, deadline_config, &clock);
   deadline_conn.SetRemoteAddress(SocketAddress::FromIPv4(0x7F000001), 7777);
-  deadline_conn.SetConnected();
+  deadline_conn.SetConnectedForTest();
 
   ASSERT_TRUE(deadline_conn.SendReliableWithDeadline(0, "b", 1, 5));
   clock.Advance(10ms);
@@ -332,7 +332,7 @@ TEST(ManualClockReliableConnectionTest, DrivesRetryTimeoutDeadlineAndPing) {
   ping_config.pingIntervalMs = 10;
   ReliableConnection ping_conn(&ping_socket, ping_config, &clock);
   ping_conn.SetRemoteAddress(SocketAddress::FromIPv4(0x7F000001), 7777);
-  ping_conn.SetConnected();
+  ping_conn.SetConnectedForTest();
 
   clock.Advance(11ms);
   ping_conn.Update();
@@ -353,7 +353,7 @@ TEST(ManualClockReliableConnectionTest, DrivesDisconnectTimeout) {
   ReliableConnection conn(&socket, config, &clock);
   conn.SetHandler(&handler);
   conn.SetRemoteAddress(SocketAddress::FromIPv4(0x7F000001), 7777);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   clock.Advance(21ms);
   conn.Update();
@@ -373,7 +373,7 @@ TEST(BackpressureTest, PendingReliableAndMessageSizeLimitsRejectSends) {
 
   ReliableConnection conn(&socket, config, &clock);
   conn.SetRemoteAddress(SocketAddress::FromIPv4(0x7F000001), 7777);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   EXPECT_TRUE(conn.SendReliable(0, "one", 3));
   EXPECT_FALSE(conn.SendReliable(0, "two", 3));

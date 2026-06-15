@@ -17,29 +17,29 @@
 #include <cstring>
 #endif
 
-namespace socketwire {
+namespace socketwire::SocketConstants {
 
-SocketAddress SocketConstants::Any() {
+SocketAddress Any() {
   return SocketAddress::FromIPv4(kIpV4Any);
 }
 
-SocketAddress SocketConstants::AnyIPv6() {
+SocketAddress AnyIPv6() {
   return SocketAddress::FromIPv6(kIpV6Any);
 }
 
-SocketAddress SocketConstants::Loopback() {
+SocketAddress Loopback() {
   return SocketAddress::FromIPv4(kIpV4Loopback);
 }
 
-SocketAddress SocketConstants::LoopbackIPv6() {
+SocketAddress LoopbackIPv6() {
   return SocketAddress::FromIPv6(kIpV6Loopback);
 }
 
-SocketAddress SocketConstants::Broadcast() {
+SocketAddress Broadcast() {
   return SocketAddress::FromIPv4(kIpV4Broadcast);
 }
 
-bool SocketConstants::ParseIPv4(const char* str, std::uint32_t& out_address) {
+bool ParseIPv4(const char* str, std::uint32_t& out_address) {
   if (str == nullptr) return false;
 
 #if defined(_WIN32)
@@ -57,9 +57,8 @@ bool SocketConstants::ParseIPv4(const char* str, std::uint32_t& out_address) {
 #endif
 }
 
-bool SocketConstants::ParseIPv6(const char* str,
-                                std::array<std::uint8_t, 16>& out_address,
-                                std::uint32_t& scope_id) {
+bool ParseIPv6(const char* str, std::array<std::uint8_t, 16>& out_address,
+               std::uint32_t& scope_id) {
   if (str == nullptr) return false;
 
 #if defined(_WIN32)
@@ -75,8 +74,8 @@ bool SocketConstants::ParseIPv6(const char* str,
   return true;
 }
 
-bool SocketConstants::FormatIPv4(std::uint32_t address, char* buffer,
-                                 std::size_t buffer_size) {
+bool FormatIPv4(std::uint32_t address, char* buffer,
+                std::size_t buffer_size) {
   if (buffer == nullptr || buffer_size < 16) {
     return false;
   }
@@ -96,9 +95,9 @@ bool SocketConstants::FormatIPv4(std::uint32_t address, char* buffer,
 #endif
 }
 
-bool SocketConstants::FormatIPv6(const std::array<std::uint8_t, 16>& address,
-                                 std::uint32_t scope_id, char* buffer,
-                                 std::size_t buffer_size) {
+bool FormatIPv6(const std::array<std::uint8_t, 16>& address,
+                std::uint32_t scope_id, char* buffer,
+                std::size_t buffer_size) {
   if (buffer == nullptr || buffer_size < 46) {
     return false;
   }
@@ -110,7 +109,7 @@ bool SocketConstants::FormatIPv6(const std::array<std::uint8_t, 16>& address,
                    static_cast<socklen_t>(buffer_size)) != nullptr;
 }
 
-SocketAddress SocketConstants::FromString(const char* ip_string) {
+SocketAddress FromString(const char* ip_string) {
   std::uint32_t addr = 0;
   if (ParseIPv4(ip_string, addr)) {
     return SocketAddress::FromIPv4(addr);
@@ -125,8 +124,8 @@ SocketAddress SocketConstants::FromString(const char* ip_string) {
   return SocketAddress::FromIPv4(kIpV4Any);
 }
 
-SocketAddress SocketConstants::FromOctets(std::uint8_t a, std::uint8_t b,
-                                          std::uint8_t c, std::uint8_t d) {
+SocketAddress FromOctets(std::uint8_t a, std::uint8_t b, std::uint8_t c,
+                          std::uint8_t d) {
   std::uint32_t address = (static_cast<std::uint32_t>(a) << 24) |
                           (static_cast<std::uint32_t>(b) << 16) |
                           (static_cast<std::uint32_t>(c) << 8) |
@@ -135,8 +134,7 @@ SocketAddress SocketConstants::FromOctets(std::uint8_t a, std::uint8_t b,
   return SocketAddress::FromIPv4(address);
 }
 
-std::optional<SocketAddress> SocketConstants::TryFromString(
-  const char* ip_string) {
+std::optional<SocketAddress> TryFromString(const char* ip_string) {
   if (ip_string == nullptr) return std::nullopt;
 
   std::uint32_t addr = 0;
@@ -151,17 +149,17 @@ std::optional<SocketAddress> SocketConstants::TryFromString(
   return std::nullopt;
 }
 
-std::string SocketConstants::FormatIPv4String(std::uint32_t address) {
+std::string FormatIPv4String(std::uint32_t address) {
   char buf[16];
   if (!FormatIPv4(address, buf, sizeof(buf))) return {};
   return {buf};
 }
 
-std::string SocketConstants::FormatIPv6String(
-  const std::array<std::uint8_t, 16>& address, std::uint32_t scope_id) {
+std::string FormatIPv6String(const std::array<std::uint8_t, 16>& address,
+                             std::uint32_t scope_id) {
   char buf[46];
   if (!FormatIPv6(address, scope_id, buf, sizeof(buf))) return {};
   return {buf};
 }
 
-}  // namespace socketwire
+}  // namespace socketwire::SocketConstants

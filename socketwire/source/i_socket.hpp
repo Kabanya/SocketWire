@@ -20,8 +20,6 @@
 
 namespace socketwire {
 
-class BitStream;
-
 /// Error codes returned by socket operations.
 enum class SocketError : std::uint8_t {
   kNone = 0,
@@ -149,12 +147,6 @@ class ISocketEventHandler {
                               [[maybe_unused]] const void* data,
                               [[maybe_unused]] std::size_t bytes_read) {}
 
-  /// Called when a BitStream payload is read by implementations that support
-  /// it.
-  virtual void OnBitStreamReceived([[maybe_unused]] const SocketAddress& from,
-                                   [[maybe_unused]] std::uint16_t from_port,
-                                   [[maybe_unused]] BitStream& stream) {}
-
   /// Called on socket errors.
   virtual void OnSocketError([[maybe_unused]] SocketError error_code) {}
 
@@ -194,11 +186,6 @@ class ISocket {
                       const SocketAddress& to_addr, std::uint16_t to_port) {
     return SendTo(data.data(), data.size(), to_addr, to_port);
   }
-
-  /// Sends a BitStream payload.
-  virtual SocketResult SendBitStream(BitStream& stream,
-                                     const SocketAddress& to_addr,
-                                     std::uint16_t to_port);
 
   /// Receives data and fills the source address and port.
   virtual SocketResult Receive(void* buffer, std::size_t capacity,
@@ -242,23 +229,6 @@ class ISocket {
   /// Closes the socket.
   virtual void Close() = 0;
 };
-
-inline SocketResult ISocket::SendBitStream(BitStream& stream,
-                                           const SocketAddress& to_addr,
-                                           std::uint16_t to_port) {
-  extern const std::uint8_t* BitstreamAccessData(
-    const BitStream&);  // can be implemented via friend
-  extern std::size_t BitstreamAccessSize(const BitStream&);
-
-  const std::uint8_t* data_ptr = BitstreamAccessData(stream);
-  const std::size_t len = BitstreamAccessSize(stream);
-
-  if ((data_ptr == nullptr) || len == 0) {
-    return SocketResult{.bytes = 0, .error = SocketError::kInvalidParam};
-  }
-
-  return SendTo(data_ptr, len, to_addr, to_port);
-}
 
 /// Platform-dependent socket factory.
 class ISocketFactory {

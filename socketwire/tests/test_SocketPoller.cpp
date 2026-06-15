@@ -1,10 +1,10 @@
-// Tests for SocketPoller construction, registration, polling, and dispatch.
+// Tests for SocketPoller construction, registration, polling, and caller reads.
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -15,16 +15,6 @@
 #include "socket_poller.hpp"
 
 using namespace socketwire;  // NOLINT
-
-class MockSocketEventHandler : public ISocketEventHandler {
- public:
-  MOCK_METHOD(void, OnDataReceived,
-              (const SocketAddress& from, std::uint16_t from_port,
-               const void* data, std::size_t bytes_read),
-              (override));
-  MOCK_METHOD(void, OnSocketError, (SocketError error), (override));
-  MOCK_METHOD(void, OnSocketClosed, (), (override));
-};
 
 class SocketPollerTest : public ::testing::Test {
  protected:
@@ -144,22 +134,7 @@ TEST_F(SocketPollerTest, PollInfiniteTimeout) {
   EXPECT_TRUE(events.empty());
 }
 
-TEST_F(SocketPollerTest, DispatchReadableNoHandler) {
-  SocketPoller poller;
-  SocketEvent ev;
-  ev.readable = true;
-  poller.DispatchReadable(ev, nullptr);  // Should not crash
-}
-
-TEST_F(SocketPollerTest, DispatchReadableNoEvent) {
-  SocketPoller poller;
-  MockSocketEventHandler handler;
-  SocketEvent ev;
-  ev.readable = false;
-  poller.DispatchReadable(ev, &handler);  // Should not call anything
-}
-
-TEST_F(SocketPollerTest, DispatchReadableManyReceivesPacketsWithCallerStorage) {
+TEST_F(SocketPollerTest, CallerReceivesManyPacketsAfterReadiness) {
   auto sender_socket = CreateUdpSocket();
   auto receiver_socket = CreateUdpSocket();
   ASSERT_TRUE(sender_socket != nullptr);
@@ -189,11 +164,6 @@ TEST_F(SocketPollerTest, DispatchReadableManyReceivesPacketsWithCallerStorage) {
     datagrams[i].capacity = storage[i].size();
   }
 
-  MockSocketEventHandler handler;
-  EXPECT_CALL(handler,
-              OnDataReceived(testing::_, sender_port, testing::_, testing::_))
-    .Times(static_cast<int>(messages.size()));
-
   std::size_t received = 0;
   std::vector<SocketEvent> events;
   const auto deadline =
@@ -205,18 +175,16 @@ TEST_F(SocketPollerTest, DispatchReadableManyReceivesPacketsWithCallerStorage) {
     for (const SocketEvent& event : events) {
       EXPECT_EQ(event.socket, receiver_socket.get());
       EXPECT_TRUE(event.readable);
-      received += poller.DispatchReadableMany(event, &handler, datagrams);
+      const std::size_t batch_received = event.socket->ReceiveMany(datagrams);
+      for (std::size_t i = 0; i < batch_received; ++i) {
+        EXPECT_EQ(datagrams[i].fromPort, sender_port);
+        EXPECT_GT(datagrams[i].result.bytes, 0);
+      }
+      received += batch_received;
     }
   }
 
   EXPECT_EQ(received, messages.size());
-}
-
-TEST_F(SocketPollerTest, DispatchAllEmptyEvents) {
-  SocketPoller poller;
-  MockSocketEventHandler handler;
-  const std::vector<SocketEvent> events;
-  poller.DispatchAll(events, &handler);  // Should not crash
 }
 
 TEST_F(SocketPollerTest, BackendType) {
@@ -266,11 +234,13 @@ TEST_F(SocketPollerTest, IntegrationSendReceive) {
   EXPECT_TRUE(events.at(0).readable);
   EXPECT_EQ(events.at(0).socket, receiver_socket.get());
 
-  // Dispatch to handler
-  MockSocketEventHandler handler;
-  EXPECT_CALL(handler,
-              OnDataReceived(testing::_, sender_port, testing::_, data_size))
-    .Times(1);
-
-  poller.DispatchReadable(events.at(0), &handler);
+  std::array<char, 128> buffer{};
+  SocketAddress from;
+  std::uint16_t from_port = 0;
+  const SocketResult receive_result =
+    receiver_socket->Receive(buffer.data(), buffer.size(), from, from_port);
+  ASSERT_TRUE(receive_result.Succeeded());
+  EXPECT_EQ(from_port, sender_port);
+  EXPECT_EQ(receive_result.bytes, static_cast<std::ptrdiff_t>(data_size));
+  EXPECT_EQ(std::memcmp(buffer.data(), test_data, data_size), 0);
 }

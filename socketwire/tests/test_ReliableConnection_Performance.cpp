@@ -290,7 +290,7 @@ class ApplicationWorkloadServerHandler final
       auto response = BuildApplicationResponse(std::move(payload));
       ++processed;
       if (manager != nullptr) {
-        manager->BroadcastReliable(channel, response.data(), response.size());
+        BroadcastReliable(*manager, channel, response.data(), response.size());
       }
       return;
     }
@@ -308,8 +308,8 @@ class ApplicationWorkloadServerHandler final
           const bool queued = network_queue->Post(
             [this, channel, response = std::move(response)] {
               if (manager != nullptr) {
-                manager->BroadcastReliable(channel, response.data(),
-                                           response.size());
+                BroadcastReliable(*manager, channel, response.data(),
+                                  response.size());
               }
             });
           if (!queued) network_post_failed.store(true);
@@ -529,12 +529,16 @@ TEST_F(ReliableConnectionPerformanceTest, SmallPacketThroughput) {
 
   // Network thread
   std::atomic<bool> running{true};
+  TaskQueue network_queue;
   std::thread network_thread([&]() {
     while (running) {
+      network_queue.Drain();
       server_manager->Tick();
       client_conn->Tick();
+      network_queue.Drain();
       std::this_thread::yield();
     }
+    network_queue.Drain();
   });
 
   // Wait for connection
@@ -547,9 +551,16 @@ TEST_F(ReliableConnectionPerformanceTest, SmallPacketThroughput) {
   // Benchmark
   auto start_time = high_resolution_clock::now();
 
-  for (int i = 0; i < packet_count; i++) {
-    client_conn->SendReliable(0, test_data.data(), test_data.size());
-  }
+  std::atomic<int> sent{0};
+  ASSERT_TRUE(network_queue.Post([&] {
+    for (int i = 0; i < packet_count; i++) {
+      if (client_conn->SendReliable(0, test_data.data(), test_data.size())) {
+        ++sent;
+      }
+    }
+  }));
+  ASSERT_TRUE(SpinUntil([&] { return sent.load() == packet_count; },
+                        milliseconds(5000)));
 
   // Wait for all packets to be received
   EXPECT_TRUE(SpinUntil(
@@ -561,6 +572,9 @@ TEST_F(ReliableConnectionPerformanceTest, SmallPacketThroughput) {
 
   EXPECT_EQ(server_handler.reliableCount, packet_count)
     << "All packets should be received";
+
+  running = false;
+  network_thread.join();
 
   const double packets_per_sec =
     (packet_count * 1000.0) / static_cast<double>(duration);
@@ -580,8 +594,6 @@ TEST_F(ReliableConnectionPerformanceTest, SmallPacketThroughput) {
                    static_cast<double>(duration), packets_per_sec,
                    "packets/sec");
 
-  running = false;
-  network_thread.join();
 }
 
 TEST_F(ReliableConnectionPerformanceTest, MediumPacketThroughput) {
@@ -611,12 +623,16 @@ TEST_F(ReliableConnectionPerformanceTest, MediumPacketThroughput) {
   client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
 
   std::atomic<bool> running{true};
+  TaskQueue network_queue;
   std::thread network_thread([&]() {
     while (running) {
+      network_queue.Drain();
       server_manager->Tick();
       client_conn->Tick();
+      network_queue.Drain();
       std::this_thread::yield();
     }
+    network_queue.Drain();
   });
 
   ASSERT_TRUE(SpinUntil([&]() { return client_handler.connected.load(); },
@@ -626,9 +642,16 @@ TEST_F(ReliableConnectionPerformanceTest, MediumPacketThroughput) {
 
   auto start_time = high_resolution_clock::now();
 
-  for (int i = 0; i < packet_count; i++) {
-    client_conn->SendReliable(0, test_data.data(), test_data.size());
-  }
+  std::atomic<int> sent{0};
+  ASSERT_TRUE(network_queue.Post([&] {
+    for (int i = 0; i < packet_count; i++) {
+      if (client_conn->SendReliable(0, test_data.data(), test_data.size())) {
+        ++sent;
+      }
+    }
+  }));
+  ASSERT_TRUE(SpinUntil([&] { return sent.load() == packet_count; },
+                        milliseconds(5000)));
 
   EXPECT_TRUE(SpinUntil(
     [&]() { return server_handler.reliableCount.load() >= packet_count; },
@@ -638,6 +661,9 @@ TEST_F(ReliableConnectionPerformanceTest, MediumPacketThroughput) {
   auto duration = duration_cast<milliseconds>(end_time - start_time).count();
 
   EXPECT_EQ(server_handler.reliableCount, packet_count);
+
+  running = false;
+  network_thread.join();
 
   const double packets_per_sec =
     (packet_count * 1000.0) / static_cast<double>(duration);
@@ -657,8 +683,6 @@ TEST_F(ReliableConnectionPerformanceTest, MediumPacketThroughput) {
                    static_cast<double>(duration), packets_per_sec,
                    "packets/sec");
 
-  running = false;
-  network_thread.join();
 }
 
 TEST_F(ReliableConnectionPerformanceTest, LargePacketThroughput) {
@@ -688,12 +712,16 @@ TEST_F(ReliableConnectionPerformanceTest, LargePacketThroughput) {
   client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
 
   std::atomic<bool> running{true};
+  TaskQueue network_queue;
   std::thread network_thread([&]() {
     while (running) {
+      network_queue.Drain();
       server_manager->Tick();
       client_conn->Tick();
+      network_queue.Drain();
       std::this_thread::yield();
     }
+    network_queue.Drain();
   });
 
   // Wait for connection with timeout
@@ -711,9 +739,16 @@ TEST_F(ReliableConnectionPerformanceTest, LargePacketThroughput) {
   auto start_time = high_resolution_clock::now();
 
   // Send unreliable packets
-  for (int i = 0; i < packet_count; i++) {
-    client_conn->SendUnreliable(1, test_data.data(), test_data.size());
-  }
+  std::atomic<int> sent{0};
+  ASSERT_TRUE(network_queue.Post([&] {
+    for (int i = 0; i < packet_count; i++) {
+      if (client_conn->SendUnreliable(1, test_data.data(), test_data.size())) {
+        ++sent;
+      }
+    }
+  }));
+  ASSERT_TRUE(SpinUntil([&] { return sent.load() == packet_count; },
+                        milliseconds(5000)));
 
   const bool all_unreliable_received = SpinUntil(
     [&]() { return server_handler.unreliableCount.load() >= packet_count; },
@@ -792,14 +827,18 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionScalability) {
   }
 
   std::atomic<bool> running{true};
+  TaskQueue network_queue;
   std::thread network_thread([&]() {
     while (running) {
+      network_queue.Drain();
       server_manager->Tick();
       for (const auto& client_conn : client_conns) {
         client_conn->Tick();
       }
+      network_queue.Drain();
       std::this_thread::yield();
     }
+    network_queue.Drain();
   });
 
   // Wait for all connections
@@ -817,14 +856,22 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionScalability) {
 
   // Each client sends messages
   std::vector<std::uint8_t> test_data(100, 0x42);
-  for (const auto& client_conn : client_conns) {
-    for (int j = 0; j < messages_per_client; j++) {
-      client_conn->SendReliable(0, test_data.data(), test_data.size());
+  std::atomic<int> sent{0};
+  ASSERT_TRUE(network_queue.Post([&] {
+    for (const auto& client_conn : client_conns) {
+      for (int j = 0; j < messages_per_client; j++) {
+        if (client_conn->SendReliable(0, test_data.data(), test_data.size())) {
+          ++sent;
+        }
+      }
     }
-  }
+  }));
 
   // Wait for all messages
   const uint32_t expected_total = num_clients * messages_per_client;
+  ASSERT_TRUE(SpinUntil(
+    [&]() { return sent.load() >= static_cast<int>(expected_total); },
+    milliseconds(5000)));
   EXPECT_TRUE(SpinUntil(
     [&]() { return server_handler.reliableCount.load() >= expected_total; },
     milliseconds(10000)));

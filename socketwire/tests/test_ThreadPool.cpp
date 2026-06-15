@@ -62,8 +62,8 @@ class AsyncEchoServerHandler final : public IReliableConnectionHandler {
           network_queue_.Post([this, channel, payload = std::move(payload)] {
             network_tasks.fetch_add(1);
             if (manager != nullptr) {
-              manager->BroadcastReliable(channel, payload.data(),
-                                         payload.size());
+              BroadcastReliable(*manager, channel, payload.data(),
+                                payload.size());
             }
           });
         if (!queued) network_post_failed.store(true);
@@ -250,7 +250,7 @@ class EchoAndCountServerHandler final : public IReliableConnectionHandler {
   void OnReliableReceived(std::uint8_t channel, const void* data,
                           std::size_t size) override {
     reliable_received.fetch_add(1);
-    if (manager != nullptr) manager->BroadcastReliable(channel, data, size);
+    if (manager != nullptr) BroadcastReliable(*manager, channel, data, size);
   }
 
   void OnUnreliableReceived(std::uint8_t channel, const void* data,
@@ -435,7 +435,7 @@ TEST(HandlerDispatchTest, CallbacksRunInline) {
   ThreadRecordingHandler handler(std::this_thread::get_id());
   conn.SetHandler(&handler);
   conn.SetRemoteAddress(SocketAddress::FromIPv4(0x7F000001), 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   const std::array<std::uint8_t, 4> payload{1, 2, 3, 4};
   const auto packet = MakeReliablePacket(0, payload.data(), payload.size());

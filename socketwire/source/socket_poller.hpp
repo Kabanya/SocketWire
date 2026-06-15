@@ -6,7 +6,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -76,9 +75,8 @@ struct SocketPollerConfig {
 /// Abstraction over epoll, kqueue, select, and WSAPoll.
 ///
 /// Threading contract: SocketPoller is owned by one event-loop thread. Add,
-/// remove, poll, and dispatch calls must be serialized by the caller. Cross-thread
-/// socket changes should be posted into that owner loop, for example via
-/// TaskQueue.
+/// remove, and poll calls must be serialized by the caller. Cross-thread socket
+/// changes should be posted into that owner loop, for example via TaskQueue.
 class SocketPoller {
  public:
   explicit SocketPoller(const SocketPollerConfig& cfg = {});
@@ -103,20 +101,6 @@ class SocketPoller {
   ///
   /// Reusing the same vector across ticks avoids hot-loop allocations.
   void PollInto(std::vector<SocketEvent>& events, int timeout_ms);
-
-  /// Dispatches a readable event to an ISocketEventHandler.
-  void DispatchReadable(const SocketEvent& ev, ISocketEventHandler* handler);
-  /// Dispatches readable datagrams using caller-owned batch storage.
-  ///
-  /// Each IncomingDatagram must provide data/capacity storage. The method
-  /// drains until ReceiveMany returns fewer datagrams than requested.
-  std::size_t DispatchReadableMany(const SocketEvent& ev,
-                                   ISocketEventHandler* handler,
-                                   std::span<IncomingDatagram> datagrams);
-
-  /// Dispatches all events to an ISocketEventHandler.
-  void DispatchAll(const std::vector<SocketEvent>& events,
-                   ISocketEventHandler* handler);
 
   [[nodiscard]] PollBackend BackendType() const;
 

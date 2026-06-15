@@ -22,4 +22,6 @@ target_link_libraries(SocketWireTests
     GTest::gmock
 )
 
+target_compile_definitions(SocketWireTests PRIVATE SOCKETWIRE_TESTING=1)
+
 gtest_discover_tests(SocketWireTests)

@@ -548,8 +548,8 @@ class ScenarioRunner {
     server_connection_->SetHandler(&server_handler_);
     client_connection_->SetRemoteAddress(loopback, kServerPort);
     server_connection_->SetRemoteAddress(loopback, kClientPort);
-    client_connection_->SetConnected();
-    server_connection_->SetConnected();
+    client_connection_->SetConnectedForTest();
+    server_connection_->SetConnectedForTest();
   }
 
   bool SendReliableFromClient(std::uint8_t channel, std::size_t body_size) {
@@ -1003,7 +1003,7 @@ TEST(ReliableConnectionNetworkProfiles,
   ReliableConnection connection(&socket, config);
   connection.SetHandler(&handler);
   connection.SetRemoteAddress(addr, 33001);
-  connection.SetConnected();
+  connection.SetConnectedForTest();
 
   const std::array<std::uint8_t, 2> too_short{1, 0};
   const std::array<std::uint8_t, 6> invalid_type{100, 0, 0, 0, 0, 0};

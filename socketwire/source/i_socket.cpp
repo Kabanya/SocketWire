@@ -2,17 +2,7 @@
 
 #include <atomic>
 
-#include "bit_stream.hpp"
-
 namespace socketwire {
-
-const std::uint8_t* BitstreamAccessData(const BitStream& bs) {
-  return bs.GetData();
-}
-
-std::size_t BitstreamAccessSize(const BitStream& bs) {
-  return bs.GetSizeBytes();
-}
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static std::atomic<ISocketFactory*> g_factory_instance{nullptr};

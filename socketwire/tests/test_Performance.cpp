@@ -484,44 +484,6 @@ TEST_F(PerformanceTest, SocketPollerPollWithSockets) {
   SUCCEED();
 }
 
-TEST_F(PerformanceTest, SocketPollerDispatchEvents) {
-  const int iterations = 100000 * kMultiplier;
-
-  std::cout << "SocketPoller Dispatch Events Performance:\n";
-
-  // Simple event handler that does nothing
-  class DummyHandler : public ISocketEventHandler {
-   public:
-    void OnDataReceived(const SocketAddress&, std::uint16_t, const void*,
-                        std::size_t) override {}
-    void OnSocketError(SocketError) override {}
-    void OnSocketClosed() override {}
-  };
-
-  DummyHandler handler;
-  SocketPoller poller;
-
-  // Create a socket and add to poller
-  const SocketConfig config;
-  auto socket = factory->CreateUdpSocket(config);
-  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
-  socket->Bind(addr, 0);
-  poller.AddSocket(socket.get(), false);
-
-  // Create dummy events
-  std::vector<SocketEvent> events;
-  SocketEvent ev;
-  ev.socket = socket.get();
-  ev.readable = true;
-  events.push_back(ev);
-
-  MeasureTime(
-    "Dispatch " + std::to_string(iterations) + " events", iterations,
-    [&poller, &events, &handler]() { poller.DispatchAll(events, &handler); });
-
-  SUCCEED();
-}
-
 TEST_F(PerformanceTest, SocketPollerIntegrationSendReceive) {
   const int iterations = 10000 * kMultiplier;
 
@@ -544,19 +506,8 @@ TEST_F(PerformanceTest, SocketPollerIntegrationSendReceive) {
   const char* message = "Perf test message";
   const size_t message_len = strlen(message);
 
-  // Handler to count received messages
-  class CountingHandler : public ISocketEventHandler {
-   public:
-    int count = 0;
-    void OnDataReceived(const SocketAddress&, std::uint16_t, const void*,
-                        std::size_t) override {
-      ++count;
-    }
-    void OnSocketError(SocketError) override {}
-    void OnSocketClosed() override {}
-  };
-
-  CountingHandler handler;
+  int received_count = 0;
+  std::array<char, 256> buffer{};
 
   MeasureTime(
     "Single-message send/poll/receive " + std::to_string(iterations) +
@@ -565,14 +516,18 @@ TEST_F(PerformanceTest, SocketPollerIntegrationSendReceive) {
       // Send message
       sender->SendTo(message, message_len, addr, receiver_port);
 
-      // Poll and dispatch
+      // Poll and let the caller drain the readable socket.
       poller.PollInto(events, 10);  // Short timeout
       if (!events.empty()) {
-        poller.DispatchReadable(events.front(), &handler);
+        SocketAddress from;
+        std::uint16_t from_port = 0;
+        const SocketResult result =
+          receiver->Receive(buffer.data(), buffer.size(), from, from_port);
+        if (result.Succeeded() && result.bytes > 0) ++received_count;
       }
     });
 
-  std::cout << "  Total messages received: " << handler.count << "\n";
+  std::cout << "  Total messages received: " << received_count << "\n";
 
   SUCCEED();
 }
@@ -603,18 +558,7 @@ TEST_F(PerformanceTest, SocketPollerFrameStyleThroughput) {
   SocketPoller poller;
   ASSERT_TRUE(poller.AddSocket(receiver.get(), false));
 
-  class CountingHandler : public ISocketEventHandler {
-   public:
-    int count = 0;
-    void OnDataReceived(const SocketAddress&, std::uint16_t, const void*,
-                        std::size_t) override {
-      ++count;
-    }
-    void OnSocketError(SocketError) override {}
-    void OnSocketClosed() override {}
-  };
-
-  CountingHandler handler;
+  int received_count = 0;
   std::vector<SocketEvent> events;
   std::vector<std::uint8_t> scratch_storage(kScratchDatagrams *
                                             kPacketCapacity);
@@ -629,7 +573,7 @@ TEST_F(PerformanceTest, SocketPollerFrameStyleThroughput) {
 
   const auto start = std::chrono::high_resolution_clock::now();
   for (int frame = 0; frame < kFrames; ++frame) {
-    const int frame_target = handler.count + kMessagesPerFrame;
+    const int frame_target = received_count + kMessagesPerFrame;
     for (int i = 0; i < kMessagesPerFrame; ++i) {
       std::memcpy(message.data() + 32, &frame, sizeof(frame));
       std::memcpy(message.data() + 40, &i, sizeof(i));
@@ -640,12 +584,11 @@ TEST_F(PerformanceTest, SocketPollerFrameStyleThroughput) {
 
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::milliseconds(500);
-    while (handler.count < frame_target) {
+    while (received_count < frame_target) {
       poller.PollInto(events, 100);
       for (const auto& event : events) {
-        poller.DispatchReadableMany(
-          event, &handler,
-          std::span<IncomingDatagram>(datagrams.data(), datagrams.size()));
+        received_count += static_cast<int>(event.socket->ReceiveMany(
+          std::span<IncomingDatagram>(datagrams.data(), datagrams.size())));
       }
       if (std::chrono::steady_clock::now() >= deadline) break;
     }
@@ -656,12 +599,12 @@ TEST_F(PerformanceTest, SocketPollerFrameStyleThroughput) {
     std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
   const double duration_ms = static_cast<double>(duration_us) / 1000.0;
   const double messages_per_sec =
-    (static_cast<double>(handler.count) * 1000000.0) /
+    (static_cast<double>(received_count) * 1000000.0) /
     static_cast<double>(duration_us);
 
   std::cout << "  Frames: " << kFrames << "\n"
             << "  Messages per frame: " << kMessagesPerFrame << "\n"
-            << "  Total messages received: " << handler.count << "\n"
+            << "  Total messages received: " << received_count << "\n"
             << "  Total time: " << duration_ms << " ms\n"
             << "  Throughput: " << static_cast<int>(messages_per_sec)
             << " messages/sec\n";
@@ -670,5 +613,5 @@ TEST_F(PerformanceTest, SocketPollerFrameStyleThroughput) {
                      std::to_string(kTotalMessages) + " messages",
                    duration_ms, messages_per_sec, "messages/sec");
 
-  EXPECT_EQ(handler.count, kTotalMessages);
+  EXPECT_EQ(received_count, kTotalMessages);
 }

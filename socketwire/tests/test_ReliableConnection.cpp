@@ -166,11 +166,6 @@ class MockSocket : public ISocket {
             .error = SocketError::kNone};
   }
 
-  SocketResult SendBitStream(BitStream& stream, const SocketAddress& to_addr,
-                             uint16_t to_port) override {
-    return SendTo(stream.GetData(), stream.GetSizeBytes(), to_addr, to_port);
-  }
-
   SocketResult Receive(void* buffer, std::size_t capacity,
                        SocketAddress& from_addr, uint16_t& from_port) override {
     if (shouldBlock || receiveQueue.empty()) {
@@ -409,7 +404,7 @@ TEST_F(ReliableConnectionTest, SendReliablePacket) {
   // Set connected state
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   socket.ClearSent();
 
@@ -433,7 +428,7 @@ TEST_F(ReliableConnectionTest, SendUnreliablePacket) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   socket.ClearSent();
 
@@ -450,7 +445,7 @@ TEST_F(ReliableConnectionTest, SendWithBitStream) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   socket.ClearSent();
 
@@ -472,7 +467,7 @@ TEST_F(ReliableConnectionTest, ReceiveReliablePacket) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   const char* payload = "Test payload";
   const auto packet =
@@ -502,7 +497,7 @@ TEST_F(ReliableConnectionTest, ReceiveUnreliablePacket) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   const char* payload = "Unreliable payload";
   const auto packet =
@@ -525,7 +520,7 @@ TEST_F(ReliableConnectionTest, BatchPacketDeliversMultipleCommands) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   const auto first = MakeBasePacket(PacketType::kUnreliable, 0, 0, "one", 3);
   const auto second = MakeBasePacket(PacketType::kUnreliable, 0, 0, "two", 3);
@@ -548,7 +543,7 @@ TEST_F(ReliableConnectionTest, BatchPacketRejectsMalformedPayload) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   const std::vector<std::uint8_t> payload = {
     0, 2, 0, static_cast<std::uint8_t>(kBaseHeaderSize)};
@@ -567,7 +562,7 @@ TEST_F(ReliableConnectionTest, AckPiggybacksOnNextApplicationPacket) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   const auto inbound = MakeBasePacket(PacketType::kReliable, 0, 0, "in", 2);
   const auto second_inbound =
@@ -618,7 +613,7 @@ TEST_F(ReliableConnectionTest, PacketSequencing) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   // Send packets out of order
   auto create_packet = [](std::uint32_t seq,
@@ -666,7 +661,7 @@ TEST_F(ReliableConnectionTest, DuplicateDetection) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   const auto packet = MakeBasePacket(PacketType::kReliable, 0, 0, "Test", 4);
 
@@ -690,7 +685,7 @@ TEST_F(ReliableConnectionTest, AcknowledgmentReceived) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   socket.ClearSent();
 
@@ -727,7 +722,7 @@ TEST_F(ReliableConnectionTest, AcknowledgmentMatchesChannelAndSequence) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   socket.ClearSent();
   ASSERT_TRUE(conn.SendReliable(0, "zero", 4));
@@ -774,7 +769,7 @@ TEST_F(ReliableConnectionTest, Disconnect) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   EXPECT_TRUE(conn.IsConnected());
   EXPECT_FALSE(handler.disconnected);
@@ -793,7 +788,7 @@ TEST_F(ReliableConnectionTest, ReceiveDisconnect) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   EXPECT_FALSE(handler.disconnected);
 
@@ -810,7 +805,7 @@ TEST_F(ReliableConnectionTest, Statistics) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   const std::uint32_t initial_sent = conn.GetSentPackets();
   const std::uint32_t initial_received = conn.GetReceivedPackets();
@@ -833,7 +828,7 @@ TEST_F(ReliableConnectionTest, PingPong) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   socket.ClearSent();
 
@@ -857,7 +852,7 @@ TEST_F(ReliableConnectionTest, RTTMeasurement) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   const float initial_rtt = conn.GetRtt();
   EXPECT_GT(initial_rtt, 0.0f) << "RTT should have initial value";
@@ -882,7 +877,7 @@ TEST_F(ReliableConnectionTest, MaxPacketSizeLimit) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   // A payload larger than maxPacketSize should be transparently fragmented, not
   // rejected
@@ -906,7 +901,7 @@ TEST_F(ReliableConnectionTest, MultipleChannels) {
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   socket.ClearSent();
 
@@ -935,7 +930,7 @@ TEST_F(ReliableConnectionTest, SendWithoutDeadlineUsesBaseHeader) {
   ReliableConnection conn(&socket, config);
   auto addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   socket.ClearSent();
   ASSERT_TRUE(conn.SendUnreliable(0, "abc", 3));
@@ -954,7 +949,7 @@ TEST_F(ReliableConnectionTest, DeadlineSendDisabledIsRejected) {
   ReliableConnection conn(&socket, config);
   auto addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   socket.ClearSent();
   EXPECT_FALSE(conn.SendReliableWithDeadline(0, "abc", 3, 50));
@@ -968,7 +963,7 @@ TEST_F(ReliableConnectionTest, DeadlineSendWritesExtendedHeader) {
   ReliableConnection conn(&socket, config);
   auto addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   socket.ClearSent();
   ASSERT_TRUE(conn.SendUnreliableWithDeadline(1, "xyz", 3, 75));
@@ -993,7 +988,7 @@ TEST_F(ReliableConnectionTest, ExpiredReliableAndUnsequencedStopRetrying) {
   ReliableConnection conn(&socket, config);
   auto addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   socket.ClearSent();
   ASSERT_TRUE(conn.SendReliableWithDeadline(0, "rel", 3, 10));
@@ -1016,7 +1011,7 @@ TEST_F(ReliableConnectionTest, ExpiredReliableStyleReceiveIsAckedAndDropped) {
   conn.SetHandler(&handler);
   auto addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   const auto reliable =
     MakeDeadlinePacket(PacketType::kReliable, 0, 0, 10, 10, "rel", 3);
@@ -1071,7 +1066,7 @@ TEST_F(ReliableConnectionTest, ExpiredUnreliableReceiveIsDroppedWithoutAck) {
   conn.SetHandler(&handler);
   auto addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   const auto packet =
     MakeDeadlinePacket(PacketType::kUnreliable, 0, 0, 10, 10, "abc", 3);
@@ -1091,7 +1086,7 @@ TEST_F(ReliableConnectionTest, FragmentGroupExpiresByDeadline) {
   conn.SetHandler(&handler);
   auto addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   std::uint16_t group_id = 3;
   std::uint16_t frag_index = 0;
@@ -1185,7 +1180,7 @@ TEST_F(ConnectionManagerTest, BroadcastReliable) {
 
   // Broadcast
   const char* broadcast_data = "Broadcast message";
-  manager.BroadcastReliable(0, broadcast_data, strlen(broadcast_data));
+  BroadcastReliable(manager, 0, broadcast_data, strlen(broadcast_data));
 
   // Should send to all connected clients
   EXPECT_GE(socket.GetSentCount(), 2) << "Should send to multiple clients";
@@ -1202,7 +1197,7 @@ TEST_F(ConnectionManagerTest, BroadcastUnreliable) {
 
   socket.ClearSent();
 
-  manager.BroadcastUnreliable(0, "Test", 4);
+  BroadcastUnreliable(manager, 0, "Test", 4);
 
   EXPECT_GT(socket.GetSentCount(), 0) << "Should send broadcast";
 }
@@ -1250,7 +1245,7 @@ TEST_F(ReliableConnectionTest, UnknownPacketTypeIsIgnored) {
   ReliableConnection conn(&socket, config);
   auto addr = SocketAddress::FromIPv4(0x7F000001);
   conn.SetRemoteAddress(addr, 12345);
-  conn.SetConnected();
+  conn.SetConnectedForTest();
 
   auto packet = MakeBasePacket(PacketType::kUnreliable, 0, 0);
   packet.at(3) = 100;  // invalid type in the v2 header

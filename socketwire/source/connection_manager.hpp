@@ -44,11 +44,6 @@ class ConnectionManager {
   void ProcessPacket(const void* data, std::size_t size,
                      const SocketAddress& from, std::uint16_t from_port);
 
-  void BroadcastReliable(std::uint8_t channel, const void* data,
-                         std::size_t size);
-  void BroadcastUnreliable(std::uint8_t channel, const void* data,
-                           std::size_t size);
-
   std::vector<RemoteClient*> GetConnections();
   RemoteClient* GetConnection(const SocketAddress& addr, std::uint16_t port);
 
@@ -121,5 +116,10 @@ class ConnectionManager {
   void EmitClientConnected(RemoteClient* client);
   std::unordered_map<RemoteClient*, bool> connected_notified_;
 };
+
+void BroadcastReliable(ConnectionManager& manager, std::uint8_t channel,
+                       const void* data, std::size_t size);
+void BroadcastUnreliable(ConnectionManager& manager, std::uint8_t channel,
+                         const void* data, std::size_t size);
 
 }  // namespace socketwire

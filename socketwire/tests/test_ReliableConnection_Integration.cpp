@@ -8,6 +8,7 @@
 #include "i_socket.hpp"
 #include "reliable_connection.hpp"
 #include "socket_init.hpp"
+#include "task_queue.hpp"
 
 using namespace std::chrono_literals;
 using namespace socketwire;  // NOLINT
@@ -36,7 +37,7 @@ class EchoServerHandler : public IReliableConnectionHandler {
 
     // Echo back to all clients
     if (manager != nullptr) {
-      manager->BroadcastReliable(channel, data, size);
+      BroadcastReliable(*manager, channel, data, size);
     }
   }
 
@@ -46,7 +47,7 @@ class EchoServerHandler : public IReliableConnectionHandler {
 
     // Echo back unreliable
     if (manager != nullptr) {
-      manager->BroadcastUnreliable(channel, data, size);
+      BroadcastUnreliable(*manager, channel, data, size);
     }
   }
 };
@@ -142,10 +143,13 @@ TEST_F(IntegrationTest, ClientServerConnect) {
 
   // Run network loop
   std::atomic<bool> running{true};
+  TaskQueue network_queue;
   std::thread network_thread([&]() {
     char buffer[2048];
 
     while (running) {
+      network_queue.Drain();
+
       // Server receive
       while (true) {
         SocketAddress from;
@@ -176,9 +180,11 @@ TEST_F(IntegrationTest, ClientServerConnect) {
 
       server_manager->Update();
       client_conn->Update();
+      network_queue.Drain();
 
       std::this_thread::sleep_for(10ms);
     }
+    network_queue.Drain();
   });
 
   // Wait for connection
@@ -188,11 +194,11 @@ TEST_F(IntegrationTest, ClientServerConnect) {
 
   EXPECT_TRUE(client_handler.connected) << "Client should connect to server";
 
-  auto connections = server_manager->GetConnections();
-  EXPECT_EQ(connections.size(), 1) << "Server should have one client";
-
   running = false;
   network_thread.join();
+
+  auto connections = server_manager->GetConnections();
+  EXPECT_EQ(connections.size(), 1) << "Server should have one client";
 }
 
 TEST_F(IntegrationTest, ClientServerReliableMessage) {
@@ -232,10 +238,13 @@ TEST_F(IntegrationTest, ClientServerReliableMessage) {
 
   // Network loop
   std::atomic<bool> running{true};
+  TaskQueue network_queue;
   std::thread network_thread([&]() {
     char buffer[2048];
 
     while (running) {
+      network_queue.Drain();
+
       while (true) {
         SocketAddress from;
         uint16_t from_port = 0;
@@ -262,8 +271,10 @@ TEST_F(IntegrationTest, ClientServerReliableMessage) {
 
       server_manager->Update();
       client_conn->Update();
+      network_queue.Drain();
       std::this_thread::sleep_for(10ms);
     }
+    network_queue.Drain();
   });
 
   // Wait for connection
@@ -275,7 +286,17 @@ TEST_F(IntegrationTest, ClientServerReliableMessage) {
 
   // Send message
   const char* test_message = "Hello, Server!";
-  client_conn->SendReliable(0, test_message, strlen(test_message));
+  std::atomic<bool> send_done{false};
+  std::atomic<bool> send_ok{false};
+  ASSERT_TRUE(network_queue.Post([&] {
+    send_ok = client_conn->SendReliable(0, test_message, strlen(test_message));
+    send_done = true;
+  }));
+  for (int i = 0; i < 50 && !send_done; i++) {
+    std::this_thread::sleep_for(10ms);
+  }
+  ASSERT_TRUE(send_done);
+  ASSERT_TRUE(send_ok);
 
   // Wait for echo
   for (int i = 0; i < 50 && client_handler.reliableReceived == 0; i++) {
@@ -326,9 +347,12 @@ TEST_F(IntegrationTest, ClientServerMultipleMessages) {
   client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
 
   std::atomic<bool> running{true};
+  TaskQueue network_queue;
   std::thread network_thread([&]() {
     char buffer[2048];
     while (running) {
+      network_queue.Drain();
+
       SocketAddress from;
       uint16_t from_port = 0;
 
@@ -354,8 +378,10 @@ TEST_F(IntegrationTest, ClientServerMultipleMessages) {
 
       server_manager->Update();
       client_conn->Update();
+      network_queue.Drain();
       std::this_thread::sleep_for(10ms);
     }
+    network_queue.Drain();
   });
 
   // Wait for connection
@@ -366,11 +392,18 @@ TEST_F(IntegrationTest, ClientServerMultipleMessages) {
 
   // Send multiple messages
   const int message_count = 10;
+  std::atomic<int> sent{0};
   for (int i = 0; i < message_count; i++) {
     const std::string msg = "Message #" + std::to_string(i);
-    client_conn->SendReliable(0, msg.c_str(), msg.length());
+    ASSERT_TRUE(network_queue.Post([&, msg] {
+      if (client_conn->SendReliable(0, msg.c_str(), msg.length())) ++sent;
+    }));
     std::this_thread::sleep_for(20ms);
   }
+  for (int i = 0; i < 100 && sent < message_count; i++) {
+    std::this_thread::sleep_for(10ms);
+  }
+  ASSERT_EQ(sent, message_count);
 
   // Wait for all echoes
   for (int i = 0; i < 100 && client_handler.reliableReceived < message_count;
@@ -412,9 +445,12 @@ TEST_F(IntegrationTest, ClientServerUnreliableMessages) {
   client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
 
   std::atomic<bool> running{true};
+  TaskQueue network_queue;
   std::thread network_thread([&]() {
     char buffer[2048];
     while (running) {
+      network_queue.Drain();
+
       SocketAddress from;
       uint16_t from_port = 0;
 
@@ -440,8 +476,10 @@ TEST_F(IntegrationTest, ClientServerUnreliableMessages) {
 
       server_manager->Update();
       client_conn->Update();
+      network_queue.Drain();
       std::this_thread::sleep_for(10ms);
     }
+    network_queue.Drain();
   });
 
   // Wait for connection
@@ -452,10 +490,17 @@ TEST_F(IntegrationTest, ClientServerUnreliableMessages) {
 
   // Send unreliable messages
   const char* msg = "Unreliable snapshot";
+  std::atomic<int> sent{0};
   for (int i = 0; i < 5; i++) {
-    client_conn->SendUnreliable(1, msg, strlen(msg));
+    ASSERT_TRUE(network_queue.Post([&] {
+      if (client_conn->SendUnreliable(1, msg, strlen(msg))) ++sent;
+    }));
     std::this_thread::sleep_for(30ms);
   }
+  for (int i = 0; i < 50 && sent < 5; i++) {
+    std::this_thread::sleep_for(10ms);
+  }
+  ASSERT_EQ(sent, 5);
 
   // Give time for processing
   std::this_thread::sleep_for(300ms);
@@ -509,9 +554,12 @@ TEST_F(IntegrationTest, MultipleClients) {
 
   // Network loop
   std::atomic<bool> running{true};
+  TaskQueue network_queue;
   std::thread network_thread([&]() {
     char buffer[2048];
     while (running) {
+      network_queue.Drain();
+
       SocketAddress from;
       uint16_t from_port = 0;
 
@@ -538,8 +586,10 @@ TEST_F(IntegrationTest, MultipleClients) {
         client_conns.at(i)->Update();
       }
       server_manager->Update();
+      network_queue.Drain();
       std::this_thread::sleep_for(10ms);
     }
+    network_queue.Drain();
   });
 
   // Wait for all clients to connect
@@ -557,15 +607,31 @@ TEST_F(IntegrationTest, MultipleClients) {
 
   EXPECT_TRUE(all_connected) << "All clients should connect";
 
-  auto connections = server_manager->GetConnections();
-  EXPECT_EQ(connections.size(), num_clients)
+  std::atomic<int> connection_count{-1};
+  ASSERT_TRUE(network_queue.Post([&] {
+    connection_count =
+      static_cast<int>(server_manager->GetConnections().size());
+  }));
+  for (int i = 0; i < 50 && connection_count < 0; i++) {
+    std::this_thread::sleep_for(10ms);
+  }
+  ASSERT_EQ(connection_count, num_clients)
     << "Server should have " << num_clients << " clients";
 
   // Each client sends a message
+  std::atomic<int> sent{0};
   for (size_t i = 0; i < client_conns.size(); i++) {
     const std::string msg = "Client " + std::to_string(i);
-    client_conns.at(i)->SendReliable(0, msg.c_str(), msg.length());
+    ASSERT_TRUE(network_queue.Post([&, i, msg] {
+      if (client_conns.at(i)->SendReliable(0, msg.c_str(), msg.length())) {
+        ++sent;
+      }
+    }));
   }
+  for (int i = 0; i < 100 && sent < num_clients; i++) {
+    std::this_thread::sleep_for(10ms);
+  }
+  ASSERT_EQ(sent, num_clients);
 
   // Wait for broadcasts
   std::this_thread::sleep_for(1s);
@@ -607,9 +673,12 @@ TEST_F(IntegrationTest, ClientDisconnect) {
   client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
 
   std::atomic<bool> running{true};
+  TaskQueue network_queue;
   std::thread network_thread([&]() {
     char buffer[2048];
     while (running) {
+      network_queue.Drain();
+
       SocketAddress from;
       uint16_t from_port = 0;
 
@@ -635,8 +704,10 @@ TEST_F(IntegrationTest, ClientDisconnect) {
 
       server_manager->Update();
       client_conn->Update();
+      network_queue.Drain();
       std::this_thread::sleep_for(10ms);
     }
+    network_queue.Drain();
   });
 
   // Wait for connection
@@ -646,14 +717,22 @@ TEST_F(IntegrationTest, ClientDisconnect) {
   ASSERT_TRUE(client_handler.connected);
 
   // Disconnect
-  client_conn->Disconnect();
+  std::atomic<bool> disconnect_done{false};
+  ASSERT_TRUE(network_queue.Post([&] {
+    client_conn->Disconnect();
+    disconnect_done = true;
+  }));
+  for (int i = 0; i < 50 && !disconnect_done; i++) {
+    std::this_thread::sleep_for(10ms);
+  }
+  ASSERT_TRUE(disconnect_done);
 
   // Wait for disconnection
   std::this_thread::sleep_for(500ms);
 
-  EXPECT_TRUE(client_handler.disconnected) << "Client should be disconnected";
-  EXPECT_FALSE(client_conn->IsConnected());
-
   running = false;
   network_thread.join();
+
+  EXPECT_TRUE(client_handler.disconnected) << "Client should be disconnected";
+  EXPECT_FALSE(client_conn->IsConnected());
 }
