@@ -46,10 +46,12 @@ class ThreadPool {
 
   mutable std::mutex mutex_;
   std::condition_variable task_cv_;
+  std::condition_variable join_cv_;
   std::deque<Task> tasks_;
   std::vector<std::thread> workers_;
   bool started_ = false;
   bool accepting_ = false;
+  bool joining_ = false;
 };
 
 }  // namespace socketwire

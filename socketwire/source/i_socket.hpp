@@ -274,6 +274,10 @@ class ISocketFactory {
 };
 
 /// Global access to the registered socket factory.
+///
+/// Threading/lifetime contract: SetFactory is intended for process startup.
+/// Registered factories must outlive all concurrent GetFactory users; built-in
+/// factories satisfy this by using function-local statics.
 class SocketFactoryRegistry {
  public:
   static void SetFactory(ISocketFactory* factory);

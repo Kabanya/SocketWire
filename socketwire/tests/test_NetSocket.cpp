@@ -3,6 +3,8 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <thread>
@@ -14,6 +16,23 @@
 using namespace socketwire;  // NOLINT
 
 namespace {
+
+TEST(SocketInitTest, ConcurrentInitializeSockets) {
+  std::atomic<bool> start{false};
+  std::array<std::thread, 8> threads;
+
+  for (auto& thread : threads) {
+    thread = std::thread([&] {
+      while (!start.load()) std::this_thread::yield();
+      InitializeSockets();
+    });
+  }
+
+  start.store(true);
+  for (auto& thread : threads) thread.join();
+
+  EXPECT_NE(SocketFactoryRegistry::GetFactory(), nullptr);
+}
 
 class MockEventHandler : public ISocketEventHandler {
  public:

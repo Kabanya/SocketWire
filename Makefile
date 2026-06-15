@@ -3,7 +3,7 @@ BUILD_TYPE ?= Debug
 CMAKE ?= cmake
 CTEST ?= ctest
 TSAN_BUILD_DIR ?= build-tsan
-TSAN_FILTER ?= ThreadPoolTest.*:TaskQueueTest.*:HandlerDispatchTest.*:ThreadPoolIntegrationTest.*
+TSAN_FILTER ?= SocketInitTest.*:ThreadPoolTest.*:TaskQueueTest.*:HandlerDispatchTest.*:ThreadPoolIntegrationTest.*
 TSAN_OPTIONS ?= halt_on_error=1
 NETEM_SCRIPT ?= socketwire/tests/socketwire_netem.sh
 NETEM_PROFILE ?= bad_wifi

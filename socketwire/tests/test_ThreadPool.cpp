@@ -325,6 +325,44 @@ TEST(ThreadPoolTest, StopWaitsForActiveTasks) {
   EXPECT_TRUE(completed.load());
 }
 
+TEST(ThreadPoolTest, ConcurrentStopIsSerialized) {
+  ThreadPool pool(4);
+  std::atomic<int> started{0};
+  std::atomic<bool> release{false};
+
+  pool.Start();
+  for (int i = 0; i < 4; ++i) {
+    EXPECT_TRUE(pool.Submit([&] {
+      started.fetch_add(1);
+      while (!release.load()) std::this_thread::yield();
+    }));
+  }
+  ASSERT_TRUE(WaitUntil([&] { return started.load() == 4; }, 1s));
+
+  std::array<std::thread, 4> stoppers;
+  for (auto& stopper : stoppers) {
+    stopper = std::thread([&] { pool.Stop(); });
+  }
+  release.store(true);
+  for (auto& stopper : stoppers) stopper.join();
+
+  EXPECT_FALSE(pool.Submit([] {}));
+}
+
+TEST(ThreadPoolTest, StopFromWorkerDoesNotJoinSelf) {
+  ThreadPool pool(1);
+  std::atomic<bool> stopped{false};
+
+  pool.Start();
+  ASSERT_TRUE(pool.Submit([&] {
+    pool.Stop();
+    stopped.store(true);
+  }));
+
+  EXPECT_TRUE(WaitUntil([&] { return stopped.load(); }, 1s));
+  pool.Stop();
+}
+
 TEST(ThreadPoolTest, DestructorStopsWorkers) {
   std::atomic<bool> completed{false};
 

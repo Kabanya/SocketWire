@@ -74,6 +74,11 @@ struct SocketPollerConfig {
 };
 
 /// Abstraction over epoll, kqueue, select, and WSAPoll.
+///
+/// Threading contract: SocketPoller is owned by one event-loop thread. Add,
+/// remove, poll, and dispatch calls must be serialized by the caller. Cross-thread
+/// socket changes should be posted into that owner loop, for example via
+/// TaskQueue.
 class SocketPoller {
  public:
   explicit SocketPoller(const SocketPollerConfig& cfg = {});
@@ -82,7 +87,8 @@ class SocketPoller {
   SocketPoller(const SocketPoller&) = delete;
   SocketPoller& operator=(const SocketPoller&) = delete;
 
-  /// Adds a socket to monitoring.
+  /// Adds a socket to monitoring. The caller owns the socket and must keep it
+  /// alive until it is removed and no returned SocketEvent references it.
   bool AddSocket(ISocket* socket, bool watch_writable = false);
 
   /// Removes a socket from monitoring.

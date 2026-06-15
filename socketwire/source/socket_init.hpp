@@ -2,6 +2,8 @@
 
 /// Platform-agnostic socket initialization helpers.
 
+#include <mutex>
+
 namespace socketwire {
 
 void RegisterEmscriptenSocketFactory();
@@ -31,18 +33,17 @@ void InitializeSockets();
 namespace socketwire {
 
 inline void InitializeSockets() {
-  static bool initialized = false;
-  if (initialized) return;
+  static std::once_flag initialized;
+  std::call_once(initialized, [] {
 
 #if SOCKETWIRE_PLATFORM_EMSCRIPTEN
-  RegisterEmscriptenSocketFactory();
+    RegisterEmscriptenSocketFactory();
 #elif SOCKETWIRE_PLATFORM_WINDOWS
-  RegisterWindowsSocketFactory();
+    RegisterWindowsSocketFactory();
 #else
-  RegisterPosixSocketFactory();
+    RegisterPosixSocketFactory();
 #endif
-
-  initialized = true;
+  });
 }
 
 }  // namespace socketwire
