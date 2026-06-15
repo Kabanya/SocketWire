@@ -10,6 +10,7 @@ block the network loop.
 ```cpp
 socketwire::ThreadPool workers(4);
 workers.Start();
+socketwire::TaskQueue network_queue;
 ```
 
 Copy payload bytes before submitting work because receive buffers may be reused
@@ -19,8 +20,9 @@ by the network layer:
 class Handler : public socketwire::IReliableConnectionHandler {
  public:
   Handler(socketwire::ConnectionManager& manager,
-          socketwire::ThreadPool& workers)
-      : manager_(manager), workers_(workers) {}
+          socketwire::ThreadPool& workers,
+          socketwire::TaskQueue& network_queue)
+      : manager_(manager), workers_(workers), network_queue_(network_queue) {}
 
   void OnReliableReceived(std::uint8_t channel,
                           const void* data,
@@ -32,7 +34,7 @@ class Handler : public socketwire::IReliableConnectionHandler {
     workers_.Submit([this, channel, payload = std::move(payload)] {
       auto response = BuildResponse(payload);
 
-      manager_.Post([this, channel, response = std::move(response)] {
+      network_queue_.Post([this, channel, response = std::move(response)] {
         manager_.BroadcastReliable(channel, response.data(), response.size());
       });
     });
@@ -41,15 +43,28 @@ class Handler : public socketwire::IReliableConnectionHandler {
  private:
   socketwire::ConnectionManager& manager_;
   socketwire::ThreadPool& workers_;
+  socketwire::TaskQueue& network_queue_;
 };
 ```
 
-For a client-side `ReliableConnection`, post back through the connection:
+For a client-side `ReliableConnection`, post back through the same explicit
+network queue:
 
 ```cpp
-connection.Post([&connection, response = std::move(response)] {
+network_queue.Post([&connection, response = std::move(response)] {
   connection.SendReliable(0, response.data(), response.size());
 });
+```
+
+Drain that queue on the network owner thread:
+
+```cpp
+while (running) {
+  network_queue.Drain();
+  manager.Tick();
+  connection.Tick();
+  network_queue.Drain();
+}
 ```
 
 Call `workers.Stop()` during shutdown.
@@ -58,7 +73,7 @@ Call `workers.Stop()` during shutdown.
 
 - `ThreadPool` has explicit `Start()` / `Stop()` lifecycle.
 - Worker callbacks must not call socket or protocol methods directly.
-- `Tick()` and `Update()` drain posted network-thread tasks automatically.
+- The caller owns and drains any cross-thread `TaskQueue`.
 - The handler and captured data must outlive pending worker tasks.
 
 ## Benchmark

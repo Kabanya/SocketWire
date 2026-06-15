@@ -24,21 +24,27 @@ contract.
 thread. Они должны быть достаточно короткими, чтобы не блокировать network loop.
 
 Для CPU-heavy payload work скопируйте payload и отправьте тяжелую часть в
-user-owned `ThreadPool`. Worker callbacks должны использовать `Post()`, чтобы
-вернуть сетевые операции на owner thread:
+user-owned `ThreadPool`. Worker callbacks должны постить сетевые операции в
+явную `TaskQueue`, которую drain-ит owner thread:
 
 ```cpp
-workers.Submit([&manager, channel, payload = std::move(payload)] {
+workers.Submit([&manager, &network_queue, channel,
+                payload = std::move(payload)] {
   auto response = BuildResponse(payload);
 
-  manager.Post([&manager, channel, response = std::move(response)] {
+  network_queue.Post([&manager, channel, response = std::move(response)] {
     manager.BroadcastReliable(channel, response.data(), response.size());
   });
 });
 ```
 
-`Tick()` и `Update()` автоматически drain-ят posted tasks до и после
-протокольной работы.
+Drain этой queue делается в network loop:
+
+```cpp
+network_queue.Drain();
+manager.Tick();
+network_queue.Drain();
+```
 
 ## Рекомендуемая Модель
 

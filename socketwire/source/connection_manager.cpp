@@ -25,19 +25,14 @@ ConnectionManager::ConnectionManager(ISocket* socket,
 }
 
 ConnectionManager::~ConnectionManager() {
-  (void)DrainPostedTasks();
   clients_.clear();
   client_map_.clear();
   connected_notified_.clear();
 }
 
-void ConnectionManager::Update() {
-  Update(clock_->Now());
-}
+void ConnectionManager::Update() { Update(clock_->Now()); }
 
 void ConnectionManager::Update(std::chrono::steady_clock::time_point now) {
-  (void)DrainPostedTasks(config_.maxNetworkTasksPerDrain);
-
   for (auto& client : clients_) {
     if (client->connection != nullptr) {
       client->connection->Update(now);
@@ -54,8 +49,6 @@ void ConnectionManager::Update(std::chrono::steady_clock::time_point now) {
     }
     return false;
   });
-
-  (void)DrainPostedTasks(config_.maxNetworkTasksPerDrain);
 }
 
 void ConnectionManager::ProcessPacket(const void* data, std::size_t size,
@@ -125,14 +118,6 @@ void ConnectionManager::SetHandler(IReliableConnectionHandler* handler) {
       client->connection->SetHandler(event_handler_);
     }
   }
-}
-
-bool ConnectionManager::Post(std::function<void()> task) {
-  return posted_network_tasks_.Post(std::move(task));
-}
-
-std::size_t ConnectionManager::DrainPostedTasks(std::size_t max_tasks) {
-  return posted_network_tasks_.Drain(max_tasks);
 }
 
 std::vector<ConnectionManager::RemoteClient*>

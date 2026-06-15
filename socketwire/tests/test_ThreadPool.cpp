@@ -37,7 +37,8 @@ bool WaitUntil(Predicate predicate, std::chrono::milliseconds timeout,
 
 class AsyncEchoServerHandler final : public IReliableConnectionHandler {
  public:
-  explicit AsyncEchoServerHandler(ThreadPool& workers) : workers_(workers) {}
+  AsyncEchoServerHandler(ThreadPool& workers, TaskQueue& network_queue)
+      : workers_(workers), network_queue_(network_queue) {}
 
   void OnReliableReceived(std::uint8_t channel, const void* data,
                           std::size_t size) override {
@@ -48,9 +49,8 @@ class AsyncEchoServerHandler final : public IReliableConnectionHandler {
       static_cast<const std::uint8_t*>(data),
       static_cast<const std::uint8_t*>(data) + size);
 
-    const bool posted =
-      workers_.Submit([this, channel, payload = std::move(payload),
-                       callback_thread]() mutable {
+    const bool posted = workers_.Submit(
+      [this, channel, payload = std::move(payload), callback_thread]() mutable {
         worker_thread_distinct.store(std::this_thread::get_id() !=
                                      callback_thread);
         for (auto& byte : payload) {
@@ -59,7 +59,7 @@ class AsyncEchoServerHandler final : public IReliableConnectionHandler {
 
         const bool queued =
           manager != nullptr &&
-          manager->Post([this, channel, payload = std::move(payload)] {
+          network_queue_.Post([this, channel, payload = std::move(payload)] {
             network_tasks.fetch_add(1);
             if (manager != nullptr) {
               manager->BroadcastReliable(channel, payload.data(),
@@ -80,6 +80,7 @@ class AsyncEchoServerHandler final : public IReliableConnectionHandler {
 
  private:
   ThreadPool& workers_;
+  TaskQueue& network_queue_;
 };
 
 class CollectingClientHandler final : public IReliableConnectionHandler {
@@ -143,9 +144,7 @@ class DiscardSocket final : public ISocket {
     return SocketError::kNone;
   }
   [[nodiscard]] bool IsBlocking() const override { return blocking_; }
-  [[nodiscard]] std::uint16_t LocalPort() const override {
-    return bound_port_;
-  }
+  [[nodiscard]] std::uint16_t LocalPort() const override { return bound_port_; }
   [[nodiscard]] int NativeHandle() const override { return 1; }
   void Close() override {}
 
@@ -164,8 +163,7 @@ std::vector<std::uint8_t> MakeReliablePacket(std::uint32_t sequence,
       .channel = 0,
       .sequence = sequence,
       .payload =
-        std::span<const std::uint8_t>{static_cast<const std::uint8_t*>(
-                                        payload),
+        std::span<const std::uint8_t>{static_cast<const std::uint8_t*>(payload),
                                       payload_size}},
     std::chrono::steady_clock::time_point{}, packet);
   EXPECT_TRUE(encoded.has_value());
@@ -198,8 +196,11 @@ class ThreadRecordingHandler final : public IReliableConnectionHandler {
 
 class ClientSideAsyncHandler final : public IReliableConnectionHandler {
  public:
-  ClientSideAsyncHandler(ThreadPool& workers, std::thread::id& network_thread)
-      : workers_(workers), network_thread_(network_thread) {}
+  ClientSideAsyncHandler(ThreadPool& workers, TaskQueue& network_queue,
+                         std::thread::id& network_thread)
+      : workers_(workers),
+        network_queue_(network_queue),
+        network_thread_(network_thread) {}
 
   void OnConnected() override { connected.store(true); }
 
@@ -219,12 +220,11 @@ class ClientSideAsyncHandler final : public IReliableConnectionHandler {
       if (connection == nullptr) return;
 
       const std::array<std::uint8_t, 3> response{9, 8, 7};
-      const bool posted = connection->Post([this, response] {
+      const bool posted = network_queue_.Post([this, response] {
         if (std::this_thread::get_id() == network_thread_) {
           post_ran_on_network.store(true);
         }
-        (void)connection->SendUnreliable(0, response.data(),
-                                         response.size());
+        (void)connection->SendUnreliable(0, response.data(), response.size());
       });
       if (!posted) post_failed.store(true);
     });
@@ -241,6 +241,7 @@ class ClientSideAsyncHandler final : public IReliableConnectionHandler {
 
  private:
   ThreadPool& workers_;
+  TaskQueue& network_queue_;
   std::thread::id& network_thread_;
 };
 
@@ -429,7 +430,9 @@ TEST(ThreadPoolIntegrationTest, ClientWorkerPostsNetworkSend) {
 
   std::thread::id network_thread_id;
   ThreadPool workers(2);
-  ClientSideAsyncHandler client_handler(workers, network_thread_id);
+  TaskQueue network_queue;
+  ClientSideAsyncHandler client_handler(workers, network_queue,
+                                        network_thread_id);
   auto client_conn =
     std::make_unique<ReliableConnection>(client_socket.get(), client_cfg);
   client_handler.connection = client_conn.get();
@@ -441,15 +444,18 @@ TEST(ThreadPoolIntegrationTest, ClientWorkerPostsNetworkSend) {
     network_thread_id = std::this_thread::get_id();
     network_ready.store(true);
     while (running.load()) {
+      network_queue.Drain();
       server_manager->Tick();
       client_conn->Tick();
+      network_queue.Drain();
       std::this_thread::sleep_for(1ms);
     }
+    network_queue.Drain();
   });
   ASSERT_TRUE(WaitUntil([&] { return network_ready.load(); }, 1s));
 
   std::atomic<int> connect_result{-1};
-  ASSERT_TRUE(client_conn->Post([&] {
+  ASSERT_TRUE(network_queue.Post([&] {
     connect_result.store(
       client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port)
         ? 1
@@ -462,11 +468,9 @@ TEST(ThreadPoolIntegrationTest, ClientWorkerPostsNetworkSend) {
   workers.Start();
   const std::array<std::uint8_t, 4> payload{5, 6, 7, 8};
   std::atomic<int> send_result{-1};
-  EXPECT_TRUE(client_conn->Post([&] {
-    send_result.store(client_conn->SendReliable(0, payload.data(),
-                                                payload.size())
-                        ? 1
-                        : 0);
+  EXPECT_TRUE(network_queue.Post([&] {
+    send_result.store(
+      client_conn->SendReliable(0, payload.data(), payload.size()) ? 1 : 0);
   }));
   EXPECT_TRUE(WaitUntil([&] { return send_result.load() != -1; }, 1s));
   EXPECT_EQ(send_result.load(), 1);
@@ -511,8 +515,9 @@ TEST(ThreadPoolIntegrationTest, WorkerPostsResultBackToNetworkThread) {
 
   ThreadPool workers(2);
   workers.Start();
+  TaskQueue network_queue;
 
-  AsyncEchoServerHandler server_handler(workers);
+  AsyncEchoServerHandler server_handler(workers, network_queue);
   auto server_manager =
     std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
   server_handler.manager = server_manager.get();
@@ -527,10 +532,13 @@ TEST(ThreadPoolIntegrationTest, WorkerPostsResultBackToNetworkThread) {
   std::atomic<bool> running{true};
   std::thread network_thread([&] {
     while (running.load()) {
+      network_queue.Drain();
       server_manager->Tick();
       client_conn->Tick();
+      network_queue.Drain();
       std::this_thread::sleep_for(1ms);
     }
+    network_queue.Drain();
   });
 
   const bool connected =
@@ -540,18 +548,16 @@ TEST(ThreadPoolIntegrationTest, WorkerPostsResultBackToNetworkThread) {
   std::array<std::uint8_t, 5> payload{1, 2, 3, 4, 5};
   std::atomic<int> send_result{-1};
   if (connected) {
-    EXPECT_TRUE(client_conn->Post([&] {
-      send_result.store(client_conn->SendReliable(0, payload.data(),
-                                                  payload.size())
-                          ? 1
-                          : 0);
+    EXPECT_TRUE(network_queue.Post([&] {
+      send_result.store(
+        client_conn->SendReliable(0, payload.data(), payload.size()) ? 1 : 0);
     }));
     EXPECT_TRUE(WaitUntil([&] { return send_result.load() != -1; }, 1s));
     EXPECT_EQ(send_result.load(), 1);
   }
 
-  const bool delivered = WaitUntil(
-    [&] { return client_handler.reliable_received.load() > 0; }, 3s);
+  const bool delivered =
+    WaitUntil([&] { return client_handler.reliable_received.load() > 0; }, 3s);
   EXPECT_TRUE(delivered);
 
   running.store(false);

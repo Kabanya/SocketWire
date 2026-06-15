@@ -23,21 +23,27 @@ All `IReliableConnectionHandler` callbacks run inline on the network thread.
 Keep them short enough not to block the network loop.
 
 For CPU-heavy payload work, copy the payload and submit the expensive part to a
-user-owned `ThreadPool`. Worker callbacks must use `Post()` to return network
-operations to the owner thread:
+user-owned `ThreadPool`. Worker callbacks must post network operations to an
+explicit `TaskQueue` drained by the owner thread:
 
 ```cpp
-workers.Submit([&manager, channel, payload = std::move(payload)] {
+workers.Submit([&manager, &network_queue, channel,
+                payload = std::move(payload)] {
   auto response = BuildResponse(payload);
 
-  manager.Post([&manager, channel, response = std::move(response)] {
+  network_queue.Post([&manager, channel, response = std::move(response)] {
     manager.BroadcastReliable(channel, response.data(), response.size());
   });
 });
 ```
 
-`Tick()` and `Update()` drain posted tasks automatically before and after
-protocol work.
+Drain that queue in the network loop:
+
+```cpp
+network_queue.Drain();
+manager.Tick();
+network_queue.Drain();
+```
 
 ## Recommended Model
 

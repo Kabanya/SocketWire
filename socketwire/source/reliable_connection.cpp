@@ -46,9 +46,10 @@ ReliableConnection::ReliableConnection(ISocket* socket,
   send_buffer_.resize(config_.maxPacketSize);
   batch_buffer_.resize(config_.maxPacketSize);
   batch_scratch_buffer_.resize(config_.maxPacketSize);
-  batch_command_buffer_.reserve(static_cast<std::size_t>(
-    std::max<std::uint16_t>(config_.maxBatchCommands, 1)) *
-                                detail::PacketCodec::kBaseHeaderSize);
+  batch_command_buffer_.reserve(
+    static_cast<std::size_t>(
+      std::max<std::uint16_t>(config_.maxBatchCommands, 1)) *
+    detail::PacketCodec::kBaseHeaderSize);
   batch_payload_buffer_.reserve(config_.maxPacketSize);
   batch_command_spans_.reserve(config_.maxBatchCommands);
   send_queue_.Configure(config_.maxPendingReliablePackets);
@@ -69,7 +70,6 @@ ReliableConnection::ReliableConnection(ISocket* socket,
 }
 
 ReliableConnection::~ReliableConnection() {
-  (void)DrainPostedTasks();
   state_ = ConnectionState::kDisconnected;
   ClearPendingPackets();
   receive_sequencer_.Reset();
@@ -137,14 +137,6 @@ void ReliableConnection::SetRemoteAddress(const SocketAddress& addr,
 
 void ReliableConnection::SetHandler(IReliableConnectionHandler* handler) {
   event_handler_ = handler;
-}
-
-bool ReliableConnection::Post(std::function<void()> task) {
-  return posted_network_tasks_.Post(std::move(task));
-}
-
-std::size_t ReliableConnection::DrainPostedTasks(std::size_t max_tasks) {
-  return posted_network_tasks_.Drain(max_tasks);
 }
 
 bool ReliableConnection::SendReliable(const std::uint8_t channel,
@@ -324,8 +316,6 @@ void ReliableConnection::Update() {
 }
 
 void ReliableConnection::Update(std::chrono::steady_clock::time_point now) {
-  (void)DrainPostedTasks(config_.maxNetworkTasksPerDrain);
-
   RetryPendingPackets(now);
 
   if (state_ == ConnectionState::kConnected) {
@@ -342,7 +332,6 @@ void ReliableConnection::Update(std::chrono::steady_clock::time_point now) {
   CheckTimeout(now);
   stats_deadline_expired_fragment_groups_ += fragment_reassembler_.Cleanup(now);
   (void)FlushQueuedAcks(now);
-  (void)DrainPostedTasks(config_.maxNetworkTasksPerDrain);
 }
 
 void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
@@ -364,8 +353,7 @@ void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
 
 bool ReliableConnection::IsConnectPacket(const void* data, std::size_t size) {
   const auto decoded = detail::PacketCodec::Decode(AsBytes(data, size));
-  return decoded.has_value() &&
-         decoded->type == detail::PacketType::kConnect;
+  return decoded.has_value() && decoded->type == detail::PacketType::kConnect;
 }
 
 void ReliableConnection::ProcessSinglePacket(
@@ -823,9 +811,9 @@ bool ReliableConnection::AppendAckBatchCommand(
   batch_command_buffer_.resize(offset + detail::PacketCodec::kBaseHeaderSize);
 
   const detail::PacketBuild packet{.type = detail::PacketType::kAck,
-                             .channel = ack.channel,
-                             .sequence = ack.sequence,
-                             .payload = {}};
+                                   .channel = ack.channel,
+                                   .sequence = ack.sequence,
+                                   .payload = {}};
   auto out = std::span<std::uint8_t>(batch_command_buffer_).subspan(offset);
   const auto encoded = detail::PacketCodec::Encode(packet, now, out);
   if (!encoded.has_value()) {

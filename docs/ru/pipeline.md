@@ -101,13 +101,14 @@ Update делает retry, ACK flush, ping, timeout и cleanup
 Для тяжелой прикладной работы:
 
 ```cpp
-workers.Submit([&manager, channel, payload = std::move(payload)] {
+workers.Submit([&manager, &network_queue, channel,
+                payload = std::move(payload)] {
   auto response = BuildResponse(payload);
 
-  manager.Post([&manager, channel, response = std::move(response)] {
+  network_queue.Post([&manager, channel, response = std::move(response)] {
     manager.BroadcastReliable(channel, response.data(), response.size());
   });
 });
 ```
 
-Network loop остается таким же. `Tick()` и `Update()` drain-ят posted tasks.
+`network_queue` нужно drain-ить в network loop до и после `Tick()`.

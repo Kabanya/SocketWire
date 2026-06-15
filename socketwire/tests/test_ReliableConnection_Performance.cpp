@@ -3,10 +3,10 @@
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <cstddef>
-#include <cstdlib>
-#include <cstdint>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -21,6 +21,7 @@
 #include "i_socket.hpp"
 #include "reliable_connection.hpp"
 #include "socket_init.hpp"
+#include "task_queue.hpp"
 #include "thread_pool.hpp"
 
 using namespace std::chrono;  // NOLINT
@@ -192,8 +193,8 @@ std::vector<std::uint8_t> MakeApplicationPayload(std::uint32_t id) {
   std::vector<std::uint8_t> payload(kApplicationWorkloadPayloadSize);
   StoreMessageId(payload, id);
   for (std::size_t i = 4; i < payload.size(); ++i) {
-    payload.at(i) =
-      static_cast<std::uint8_t>((static_cast<std::size_t>(id * 131u) + i * 17u + 0x5Au) & 0xFFu);
+    payload.at(i) = static_cast<std::uint8_t>(
+      (static_cast<std::size_t>(id * 131u) + i * 17u + 0x5Au) & 0xFFu);
   }
   return payload;
 }
@@ -223,8 +224,7 @@ std::vector<std::uint8_t> BuildApplicationResponse(
 
 void UpdateAtomicMax(std::atomic<std::int64_t>& target, std::int64_t value) {
   std::int64_t current = target.load();
-  while (current < value &&
-         !target.compare_exchange_weak(current, value)) {
+  while (current < value && !target.compare_exchange_weak(current, value)) {
   }
 }
 
@@ -304,9 +304,9 @@ class ApplicationWorkloadServerHandler final
       workers->Submit([this, channel, payload = std::move(payload)]() mutable {
         auto response = BuildApplicationResponse(std::move(payload));
         ++processed;
-        if (manager != nullptr) {
-          const bool queued =
-            manager->Post([this, channel, response = std::move(response)] {
+        if (manager != nullptr && network_queue != nullptr) {
+          const bool queued = network_queue->Post(
+            [this, channel, response = std::move(response)] {
               if (manager != nullptr) {
                 manager->BroadcastReliable(channel, response.data(),
                                            response.size());
@@ -319,6 +319,7 @@ class ApplicationWorkloadServerHandler final
   }
 
   ConnectionManager* manager = nullptr;
+  TaskQueue* network_queue = nullptr;
   ThreadPool* workers = nullptr;
   std::atomic<std::uint32_t> processed{0};
   std::atomic<bool> worker_post_failed{false};
@@ -365,6 +366,7 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
   conn_cfg.pingIntervalMs = 1000;
   conn_cfg.disconnectTimeoutMs = 5000;
   conn_cfg.maxPendingReliablePackets = 4096;
+  TaskQueue network_queue;
   std::unique_ptr<ThreadPool> workers;
   if (mode == ApplicationWorkloadMode::kThreadPool) {
     result.workerCount = DefaultHandlerWorkerCount();
@@ -377,6 +379,7 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
 
   ApplicationWorkloadServerHandler server_handler(mode);
   server_handler.workers = workers.get();
+  server_handler.network_queue = &network_queue;
   auto server_manager =
     std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
   server_handler.manager = server_manager.get();
@@ -394,16 +397,19 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
   std::thread network_thread([&] {
     while (running.load()) {
       const auto tick_start = steady_clock::now();
+      network_queue.Drain();
       server_manager->Tick();
       client_conn->Tick();
+      network_queue.Drain();
       const auto tick_ns =
         duration_cast<nanoseconds>(steady_clock::now() - tick_start).count();
       UpdateAtomicMax(max_tick_ns, tick_ns);
       std::this_thread::yield();
     }
+    network_queue.Drain();
   });
 
-  const bool connect_queued = client_conn->Post([&] {
+  const bool connect_queued = network_queue.Post([&] {
     client_conn->Connect(SocketAddress::FromIPv4(0x7F000001), server_port);
   });
   if (!connect_queued ||
@@ -434,13 +440,13 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
 
     if (next_to_send.load() < kApplicationWorkloadMessages) {
       if (const auto next = weak_send_more.lock(); next != nullptr) {
-        if (!client_conn->Post(*next)) send_failed.store(true);
+        if (!network_queue.Post(*next)) send_failed.store(true);
       }
     }
   };
 
   const auto start = high_resolution_clock::now();
-  if (!client_conn->Post(*send_more)) {
+  if (!network_queue.Post(*send_more)) {
     running.store(false);
     network_thread.join();
     stop_workers();
@@ -481,13 +487,12 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
   const auto received = client_handler.received.load();
   result.ok = true;
   result.totalMs = static_cast<double>(duration_us) / 1000.0;
-  result.messagesPerSecond =
-    (static_cast<double>(received) * 1000000.0) /
-    static_cast<double>(duration_us);
+  result.messagesPerSecond = (static_cast<double>(received) * 1000000.0) /
+                             static_cast<double>(duration_us);
   result.averageLatencyMs = NanosecondsToMilliseconds(
     client_handler.TotalLatencyNs() / static_cast<std::int64_t>(received));
-  result.maxLatencyMs = NanosecondsToMilliseconds(
-    client_handler.MaxLatencyNs());
+  result.maxLatencyMs =
+    NanosecondsToMilliseconds(client_handler.MaxLatencyNs());
   result.maxNetworkTickMs = NanosecondsToMilliseconds(max_tick_ns.load());
   return result;
 }
@@ -692,9 +697,8 @@ TEST_F(ReliableConnectionPerformanceTest, LargePacketThroughput) {
   });
 
   // Wait for connection with timeout
-  const bool connected =
-    SpinUntil([&]() { return client_handler.connected.load(); },
-              milliseconds(5000));
+  const bool connected = SpinUntil(
+    [&]() { return client_handler.connected.load(); }, milliseconds(5000));
 
   if (!connected) {
     running = false;
@@ -836,10 +840,9 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionScalability) {
   std::cout << "Duration: " << duration << " ms" << "\n";
   std::cout << "Average per client: " << (duration / num_clients) << " ms"
             << "\n";
-  AppendPerfMetric("Reliable 10-client scalability",
-                   static_cast<double>(duration),
-                   (expected_total * 1000.0) / static_cast<double>(duration),
-                   "messages/sec");
+  AppendPerfMetric(
+    "Reliable 10-client scalability", static_cast<double>(duration),
+    (expected_total * 1000.0) / static_cast<double>(duration), "messages/sec");
 
   EXPECT_EQ(server_handler.reliableCount, expected_total);
 
@@ -868,19 +871,18 @@ TEST_F(ReliableConnectionPerformanceTest,
             << " bytes\n";
   std::cout << "Workload rounds: " << kApplicationWorkloadRounds << "\n";
   std::cout << std::left << std::setw(14) << "mode" << std::right
-            << std::setw(12) << "total_ms" << std::setw(16)
-            << "messages/sec" << std::setw(18) << "avg_latency_ms"
-            << std::setw(17) << "max_latency_ms" << std::setw(14)
-            << "max_tick_ms" << std::setw(10) << "workers" << "\n";
+            << std::setw(12) << "total_ms" << std::setw(16) << "messages/sec"
+            << std::setw(18) << "avg_latency_ms" << std::setw(17)
+            << "max_latency_ms" << std::setw(14) << "max_tick_ms"
+            << std::setw(10) << "workers" << "\n";
 
   const auto print_result = [](const ApplicationWorkloadResult& result) {
     std::cout << std::left << std::setw(14) << result.mode << std::right
               << std::fixed << std::setprecision(2) << std::setw(12)
               << result.totalMs << std::setw(16) << result.messagesPerSecond
               << std::setw(18) << result.averageLatencyMs << std::setw(17)
-              << result.maxLatencyMs << std::setw(14)
-              << result.maxNetworkTickMs << std::setw(10)
-              << result.workerCount << "\n";
+              << result.maxLatencyMs << std::setw(14) << result.maxNetworkTickMs
+              << std::setw(10) << result.workerCount << "\n";
   };
 
   print_result(inline_result);
@@ -912,8 +914,8 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionManagerUpdateScalability) {
     packet_storage);
   ASSERT_TRUE(encoded.has_value());
   const std::vector<std::uint8_t> connect_packet(
-    packet_storage.begin(), packet_storage.begin() +
-                              static_cast<std::ptrdiff_t>(*encoded));
+    packet_storage.begin(),
+    packet_storage.begin() + static_cast<std::ptrdiff_t>(*encoded));
 
   std::cout << "\n=== ConnectionManager Update Scalability ===" << "\n";
 
@@ -957,9 +959,9 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionManagerUpdateScalability) {
               << "Avg update: " << us_per_update << " μs\n"
               << "Throughput: " << updates_per_sec << " updates/sec\n";
 
-    AppendPerfMetric("ConnectionManager update " +
-                       std::to_string(client_count) + " clients",
-                     duration_ms, updates_per_sec, "updates/sec");
+    AppendPerfMetric(
+      "ConnectionManager update " + std::to_string(client_count) + " clients",
+      duration_ms, updates_per_sec, "updates/sec");
     EXPECT_GT(updates_per_sec, 0.0);
   }
 }
@@ -991,10 +993,10 @@ TEST_F(ReliableConnectionPerformanceTest, BitStreamSerializationPerformance) {
   std::cout << "Writes per second: "
             << (iterations * 1000000.0 / static_cast<double>(write_duration))
             << "\n";
-  AppendPerfMetric(
-    "Reliable BitStream write serialization",
-    static_cast<double>(write_duration) / 1000.0,
-    iterations * 1000000.0 / static_cast<double>(write_duration), "ops/sec");
+  AppendPerfMetric("Reliable BitStream write serialization",
+                   static_cast<double>(write_duration) / 1000.0,
+                   iterations * 1000000.0 / static_cast<double>(write_duration),
+                   "ops/sec");
 
   // Read performance
   BitStream bs;
@@ -1033,8 +1035,8 @@ TEST_F(ReliableConnectionPerformanceTest, BitStreamSerializationPerformance) {
   std::cout << "Reads per second: "
             << (iterations * 1000000.0 / static_cast<double>(read_duration))
             << "\n";
-  AppendPerfMetric(
-    "Reliable BitStream read serialization",
-    static_cast<double>(read_duration) / 1000.0,
-    iterations * 1000000.0 / static_cast<double>(read_duration), "ops/sec");
+  AppendPerfMetric("Reliable BitStream read serialization",
+                   static_cast<double>(read_duration) / 1000.0,
+                   iterations * 1000000.0 / static_cast<double>(read_duration),
+                   "ops/sec");
 }

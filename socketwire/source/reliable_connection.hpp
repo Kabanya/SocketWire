@@ -8,8 +8,6 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
-#include <limits>
 #include <span>
 #include <vector>
 
@@ -17,7 +15,6 @@
 #include "crypto.hpp"
 #include "i_socket.hpp"
 #include "reliable_protocol.hpp"
-#include "task_queue.hpp"
 
 namespace socketwire {
 
@@ -113,9 +110,6 @@ struct ReliableConnectionConfig {
   std::uint16_t maxBatchCommands = 32;
   /// Ordered reliable receive window per channel.
   std::uint32_t receiveWindowSize = 1024;
-  /// Maximum posted network-thread tasks drained per pass.
-  std::size_t maxNetworkTasksPerDrain =
-    std::numeric_limits<std::size_t>::max();
 };
 
 /// Event callbacks for reliable connection state and payload delivery.
@@ -224,12 +218,6 @@ class ReliableConnection {
 
   void SetHandler(IReliableConnectionHandler* handler);
 
-  /// Posts work that must run on this connection's network owner thread.
-  bool Post(std::function<void()> task);
-  /// Runs posted network-thread work on the calling thread.
-  std::size_t DrainPostedTasks(
-    std::size_t max_tasks = std::numeric_limits<std::size_t>::max());
-
   // Statistics
   [[nodiscard]] std::uint32_t GetSentPackets() const {
     return stats_sent_packets_;
@@ -267,7 +255,6 @@ class ReliableConnection {
   ReliableConnectionConfig config_;
   IClock* clock_ = nullptr;
   IReliableConnectionHandler* event_handler_ = nullptr;
-  TaskQueue posted_network_tasks_;
 
   ConnectionState state_ = ConnectionState::kDisconnected;
   SocketAddress remote_addr_;
