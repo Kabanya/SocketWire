@@ -230,6 +230,20 @@ TEST(CongestionControllerTest, AckGrowsWindowLossHalvesAndInflightBlocks) {
   EXPECT_FALSE(controller.CanSend(2));
 }
 
+TEST(ReceiveSequencerTest, SequencedDeliversOnlyNewerPackets) {
+  socketwire::detail::ReceiveSequencer sequencer;
+  sequencer.Configure(1, 1024);
+
+  EXPECT_EQ(sequencer.AcceptSequenced(0, 10).status,
+            socketwire::detail::ReceiveSequencer::AcceptStatus::kDelivered);
+  EXPECT_EQ(sequencer.AcceptSequenced(0, 9).status,
+            socketwire::detail::ReceiveSequencer::AcceptStatus::kDropped);
+  EXPECT_EQ(sequencer.AcceptSequenced(0, 10).status,
+            socketwire::detail::ReceiveSequencer::AcceptStatus::kDropped);
+  EXPECT_EQ(sequencer.AcceptSequenced(0, 11).status,
+            socketwire::detail::ReceiveSequencer::AcceptStatus::kDelivered);
+}
+
 TEST(FragmentReassemblerTest, ReassemblesOutOfOrderAndSuppressesDuplicates) {
   FragmentReassembler reassembler;
   reassembler.Configure(1, 4, 8, 64, 1000);

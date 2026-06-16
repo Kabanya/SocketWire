@@ -168,30 +168,50 @@ class ReliableConnection {
   void SetConnectedForTest() { state_ = ConnectionState::kConnected; }
 #endif
 
-  bool SendReliable(const std::uint8_t channel, const void* data,
-                    std::size_t size);
-  bool SendUnreliable(const std::uint8_t channel, const void* data,
-                      std::size_t size);
-  bool SendUnsequenced(const std::uint8_t channel, const void* data,
-                       std::size_t size);
-  bool SendReliableWithDeadline(const std::uint8_t channel, const void* data,
-                                std::size_t size, std::uint32_t deadline_ms);
-  bool SendUnreliableWithDeadline(const std::uint8_t channel, const void* data,
-                                  std::size_t size, std::uint32_t deadline_ms);
-  bool SendUnsequencedWithDeadline(const std::uint8_t channel, const void* data,
-                                   std::size_t size, std::uint32_t deadline_ms);
-
+// Without deadline APIs
   bool SendReliable(const std::uint8_t channel, const BitStream& stream);
+  bool SendReliable(const std::uint8_t channel, const void* data, std::size_t size);
+  
   bool SendUnreliable(const std::uint8_t channel, const BitStream& stream);
+  bool SendUnreliable(const std::uint8_t channel, const void* data,std::size_t size);
+  
+  bool SendSequenced(const std::uint8_t channel, const BitStream& stream);
+  bool SendSequenced(const std::uint8_t channel, const void* data, std::size_t size);
+  
   bool SendUnsequenced(const std::uint8_t channel, const BitStream& stream);
+  bool SendUnsequenced(const std::uint8_t channel, const void* data, std::size_t size);
+ 
+  // With deadline APIs
+  bool SendReliableWithDeadline(const std::uint8_t channel, 
+                                const void* data, 
+                                std::size_t size, 
+                                std::uint32_t deadline_ms);
   bool SendReliableWithDeadline(const std::uint8_t channel,
                                 const BitStream& stream,
                                 std::uint32_t deadline_ms);
+  
   bool SendUnreliableWithDeadline(const std::uint8_t channel,
                                   const BitStream& stream,
                                   std::uint32_t deadline_ms);
+  bool SendUnreliableWithDeadline(const std::uint8_t channel,
+                                  const void* data,
+                                  std::size_t size, 
+                                  std::uint32_t deadline_ms);
+
+  bool SendSequencedWithDeadline(const std::uint8_t channel,
+                                 const BitStream& stream,
+                                 std::uint32_t deadline_ms);
+  bool SendSequencedWithDeadline(const std::uint8_t channel, 
+                                 const void* data,
+                                 std::size_t size,
+                                 std::uint32_t deadline_ms);
+
   bool SendUnsequencedWithDeadline(const std::uint8_t channel,
                                    const BitStream& stream,
+                                   std::uint32_t deadline_ms);
+  bool SendUnsequencedWithDeadline(const std::uint8_t channel, 
+                                   const void* data,
+                                   std::size_t size, 
                                    std::uint32_t deadline_ms);
 
   /// Processes retransmits, pings, timeouts, and pending ordered packets.
@@ -300,6 +320,8 @@ class ReliableConnection {
                             std::size_t size, std::uint32_t deadline_ms);
   bool SendUnreliableInternal(std::uint8_t channel, const void* data,
                               std::size_t size, std::uint32_t deadline_ms);
+  bool SendSequencedInternal(std::uint8_t channel, const void* data,
+                             std::size_t size, std::uint32_t deadline_ms);
   bool SendUnsequencedInternal(std::uint8_t channel, const void* data,
                                std::size_t size, std::uint32_t deadline_ms);
   bool SendPacket(detail::PacketType type, std::uint8_t channel,

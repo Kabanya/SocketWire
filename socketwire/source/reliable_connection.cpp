@@ -146,6 +146,11 @@ bool ReliableConnection::SendUnreliable(const std::uint8_t channel,
   return SendUnreliableInternal(channel, data, size, 0);
 }
 
+bool ReliableConnection::SendSequenced(const std::uint8_t channel,
+                                       const void* data, std::size_t size) {
+  return SendSequencedInternal(channel, data, size, 0);
+}
+
 bool ReliableConnection::SendUnsequenced(const std::uint8_t channel,
                                          const void* data, std::size_t size) {
   return SendUnsequencedInternal(channel, data, size, 0);
@@ -163,6 +168,13 @@ bool ReliableConnection::SendUnreliableWithDeadline(const std::uint8_t channel,
                                                     std::size_t size,
                                                     std::uint32_t deadline_ms) {
   return SendUnreliableInternal(channel, data, size, deadline_ms);
+}
+
+bool ReliableConnection::SendSequencedWithDeadline(const std::uint8_t channel,
+                                                   const void* data,
+                                                   std::size_t size,
+                                                   std::uint32_t deadline_ms) {
+  return SendSequencedInternal(channel, data, size, deadline_ms);
 }
 
 bool ReliableConnection::SendUnsequencedWithDeadline(
@@ -231,6 +243,26 @@ bool ReliableConnection::SendUnreliableInternal(const std::uint8_t channel,
                     deadline, now);
 }
 
+bool ReliableConnection::SendSequencedInternal(const std::uint8_t channel,
+                                               const void* data,
+                                               std::size_t size,
+                                               std::uint32_t deadline_ms) {
+  if (state_ != ConnectionState::kConnected ||
+      channel >= send_sequence_.size()) {
+    return false;
+  }
+  if (size > config_.maxMessageSize) return false;
+
+  const auto now = clock_->Now();
+  detail::DeadlineMetadata deadline;
+  if (!PrepareDeadline(deadline_ms, deadline, now)) return false;
+
+  const std::size_t max_payload = MaxPayloadForPacket(deadline.hasDeadline);
+  if (max_payload == 0 || size > max_payload) return false;
+  return SendPacket(detail::PacketType::kSequenced, channel, data, size,
+                    GetNextSequence(channel), deadline, now);
+}
+
 bool ReliableConnection::SendUnsequencedInternal(const std::uint8_t channel,
                                                  const void* data,
                                                  std::size_t size,
@@ -281,6 +313,11 @@ bool ReliableConnection::SendUnreliable(const std::uint8_t channel,
   return SendUnreliable(channel, stream.GetData(), stream.GetSizeBytes());
 }
 
+bool ReliableConnection::SendSequenced(const std::uint8_t channel,
+                                       const BitStream& stream) {
+  return SendSequenced(channel, stream.GetData(), stream.GetSizeBytes());
+}
+
 bool ReliableConnection::SendUnsequenced(const std::uint8_t channel,
                                          const BitStream& stream) {
   return SendUnsequenced(channel, stream.GetData(), stream.GetSizeBytes());
@@ -298,6 +335,13 @@ bool ReliableConnection::SendUnreliableWithDeadline(const std::uint8_t channel,
                                                     std::uint32_t deadline_ms) {
   return SendUnreliableWithDeadline(channel, stream.GetData(),
                                     stream.GetSizeBytes(), deadline_ms);
+}
+
+bool ReliableConnection::SendSequencedWithDeadline(const std::uint8_t channel,
+                                                   const BitStream& stream,
+                                                   std::uint32_t deadline_ms) {
+  return SendSequencedWithDeadline(channel, stream.GetData(),
+                                   stream.GetSizeBytes(), deadline_ms);
 }
 
 bool ReliableConnection::SendUnsequencedWithDeadline(
@@ -540,6 +584,21 @@ void ReliableConnection::ProcessSinglePacket(
       break;
     }
 
+    case detail::PacketType::kSequenced: {
+      if (deadline_expired) {
+        ++stats_deadline_receive_drops_;
+        break;
+      }
+      const auto result =
+        receive_sequencer_.AcceptSequenced(packet.channel, packet.sequence);
+      if (result.status == detail::ReceiveSequencer::AcceptStatus::kDelivered &&
+          event_handler_ != nullptr) {
+        event_handler_->OnUnreliableReceived(packet.channel, payload.data(),
+                                             payload.size());
+      }
+      break;
+    }
+
     case detail::PacketType::kUnreliable: {
       if (deadline_expired) {
         ++stats_deadline_receive_drops_;
@@ -734,6 +793,7 @@ bool ReliableConnection::CanBatchPacket(detail::PacketType type) const {
     case detail::PacketType::kPong:
     case detail::PacketType::kReliable:
     case detail::PacketType::kUnreliable:
+    case detail::PacketType::kSequenced:
     case detail::PacketType::kUnsequenced:
     case detail::PacketType::kFragment:
       return true;

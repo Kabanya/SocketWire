@@ -8,7 +8,7 @@ namespace socketwire::detail {
 namespace {
 
 constexpr std::uint8_t kMaxPacketType =
-  static_cast<std::uint8_t>(PacketType::kBatch);
+  static_cast<std::uint8_t>(PacketType::kSequenced);
 
 void WriteU16(std::uint8_t* dst, std::uint16_t value) {
   dst[0] = static_cast<std::uint8_t>((value >> 8) & 0xFFu);
@@ -514,6 +514,8 @@ void ReceiveSequencer::Configure(std::uint8_t num_channels,
                                  std::uint32_t receive_window_size) {
   const auto n = static_cast<std::size_t>(num_channels);
   receive_sequence_.assign(n, 0);
+  latest_sequenced_.assign(n, 0);
+  has_latest_sequenced_.assign(n, false);
   seq_window_high_.assign(n, 0);
   seq_window_bits_.clear();
   seq_window_bits_.resize(n);
@@ -529,6 +531,8 @@ void ReceiveSequencer::Reset() {
   for (auto& high : seq_window_high_) high = 0;
   for (auto& bits : seq_window_bits_) bits.reset();
   std::ranges::fill(receive_sequence_, 0);
+  std::ranges::fill(latest_sequenced_, 0);
+  std::ranges::fill(has_latest_sequenced_, false);
   for (auto& channel_pending : pending_) {
     for (auto& slot : channel_pending) {
       slot.packet.data.Clear();
@@ -593,6 +597,18 @@ ReceiveSequencer::AcceptResult ReceiveSequencer::AcceptUnsequenced(
   }
   MarkSequenceReceived(channel, sequence);
   return {.status = AcceptStatus::kDelivered, .ack = true};
+}
+
+ReceiveSequencer::AcceptResult ReceiveSequencer::AcceptSequenced(
+  std::uint8_t channel, std::uint32_t sequence) {
+  if (!ValidChannel(channel)) return {.status = AcceptStatus::kDropped};
+  if (has_latest_sequenced_.at(channel) &&
+      !IsSequenceNewer(sequence, latest_sequenced_.at(channel))) {
+    return {.status = AcceptStatus::kDropped};
+  }
+  latest_sequenced_.at(channel) = sequence;
+  has_latest_sequenced_.at(channel) = true;
+  return {.status = AcceptStatus::kDelivered};
 }
 
 bool ReceiveSequencer::IsDuplicateSequence(std::uint8_t channel,

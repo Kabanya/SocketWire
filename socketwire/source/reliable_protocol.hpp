@@ -27,7 +27,8 @@ enum class PacketType : std::uint8_t {
   kPong = 7,
   kAck = 8,
   kFragment = 9,
-  kBatch = 10
+  kBatch = 10,
+  kSequenced = 11
 };
 
 enum class PacketDecodeError : std::uint8_t {
@@ -316,6 +317,8 @@ class ReceiveSequencer {
     std::span<const std::uint8_t> payload, std::vector<Message>& ready);
   [[nodiscard]] AcceptResult AcceptUnsequenced(std::uint8_t channel,
                                                std::uint32_t sequence);
+  [[nodiscard]] AcceptResult AcceptSequenced(std::uint8_t channel,
+                                             std::uint32_t sequence);
 
  private:
   struct ReceivedSlot {
@@ -332,6 +335,8 @@ class ReceiveSequencer {
   [[nodiscard]] static bool IsSequenceNewer(std::uint32_t s1, std::uint32_t s2);
 
   std::vector<std::uint32_t> receive_sequence_;
+  std::vector<std::uint32_t> latest_sequenced_;
+  std::vector<bool> has_latest_sequenced_;
   std::vector<std::uint32_t> seq_window_high_;
   std::vector<std::bitset<kSeqWindowSize>> seq_window_bits_;
   std::vector<std::vector<ReceivedSlot>> pending_;

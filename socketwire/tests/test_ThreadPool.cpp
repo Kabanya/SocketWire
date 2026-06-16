@@ -6,6 +6,9 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <iomanip>
+#include <iostream>
+#include <latch>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -35,6 +38,16 @@ bool WaitUntil(Predicate predicate, std::chrono::milliseconds timeout,
   return predicate();
 }
 
+std::uint64_t CpuWork(std::uint64_t seed) {
+  std::uint64_t value = seed + 0x9E3779B97F4A7C15ULL;
+  for (int i = 0; i < 200000; ++i) {
+    value ^= value << 13U;
+    value ^= value >> 7U;
+    value ^= value << 17U;
+  }
+  return value;
+}
+
 void TickConnection(ISocket& socket, ReliableConnection& connection,
                     std::size_t max_packet_size = 1400) {
   std::vector<std::uint8_t> buffer(max_packet_size);
@@ -44,8 +57,8 @@ void TickConnection(ISocket& socket, ReliableConnection& connection,
     const SocketResult result =
       socket.Receive(buffer.data(), buffer.size(), from, port);
     if (result.Failed() || result.bytes <= 0) break;
-    connection.ProcessPacket(buffer.data(), static_cast<std::size_t>(result.bytes),
-                             from, port);
+    connection.ProcessPacket(
+      buffer.data(), static_cast<std::size_t>(result.bytes), from, port);
   }
   connection.Update();
 }
@@ -387,6 +400,60 @@ TEST(ThreadPoolTest, DestructorStopsWorkers) {
   }
 
   EXPECT_TRUE(completed.load());
+}
+
+TEST(ThreadPoolPerformanceTest, ShowsParallelWorkEfficiency) {
+  constexpr std::size_t kTaskCount = 24;
+  const unsigned hardware_threads = std::thread::hardware_concurrency();
+  const auto worker_count = static_cast<std::size_t>(
+    std::clamp(hardware_threads == 0 ? 2U : hardware_threads, 2U, 4U));
+
+  std::array<std::uint64_t, kTaskCount> serial_results{};
+  const auto serial_start = std::chrono::steady_clock::now();
+  for (std::size_t i = 0; i < serial_results.size(); ++i) {
+    serial_results.at(i) = CpuWork(i);
+  }
+  const auto serial_end = std::chrono::steady_clock::now();
+
+  ThreadPool pool(worker_count);
+  std::array<std::uint64_t, kTaskCount> parallel_results{};
+  std::latch done(kTaskCount);
+
+  pool.Start();
+  const auto parallel_start = std::chrono::steady_clock::now();
+  for (std::size_t i = 0; i < parallel_results.size(); ++i) {
+    ASSERT_TRUE(pool.Submit([i, &parallel_results, &done] {
+      parallel_results.at(i) = CpuWork(i);
+      done.count_down();
+    }));
+  }
+  done.wait();
+  const auto parallel_end = std::chrono::steady_clock::now();
+  pool.Stop();
+
+  EXPECT_EQ(parallel_results, serial_results);
+
+  const auto serial_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                           serial_end - serial_start)
+                           .count();
+  const auto parallel_us =
+    std::chrono::duration_cast<std::chrono::microseconds>(parallel_end -
+                                                          parallel_start)
+      .count();
+  const double speedup =
+    static_cast<double>(std::max<std::int64_t>(serial_us, 1)) /
+    static_cast<double>(std::max<std::int64_t>(parallel_us, 1));
+
+  std::cout << "\n=== ThreadPool CPU Work Efficiency ===\n"
+            << "tasks: " << kTaskCount << "\n"
+            << "workers: " << worker_count << "\n"
+            << "serial: " << serial_us << " us\n"
+            << "thread_pool: " << parallel_us << " us\n"
+            << "speedup: " << std::fixed << std::setprecision(2) << speedup
+            << "x\n";
+
+  EXPECT_GT(serial_us, 0);
+  EXPECT_GT(parallel_us, 0);
 }
 
 TEST(TaskQueueTest, DrainsOnCallingThread) {

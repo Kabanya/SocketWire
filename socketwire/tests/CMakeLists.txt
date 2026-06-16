@@ -25,3 +25,29 @@ target_link_libraries(SocketWireTests
 target_compile_definitions(SocketWireTests PRIVATE SOCKETWIRE_TESTING=1)
 
 gtest_discover_tests(SocketWireTests)
+
+add_executable(SocketWireParityTests
+  test_SocketWireParity.cpp
+)
+
+target_link_libraries(SocketWireParityTests
+  PRIVATE
+    SocketWire
+)
+
+set(SOCKETWIRE_PARITY_TEST_CASES
+  Duplicate.ConnectDisconnect
+  Duplicate.ReliableDelivery
+  Duplicate.UnreliableDelivery
+  Duplicate.ChannelSeparation
+  Duplicate.FragmentedReliablePacket
+  Duplicate.MultipleClients
+  Duplicate.BroadcastReliable
+  Duplicate.TransportStats
+  Adverse.ReliableDeliveryAfterDroppedDatagrams
+  Performance.ReliableBurstCompletesWithinBudget)
+
+foreach(test_case IN LISTS SOCKETWIRE_PARITY_TEST_CASES)
+  add_test(NAME "SocketWireParity.${test_case}"
+    COMMAND SocketWireParityTests --case "${test_case}")
+endforeach()
