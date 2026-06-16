@@ -117,6 +117,7 @@ struct IncomingDatagram {
 struct SocketConfig {
   bool nonBlocking = true;
   bool reuseAddress = true;
+  bool reusePort = false;
   bool enableIPv6 = false;  // enable IPv6 / dual-stack sockets
   int sendBufferSize = 0;   // 0 = keep default
   int recvBufferSize = 0;

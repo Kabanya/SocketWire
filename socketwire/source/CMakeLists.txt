@@ -18,6 +18,8 @@ add_library(SocketWire STATIC
   reliable_connection.cpp
   connection_manager.hpp
   connection_manager.cpp
+  sharded_connection_manager.hpp
+  sharded_connection_manager.cpp
   socket_init.hpp
   socket_constants.hpp
   socket_constants.cpp

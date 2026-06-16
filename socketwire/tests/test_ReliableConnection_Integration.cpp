@@ -1,12 +1,17 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <atomic>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "connection_manager.hpp"
 #include "i_socket.hpp"
 #include "reliable_connection.hpp"
+#include "sharded_connection_manager.hpp"
 #include "socket_init.hpp"
 #include "task_queue.hpp"
 
@@ -741,4 +746,140 @@ TEST_F(IntegrationTest, ClientDisconnect) {
 
   EXPECT_TRUE(client_handler.disconnected) << "Client should be disconnected";
   EXPECT_FALSE(client_conn->IsConnected());
+}
+
+TEST_F(IntegrationTest, ShardedConnectionManagerEchoesManyClients) {
+  constexpr int kClientCount = 100;
+
+  auto factory = SocketFactoryRegistry::GetFactory();
+  ASSERT_NE(factory, nullptr);
+
+  ReliableConnectionConfig conn_cfg;
+  conn_cfg.retryTimeoutMs = 50;
+  conn_cfg.disconnectTimeoutMs = 2000;
+  conn_cfg.numChannels = 2;
+
+  ShardedConnectionManagerConfig server_cfg;
+  server_cfg.port = 0;
+  server_cfg.workerCount = 2;
+  server_cfg.connection.connection = conn_cfg;
+  server_cfg.connection.maxClients = 256;
+  server_cfg.connection.maxHandshakesPerSecond = 1000;
+
+  ShardedConnectionManager server(server_cfg);
+  server.SetPacketCallback([](ShardedClientHandle,
+                              ConnectionManager::RemoteClient& client,
+                              std::uint8_t channel, const void* data,
+                              std::size_t size, bool reliable) {
+    if (client.connection == nullptr || !client.connection->IsConnected()) {
+      return;
+    }
+    if (reliable) {
+      (void)client.connection->SendReliable(channel, data, size);
+    } else {
+      (void)client.connection->SendUnreliable(channel, data, size);
+    }
+  });
+
+  if (!server.Start()) {
+    GTEST_SKIP() << "SO_REUSEPORT is not available on this platform";
+  }
+
+  struct Client {
+    std::unique_ptr<ISocket> socket;
+    std::unique_ptr<ReliableConnection> connection;
+    std::unique_ptr<ClientHandler> handler;
+  };
+
+  SocketConfig socket_cfg;
+  socket_cfg.nonBlocking = true;
+
+  std::vector<Client> clients;
+  clients.reserve(kClientCount);
+  for (int i = 0; i < kClientCount; ++i) {
+    Client client;
+    client.socket = factory->CreateUdpSocket(socket_cfg);
+    ASSERT_NE(client.socket, nullptr);
+    client.handler = std::make_unique<ClientHandler>();
+    client.connection =
+      std::make_unique<ReliableConnection>(client.socket.get(), conn_cfg);
+    client.connection->SetHandler(client.handler.get());
+    ASSERT_TRUE(client.connection->Connect(SocketAddress::FromIPv4(0x7F000001),
+                                           server.LocalPort()));
+    clients.push_back(std::move(client));
+  }
+
+  const auto pump_clients = [&] {
+    std::array<std::uint8_t, 2048> buffer{};
+    for (auto& client : clients) {
+      while (true) {
+        SocketAddress from;
+        std::uint16_t port = 0;
+        const auto result =
+          client.socket->Receive(buffer.data(), buffer.size(), from, port);
+        if (result.Failed() || result.bytes <= 0) break;
+        client.connection->ProcessPacket(
+          buffer.data(), static_cast<std::size_t>(result.bytes), from, port);
+      }
+      client.connection->Update();
+    }
+  };
+
+  const auto connected_count = [&] {
+    int connected = 0;
+    for (const auto& client : clients) {
+      if (client.handler->connected) connected += 1;
+    }
+    return connected;
+  };
+
+  for (int i = 0; i < 500 && connected_count() < kClientCount; ++i) {
+    pump_clients();
+    std::this_thread::sleep_for(10ms);
+  }
+  ASSERT_EQ(connected_count(), kClientCount);
+
+  const char payload[] = "sharded echo";
+  for (auto& client : clients) {
+    ASSERT_TRUE(client.connection->SendReliable(0, payload, sizeof(payload)));
+  }
+
+  const auto echoed_count = [&] {
+    int echoed = 0;
+    for (const auto& client : clients) {
+      echoed += client.handler->reliableReceived.load();
+    }
+    return echoed;
+  };
+
+  for (int i = 0; i < 500 && echoed_count() < kClientCount; ++i) {
+    pump_clients();
+    std::this_thread::sleep_for(10ms);
+  }
+
+  EXPECT_GE(echoed_count(), kClientCount);
+
+  std::vector<ShardedClientHandle> handles;
+  for (const auto& event : server.DrainEvents()) {
+    if (event.type == ShardedEventType::kConnected) {
+      handles.push_back(event.client);
+    }
+  }
+  ASSERT_FALSE(handles.empty());
+
+  const int before_push = echoed_count();
+  const char server_push[] = "server push";
+  ASSERT_TRUE(
+    server.SendReliable(handles.front(), 0, server_push, sizeof(server_push)));
+  for (int i = 0; i < 500 && echoed_count() == before_push; ++i) {
+    pump_clients();
+    std::this_thread::sleep_for(10ms);
+  }
+  EXPECT_GT(echoed_count(), before_push);
+
+  std::this_thread::sleep_for(150ms);
+  const auto stats = server.SnapshotStats();
+  EXPECT_EQ(stats.workerCount, 2U);
+  EXPECT_EQ(stats.connectedClients, static_cast<std::uint32_t>(kClientCount));
+  EXPECT_GE(stats.workerConnectedMax, 1U);
 }

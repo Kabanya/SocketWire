@@ -5,6 +5,7 @@
 /// reads align to byte boundaries and expose non-throwing variants for
 /// defensive packet parsing.
 
+#include <bit>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -139,12 +140,12 @@ class BitStream {
       static_assert(std::numeric_limits<float>::is_iec559 &&
                       sizeof(float) == sizeof(std::uint32_t),
                     "BitStream float serialization requires IEEE-754 float");
-      WriteUnsignedBigEndian(std::__bit_cast<std::uint32_t>(value));
+      WriteUnsignedBigEndian(std::bit_cast<std::uint32_t>(value));
     } else if constexpr (std::is_same_v<Value, double>) {
       static_assert(std::numeric_limits<double>::is_iec559 &&
                       sizeof(double) == sizeof(std::uint64_t),
                     "BitStream double serialization requires IEEE-754 double");
-      WriteUnsignedBigEndian(std::__bit_cast<std::uint64_t>(value));
+      WriteUnsignedBigEndian(std::bit_cast<std::uint64_t>(value));
     }
   }
 
@@ -178,12 +179,12 @@ class BitStream {
       static_assert(std::numeric_limits<float>::is_iec559 &&
                       sizeof(float) == sizeof(std::uint32_t),
                     "BitStream float serialization requires IEEE-754 float");
-      value = std::__bit_cast<float>(ReadUnsignedBigEndian<std::uint32_t>());
+      value = std::bit_cast<float>(ReadUnsignedBigEndian<std::uint32_t>());
     } else if constexpr (std::is_same_v<Value, double>) {
       static_assert(std::numeric_limits<double>::is_iec559 &&
                       sizeof(double) == sizeof(std::uint64_t),
                     "BitStream double serialization requires IEEE-754 double");
-      value = std::__bit_cast<double>(ReadUnsignedBigEndian<std::uint64_t>());
+      value = std::bit_cast<double>(ReadUnsignedBigEndian<std::uint64_t>());
     }
   }
 

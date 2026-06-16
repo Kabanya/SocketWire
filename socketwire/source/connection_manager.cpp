@@ -15,6 +15,53 @@ constexpr std::size_t kReceiveBatchSize = 32;
 
 }  // namespace
 
+class ConnectionManager::ClientEventHandler final
+    : public IReliableConnectionHandler {
+ public:
+  ClientEventHandler(ConnectionManager& manager, RemoteClient& client)
+      : manager_(manager), client_(client) {}
+
+  void OnConnected() override {
+    if (manager_.event_handler_ != nullptr)
+      manager_.event_handler_->OnConnected();
+  }
+
+  void OnDisconnected() override {
+    if (manager_.event_handler_ != nullptr) {
+      manager_.event_handler_->OnDisconnected();
+    }
+  }
+
+  void OnReliableReceived(std::uint8_t channel, const void* data,
+                          std::size_t size) override {
+    if (manager_.onPacketReceived != nullptr) {
+      manager_.onPacketReceived(&client_, channel, data, size, true);
+    }
+    if (manager_.event_handler_ != nullptr) {
+      manager_.event_handler_->OnReliableReceived(channel, data, size);
+    }
+  }
+
+  void OnUnreliableReceived(std::uint8_t channel, const void* data,
+                            std::size_t size) override {
+    if (manager_.onPacketReceived != nullptr) {
+      manager_.onPacketReceived(&client_, channel, data, size, false);
+    }
+    if (manager_.event_handler_ != nullptr) {
+      manager_.event_handler_->OnUnreliableReceived(channel, data, size);
+    }
+  }
+
+  void OnTimeout() override {
+    if (manager_.event_handler_ != nullptr)
+      manager_.event_handler_->OnTimeout();
+  }
+
+ private:
+  ConnectionManager& manager_;
+  RemoteClient& client_;
+};
+
 ConnectionManager::ConnectionManager(ISocket* socket,
                                      const ConnectionManagerConfig& cfg,
                                      IClock* clock)
@@ -28,6 +75,7 @@ ConnectionManager::~ConnectionManager() {
   clients_.clear();
   client_map_.clear();
   connected_notified_.clear();
+  client_handlers_.clear();
 }
 
 void ConnectionManager::Update() { Update(clock_->Now()); }
@@ -45,6 +93,8 @@ void ConnectionManager::Update(std::chrono::steady_clock::time_point now) {
       if (onClientDisconnected != nullptr) onClientDisconnected(client.get());
       client_map_.erase(MakeAddressKey(client->address, client->port));
       connected_notified_.erase(client.get());
+      client->connection->SetHandler(nullptr);
+      client_handlers_.erase(client.get());
       return true;
     }
     return false;
@@ -94,11 +144,6 @@ bool ConnectionManager::HandshakeAllowed(
 
 void ConnectionManager::SetHandler(IReliableConnectionHandler* handler) {
   event_handler_ = handler;
-  for (auto& client : clients_) {
-    if (client->connection != nullptr) {
-      client->connection->SetHandler(event_handler_);
-    }
-  }
 }
 
 std::vector<ConnectionManager::RemoteClient*>
@@ -115,6 +160,14 @@ ConnectionManager::RemoteClient* ConnectionManager::GetConnection(
   return it != client_map_.end() ? it->second : nullptr;
 }
 
+ConnectionManager::RemoteClient* ConnectionManager::GetConnection(
+  std::uint64_t id) {
+  for (auto& client : clients_) {
+    if (client != nullptr && client->id == id) return client.get();
+  }
+  return nullptr;
+}
+
 ConnectionManager::RemoteClient* ConnectionManager::FindOrCreateClient(
   const SocketAddress& addr, std::uint16_t port) {
   const auto key = MakeAddressKey(addr, port);
@@ -122,17 +175,20 @@ ConnectionManager::RemoteClient* ConnectionManager::FindOrCreateClient(
   if (it != client_map_.end()) return it->second;
 
   auto client = std::make_unique<RemoteClient>();
+  client->id = next_client_id_++;
   client->address = addr;
   client->port = port;
   client->connection =
     std::make_unique<ReliableConnection>(socket_, config_.connection, clock_);
   client->connection->SetRemoteAddress(addr, port);
-  client->connection->SetHandler(event_handler_);
 
   RemoteClient* raw = client.get();
+  auto handler = std::make_unique<ClientEventHandler>(*this, *raw);
+  client->connection->SetHandler(handler.get());
   clients_.push_back(std::move(client));
   client_map_[key] = raw;
   connected_notified_[raw] = false;
+  client_handlers_[raw] = std::move(handler);
   return raw;
 }
 
@@ -140,6 +196,8 @@ void ConnectionManager::RemoveClient(RemoteClient* client) {
   if (client == nullptr) return;
   client_map_.erase(MakeAddressKey(client->address, client->port));
   connected_notified_.erase(client);
+  if (client->connection != nullptr) client->connection->SetHandler(nullptr);
+  client_handlers_.erase(client);
   auto it = std::ranges::find_if(
     clients_, [client](const std::unique_ptr<RemoteClient>& c) {
       return c.get() == client;

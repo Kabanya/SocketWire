@@ -114,6 +114,7 @@ SocketError WindowsUDPSocket::Bind(const SocketAddress& address,
   if (!GetWsaInitializer().IsInitialized()) return SocketError::kSystem;
 
   if (address.isIPv6 && !config_.enableIPv6) return SocketError::kUnsupported;
+  if (config_.reusePort) return SocketError::kUnsupported;
 
   if (sock_ != INVALID_SOCKET)
     return SocketError::kInvalidParam;  // already open

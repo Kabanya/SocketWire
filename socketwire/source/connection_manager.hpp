@@ -28,6 +28,7 @@ struct ConnectionManagerConfig {
 class ConnectionManager {
  public:
   struct RemoteClient {
+    std::uint64_t id = 0;
     SocketAddress address;
     std::uint16_t port = 0;
     std::unique_ptr<ReliableConnection> connection;
@@ -51,6 +52,7 @@ class ConnectionManager {
 
   std::vector<RemoteClient*> GetConnections();
   RemoteClient* GetConnection(const SocketAddress& addr, std::uint16_t port);
+  RemoteClient* GetConnection(std::uint64_t id);
 
   void SetHandler(IReliableConnectionHandler* handler);
 
@@ -59,8 +61,14 @@ class ConnectionManager {
   std::function<void(RemoteClient*)> onClientConnected;
   /// Called when a disconnected client is removed from the manager.
   std::function<void(RemoteClient*)> onClientDisconnected;
+  /// Called when a client payload is delivered.
+  std::function<void(RemoteClient*, std::uint8_t, const void*, std::size_t,
+                     bool)>
+    onPacketReceived;
 
  private:
+  class ClientEventHandler;
+
   ISocket* socket_ = nullptr;
   ConnectionManagerConfig config_;
   IClock* clock_ = nullptr;
@@ -116,6 +124,9 @@ class ConnectionManager {
   // Handshake rate-limiting state.
   std::uint32_t connect_window_count_ = 0;
   std::chrono::steady_clock::time_point connect_window_start_{};
+  std::uint64_t next_client_id_ = 1;
+  std::unordered_map<RemoteClient*, std::unique_ptr<ClientEventHandler>>
+    client_handlers_;
   void EnsureReceiveBatchBuffers();
   bool HandshakeAllowed(std::chrono::steady_clock::time_point now);
   void EmitClientConnected(RemoteClient* client);

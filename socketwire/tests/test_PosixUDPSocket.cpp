@@ -6,6 +6,10 @@
 #include <cstring>
 #include <thread>
 
+#if !defined(_WIN32) && !defined(_WIN64)
+#include <sys/socket.h>
+#endif
+
 #include "i_socket.hpp"
 #include "socket_init.hpp"
 
@@ -104,6 +108,28 @@ TEST_F(UDPSocketTest, BindMultipleSocketsDifferentPorts) {
 
   EXPECT_NE(socket1->LocalPort(), socket2->LocalPort())
     << "Different sockets should get different ports";
+}
+
+TEST_F(UDPSocketTest, ReusePortAllowsSamePortBind) {
+  SocketConfig config;
+  config.reuseAddress = true;
+  config.reusePort = true;
+
+  auto socket1 = factory->CreateUdpSocket(config);
+  auto socket2 = factory->CreateUdpSocket(config);
+
+  ASSERT_NE(socket1, nullptr);
+  ASSERT_NE(socket2, nullptr);
+
+  const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
+  ASSERT_EQ(socket1->Bind(addr, 0), SocketError::kNone);
+
+  const SocketError second_bind = socket2->Bind(addr, socket1->LocalPort());
+#if defined(SO_REUSEPORT)
+  EXPECT_EQ(second_bind, SocketError::kNone);
+#else
+  EXPECT_EQ(second_bind, SocketError::kUnsupported);
+#endif
 }
 
 // SEND AND RECEIVE

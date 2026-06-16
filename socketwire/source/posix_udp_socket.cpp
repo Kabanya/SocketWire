@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <array>
-
 #include <cerrno>
 #include <utility>
 
@@ -73,8 +72,7 @@ class PosixUDPSocket final : public ISocket {
   std::size_t SendManyWithSendmmsg(std::span<const OutgoingDatagram> datagrams);
 #endif
 #if defined(__APPLE__) && SOCKETWIRE_ENABLE_DARWIN_MSG_X
-  std::size_t SendManyWithSendmsgX(
-    std::span<const OutgoingDatagram> datagrams);
+  std::size_t SendManyWithSendmsgX(std::span<const OutgoingDatagram> datagrams);
 #endif
 
   int fd_ = -1;
@@ -106,6 +104,23 @@ SocketError PosixUDPSocket::Bind(const SocketAddress& address,
   if (config_.reuseAddress) {
     int v = 1;
     ::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(v));
+  }
+  if (config_.reusePort) {
+#if defined(SO_REUSEPORT)
+    int v = 1;
+    if (::setsockopt(fd_, SOL_SOCKET, SO_REUSEPORT, &v, sizeof(v)) != 0) {
+      const SocketError err = MapErrno(errno);
+      ::close(fd_);
+      fd_ = -1;
+      family_ = AF_UNSPEC;
+      return err;
+    }
+#else
+    ::close(fd_);
+    fd_ = -1;
+    family_ = AF_UNSPEC;
+    return SocketError::kUnsupported;
+#endif
   }
   if (config_.sendBufferSize > 0) {
     ::setsockopt(fd_, SOL_SOCKET, SO_SNDBUF, &config_.sendBufferSize,
