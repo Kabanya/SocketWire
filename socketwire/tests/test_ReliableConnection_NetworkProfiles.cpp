@@ -23,7 +23,6 @@
 using socketwire::IncomingDatagram;
 using socketwire::IReliableConnectionHandler;
 using socketwire::ISocket;
-using socketwire::ISocketEventHandler;
 using socketwire::ReliableConnection;
 using socketwire::ReliableConnectionConfig;
 using socketwire::SocketAddress;
@@ -329,8 +328,6 @@ class SimulatedSocket : public ISocket {
     return received_count;
   }
 
-  void Poll(ISocketEventHandler* handler) override { (void)handler; }
-
   SocketError SetBlocking(bool enable) override {
     blocking_ = enable;
     return SocketError::kNone;
@@ -350,6 +347,21 @@ class SimulatedSocket : public ISocket {
   bool blocking_ = false;
   bool closed_ = false;
 };
+
+void TickConnection(ISocket& socket, ReliableConnection& connection,
+                    std::size_t max_packet_size) {
+  std::vector<std::uint8_t> buffer(max_packet_size);
+  while (true) {
+    SocketAddress from;
+    std::uint16_t port = 0;
+    const SocketResult result =
+      socket.Receive(buffer.data(), buffer.size(), from, port);
+    if (result.Failed() || result.bytes <= 0) break;
+    connection.ProcessPacket(buffer.data(), static_cast<std::size_t>(result.bytes),
+                             from, port);
+  }
+  connection.Update();
+}
 
 struct SentMessage {
   std::uint32_t id = 0;
@@ -638,16 +650,20 @@ class ScenarioRunner {
   void RunForOrUntil(std::uint32_t timeout_ms, Predicate done) {
     const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
     while (Clock::now() < deadline) {
-      client_connection_->Tick();
-      server_connection_->Tick();
+      TickConnection(client_socket_, *client_connection_,
+                     profile_.max_packet_size);
+      TickConnection(server_socket_, *server_connection_,
+                     profile_.max_packet_size);
       if (done()) break;
       std::this_thread::sleep_for(1ms);
     }
 
     const auto drain_deadline = Clock::now() + 60ms;
     while (Clock::now() < drain_deadline) {
-      client_connection_->Tick();
-      server_connection_->Tick();
+      TickConnection(client_socket_, *client_connection_,
+                     profile_.max_packet_size);
+      TickConnection(server_socket_, *server_connection_,
+                     profile_.max_packet_size);
       std::this_thread::sleep_for(1ms);
     }
   }
@@ -1015,7 +1031,7 @@ TEST(ReliableConnectionNetworkProfiles,
                            33001);
   connection.ProcessPacket(malformed_batch.data(), malformed_batch.size(), addr,
                            33001);
-  connection.Tick();
+  connection.Update();
 
   EXPECT_EQ(metrics.reliable_messages_delivered, 0u);
   EXPECT_EQ(metrics.unreliable_messages_delivered, 0u);

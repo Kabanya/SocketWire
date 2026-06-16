@@ -1,6 +1,5 @@
 // Tests for the ISocket interface and concrete socket implementations.
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <array>
@@ -33,15 +32,6 @@ TEST(SocketInitTest, ConcurrentInitializeSockets) {
 
   EXPECT_NE(SocketFactoryRegistry::GetFactory(), nullptr);
 }
-
-class MockEventHandler : public ISocketEventHandler {
- public:
-  MOCK_METHOD(void, OnDataReceived,
-              (const SocketAddress& from, std::uint16_t from_port,
-               const void* data, std::size_t bytes_read),
-              (override));
-  MOCK_METHOD(void, OnSocketError, (SocketError error), (override));
-};
 
 class NetSocketTest : public ::testing::Test {
  protected:
@@ -197,7 +187,7 @@ TEST_F(NetSocketTest, SendAndReceive) {
   EXPECT_EQ(from_port, sender_port) << "Should know sender's port";
 }
 
-TEST_F(NetSocketTest, SendAndReceiveWithMock) {
+TEST_F(NetSocketTest, SendAndReceiveDirectly) {
   const SocketConfig config;
 
   // Create sender socket
@@ -218,10 +208,6 @@ TEST_F(NetSocketTest, SendAndReceiveWithMock) {
   std::uint16_t receiver_port = receiver->LocalPort();
   EXPECT_GT(receiver_port, 0) << "Receiver port should be valid";
 
-  // Setup mock event handler
-  MockEventHandler mock_handler;
-
-  // Send test message
   const char* message = "Hello";
   const size_t message_len = std::strlen(message);
 
@@ -235,27 +221,16 @@ TEST_F(NetSocketTest, SendAndReceiveWithMock) {
   // Small delay
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-  // Setup expectation for mock - expect OnDataReceived to be called.
-  EXPECT_CALL(mock_handler, OnDataReceived(::testing::_, sender_port,
-                                           ::testing::_, message_len))
-    .Times(1)
-    .WillOnce(
-      ::testing::Invoke([message, message_len](
-                          const SocketAddress& /*from*/, std::uint16_t /*port*/,
-                          const void* data, std::size_t bytes_read) {
-        // Verify received data matches sent data
-        EXPECT_EQ(bytes_read, message_len)
-          << "Received bytes should match sent size";
-        EXPECT_GT(bytes_read, 0) << "Should receive positive number of bytes";
-        EXPECT_EQ(std::memcmp(data, message, message_len), 0)
-          << "Received data should match sent message";
-      }));
+  char buffer[1024]{};
+  SocketAddress from_addr;
+  std::uint16_t from_port = 0;
+  const SocketResult received =
+    receiver->Receive(buffer, sizeof(buffer), from_addr, from_port);
 
-  // Poll to receive the data
-  receiver->Poll(&mock_handler);
-
-  // Verify mock was called as expected
-  ::testing::Mock::VerifyAndClearExpectations(&mock_handler);
+  ASSERT_TRUE(received.Succeeded());
+  EXPECT_EQ(received.bytes, static_cast<std::ptrdiff_t>(message_len));
+  EXPECT_EQ(from_port, sender_port);
+  EXPECT_EQ(std::memcmp(buffer, message, message_len), 0);
 }
 
 TEST_F(NetSocketTest, NonBlockingBehavior) {

@@ -118,10 +118,12 @@ TEST_F(IntegrationTest, ClientServerConnect) {
   ReliableConnectionConfig conn_cfg;
   conn_cfg.pingIntervalMs = 200;
   conn_cfg.disconnectTimeoutMs = 1000;
+  ConnectionManagerConfig manager_cfg;
+  manager_cfg.connection = conn_cfg;
 
   EchoServerHandler server_handler;
   auto server_manager =
-    std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
+    std::make_unique<ConnectionManager>(server_socket.get(), manager_cfg);
   server_handler.manager = server_manager.get();
   server_manager->SetHandler(&server_handler);
 
@@ -217,10 +219,12 @@ TEST_F(IntegrationTest, ClientServerReliableMessage) {
 
   ReliableConnectionConfig conn_cfg;
   conn_cfg.retryTimeoutMs = 100;
+  ConnectionManagerConfig manager_cfg;
+  manager_cfg.connection = conn_cfg;
 
   EchoServerHandler server_handler;
   auto server_manager =
-    std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
+    std::make_unique<ConnectionManager>(server_socket.get(), manager_cfg);
   server_handler.manager = server_manager.get();
   server_manager->SetHandler(&server_handler);
 
@@ -332,9 +336,11 @@ TEST_F(IntegrationTest, ClientServerMultipleMessages) {
             SocketError::kNone);
 
   ReliableConnectionConfig conn_cfg;
+  ConnectionManagerConfig manager_cfg;
+  manager_cfg.connection = conn_cfg;
   EchoServerHandler server_handler;
   auto server_manager =
-    std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
+    std::make_unique<ConnectionManager>(server_socket.get(), manager_cfg);
   server_handler.manager = server_manager.get();
   server_manager->SetHandler(&server_handler);
 

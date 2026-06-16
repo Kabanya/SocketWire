@@ -1,8 +1,6 @@
 #include "bit_stream.hpp"
 
-#include <algorithm>
 #include <cstring>
-#include <limits>
 #include <stdexcept>
 
 namespace socketwire {
@@ -238,36 +236,6 @@ void BitStream::Clear() {
   buffer_.clear();
   write_pos_ = 0;
   read_pos_ = 0;
-}
-
-void BitStream::WriteQuantizedFloat(float value, float min, float max,
-                                    std::uint8_t bits) {
-  if (bits == 0 || bits > 32) {
-    throw std::out_of_range("bits must be in range [1, 32]");
-  }
-
-  value = std::clamp(value, min, max);
-
-  const std::uint32_t range = (bits == 32)
-                                ? std::numeric_limits<std::uint32_t>::max()
-                                : ((std::uint32_t{1} << bits) - 1);
-  const auto quantized = static_cast<std::uint32_t>(
-    static_cast<float>(range) * ((value - min) / (max - min)));
-
-  WriteBits(quantized, bits);
-}
-
-float BitStream::ReadQuantizedFloat(float min, float max, std::uint8_t bits) {
-  if (bits == 0 || bits > 32) {
-    throw std::out_of_range("bits must be in range [1, 32]");
-  }
-
-  const uint32_t range = (bits == 32)
-                           ? std::numeric_limits<std::uint32_t>::max()
-                           : ((std::uint32_t{1} << bits) - 1);
-  const std::uint32_t quantized = ReadBits(bits);
-  return min + (static_cast<float>(quantized) / static_cast<float>(range)) *
-                 (max - min);
 }
 
 }  // namespace socketwire

@@ -16,7 +16,7 @@ constexpr std::size_t kReceiveBatchSize = 32;
 }  // namespace
 
 ConnectionManager::ConnectionManager(ISocket* socket,
-                                     const ReliableConnectionConfig& cfg,
+                                     const ConnectionManagerConfig& cfg,
                                      IClock* clock)
     : socket_(socket),
       config_(cfg),
@@ -125,7 +125,7 @@ ConnectionManager::RemoteClient* ConnectionManager::FindOrCreateClient(
   client->address = addr;
   client->port = port;
   client->connection =
-    std::make_unique<ReliableConnection>(socket_, config_, clock_);
+    std::make_unique<ReliableConnection>(socket_, config_.connection, clock_);
   client->connection->SetRemoteAddress(addr, port);
   client->connection->SetHandler(event_handler_);
 
@@ -172,7 +172,7 @@ void ConnectionManager::EmitClientConnected(RemoteClient* client) {
 
 void ConnectionManager::EnsureReceiveBatchBuffers() {
   const std::size_t packet_size =
-    std::max<std::size_t>(1, config_.maxPacketSize);
+    std::max<std::size_t>(1, config_.connection.maxPacketSize);
   const std::size_t storage_size = kReceiveBatchSize * packet_size;
   if (receive_batch_storage_.size() != storage_size) {
     receive_batch_storage_.resize(storage_size);

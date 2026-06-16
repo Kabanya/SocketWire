@@ -241,12 +241,6 @@ class BitStream {
   void ResetRead();
   /// Clears the stream.
   void Clear();
-
-  /// Writes a quantized float to the stream.
-  void WriteQuantizedFloat(float value, float min, float max,
-                           std::uint8_t bits);
-  /// Reads a quantized float from the stream.
-  float ReadQuantizedFloat(float min, float max, std::uint8_t bits);
 };
 
 }  // namespace socketwire

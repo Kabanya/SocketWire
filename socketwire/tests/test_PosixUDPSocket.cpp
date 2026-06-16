@@ -1,6 +1,5 @@
 // Tests for UDP socket creation, binding, I/O, polling, and cleanup.
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -11,15 +10,6 @@
 #include "socket_init.hpp"
 
 using namespace socketwire;  // NOLINT
-
-class MockSocketEventHandler : public ISocketEventHandler {
- public:
-  MOCK_METHOD(void, OnDataReceived,
-              (const SocketAddress& from, std::uint16_t from_port,
-               const void* data, std::size_t bytes_read),
-              (override));
-  MOCK_METHOD(void, OnSocketError, (SocketError error), (override));
-};
 
 class UDPSocketTest : public ::testing::Test {
  protected:
@@ -340,8 +330,7 @@ TEST_F(UDPSocketTest, NonBlockingReceiveReturnsWouldBlock) {
   EXPECT_EQ(result.error, SocketError::kWouldBlock);
 }
 
-// POLL TEST
-TEST_F(UDPSocketTest, PollWithHandler) {
+TEST_F(UDPSocketTest, ReceiveAfterSend) {
   const SocketConfig config;
   auto sender = factory->CreateUdpSocket(config);
   auto receiver = factory->CreateUdpSocket(config);
@@ -353,10 +342,6 @@ TEST_F(UDPSocketTest, PollWithHandler) {
   ASSERT_EQ(receiver->Bind(addr, 0), SocketError::kNone);
   std::uint16_t receiver_port = receiver->LocalPort();
 
-  // Setup mock handler
-  MockSocketEventHandler mock_handler;
-
-  // Send message
   const char* message = "Poll test";
   const std::size_t message_len = std::strlen(message);
 
@@ -365,24 +350,17 @@ TEST_F(UDPSocketTest, PollWithHandler) {
 
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-  // Expect OnDataReceived to be called.
-  EXPECT_CALL(mock_handler, OnDataReceived(::testing::_, ::testing::_,
-                                           ::testing::_, message_len))
-    .Times(1)
-    .WillOnce(
-      ::testing::Invoke([message, message_len](
-                          const SocketAddress& /*from*/, std::uint16_t /*port*/,
-                          const void* data, std::size_t bytes) {
-        EXPECT_EQ(bytes, message_len);
-        EXPECT_EQ(std::memcmp(data, message, message_len), 0);
-      }));
-
-  receiver->Poll(&mock_handler);
-
-  ::testing::Mock::VerifyAndClearExpectations(&mock_handler);
+  char buffer[128]{};
+  SocketAddress from;
+  std::uint16_t from_port = 0;
+  const SocketResult result =
+    receiver->Receive(buffer, sizeof(buffer), from, from_port);
+  ASSERT_TRUE(result.Succeeded());
+  ASSERT_EQ(result.bytes, static_cast<std::ptrdiff_t>(message_len));
+  EXPECT_EQ(std::memcmp(buffer, message, message_len), 0);
 }
 
-TEST_F(UDPSocketTest, PollWithoutData) {
+TEST_F(UDPSocketTest, ReceiveWithoutData) {
   const SocketConfig config;
   auto socket = factory->CreateUdpSocket(config);
   ASSERT_NE(socket, nullptr);
@@ -390,11 +368,15 @@ TEST_F(UDPSocketTest, PollWithoutData) {
   const SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
   ASSERT_EQ(socket->Bind(addr, 0), SocketError::kNone);
 
-  // Should not crash
-  socket->Poll(nullptr);
+  char buffer[128]{};
+  SocketAddress from;
+  std::uint16_t from_port = 0;
+  const SocketResult result =
+    socket->Receive(buffer, sizeof(buffer), from, from_port);
+  EXPECT_EQ(result.error, SocketError::kWouldBlock);
 }
 
-TEST_F(UDPSocketTest, PollMultiplePackets) {
+TEST_F(UDPSocketTest, ReceiveMultiplePackets) {
   const SocketConfig config;
   auto sender = factory->CreateUdpSocket(config);
   auto receiver = factory->CreateUdpSocket(config);
@@ -415,20 +397,17 @@ TEST_F(UDPSocketTest, PollMultiplePackets) {
 
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
-  MockSocketEventHandler mock_handler;
-
-  // Poll may receive packets in one or multiple calls depending on timing
-  // and internal heuristics. We just verify at least one packet is received.
-  EXPECT_CALL(mock_handler, OnDataReceived(::testing::_, ::testing::_,
-                                           ::testing::_, ::testing::_))
-    .Times(::testing::AtLeast(1));
-
-  // Poll multiple times to ensure all packets are read
+  int received = 0;
   for (int i = 0; i < num_packets; ++i) {
-    receiver->Poll(&mock_handler);
+    char buffer[128]{};
+    SocketAddress from;
+    std::uint16_t from_port = 0;
+    const SocketResult result =
+      receiver->Receive(buffer, sizeof(buffer), from, from_port);
+    if (result.Succeeded()) ++received;
   }
 
-  ::testing::Mock::VerifyAndClearExpectations(&mock_handler);
+  EXPECT_GE(received, 1);
 }
 
 // CLOSE TEST

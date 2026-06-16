@@ -4,10 +4,12 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "bit_stream.hpp"
+#include "quantization.hpp"
 
 namespace {
 
@@ -75,6 +77,21 @@ TEST_F(BitStreamTest, WriteAndReadBits) {
   bs3.ResetRead();
   EXPECT_EQ(bs3.ReadBits(32), test_value)
     << "Should correctly handle 32-bit values";
+}
+
+TEST_F(BitStreamTest, WriteAndReadQuantizedFloatHelper) {
+  socketwire::WriteQuantizedFloat(bs, 5.0f, 0.0f, 10.0f, 8);
+  socketwire::WriteQuantizedFloat(bs, -1.0f, 0.0f, 10.0f, 8);
+  socketwire::WriteQuantizedFloat(bs, 11.0f, 0.0f, 10.0f, 8);
+
+  bs.ResetRead();
+  EXPECT_NEAR(socketwire::ReadQuantizedFloat(bs, 0.0f, 10.0f, 8), 5.0f,
+              0.05f);
+  EXPECT_FLOAT_EQ(socketwire::ReadQuantizedFloat(bs, 0.0f, 10.0f, 8), 0.0f);
+  EXPECT_FLOAT_EQ(socketwire::ReadQuantizedFloat(bs, 0.0f, 10.0f, 8), 10.0f);
+
+  EXPECT_THROW(socketwire::WriteQuantizedFloat(bs, 1.0f, 0.0f, 1.0f, 0),
+               std::out_of_range);
 }
 
 TEST_F(BitStreamTest, WriteAndReadBytes) {
@@ -343,73 +360,6 @@ TEST_F(BitStreamTest, WriteAndReadInt) {
     EXPECT_EQ(values.at(i), read_val)
       << "Integer mismatch at index " << i << ". Expected: " << values.at(i)
       << ", Got: " << read_val;
-  }
-}
-
-TEST_F(BitStreamTest, QuantizedFloat) {
-  // Test basic quantization
-  float const original = 3.14f;
-  bs.WriteQuantizedFloat(original, 0.0f, 10.0f, 16);
-
-  bs.ResetRead();
-  float const result = bs.ReadQuantizedFloat(0.0f, 10.0f, 16);
-  EXPECT_NEAR(original, result, 0.01f)
-    << "Quantized float should be close to original. Expected: " << original
-    << ", Got: " << result;
-
-  // Test boundary values
-  socketwire::BitStream bs2;
-  float const min_val = 0.0f;
-  bs2.WriteQuantizedFloat(min_val, 0.0f, 10.0f, 16);
-  bs2.ResetRead();
-  float const min_result = bs2.ReadQuantizedFloat(0.0f, 10.0f, 16);
-  EXPECT_NEAR(min_val, min_result, 0.01f)
-    << "Minimum boundary value should be preserved";
-
-  socketwire::BitStream bs3;
-  float const max_val = 10.0f;
-  bs3.WriteQuantizedFloat(max_val, 0.0f, 10.0f, 16);
-  bs3.ResetRead();
-  float const max_result = bs3.ReadQuantizedFloat(0.0f, 10.0f, 16);
-  EXPECT_NEAR(max_val, max_result, 0.01f)
-    << "Maximum boundary value should be preserved";
-
-  // Test different precision levels
-  socketwire::BitStream bs4;
-  const float test_val = 5.5f;
-  bs4.WriteQuantizedFloat(test_val, 0.0f, 10.0f, 8);  // Lower precision
-  bs4.ResetRead();
-  const float low_prec_result = bs4.ReadQuantizedFloat(0.0f, 10.0f, 8);
-  EXPECT_NEAR(test_val, low_prec_result, 0.1f)
-    << "8-bit quantization should have lower precision";
-
-  socketwire::BitStream bs5;
-  bs5.WriteQuantizedFloat(test_val, 0.0f, 10.0f, 16);  // Medium precision
-  bs5.ResetRead();
-  const float med_prec_result = bs5.ReadQuantizedFloat(0.0f, 10.0f, 16);
-  EXPECT_NEAR(test_val, med_prec_result, 0.01f)
-    << "16-bit quantization should have medium precision";
-
-  // Test negative range
-  socketwire::BitStream bs6;
-  const float neg_val = -5.0f;
-  bs6.WriteQuantizedFloat(neg_val, -10.0f, 10.0f, 16);
-  bs6.ResetRead();
-  const float neg_result = bs6.ReadQuantizedFloat(-10.0f, 10.0f, 16);
-  EXPECT_NEAR(neg_val, neg_result, 0.01f)
-    << "Negative values should be quantized correctly";
-
-  // Test multiple sequential quantized floats
-  socketwire::BitStream bs7;
-  std::vector<float> values = {0.0f, 2.5f, 5.0f, 7.5f, 10.0f};
-  for (const float val : values) {
-    bs7.WriteQuantizedFloat(val, 0.0f, 10.0f, 16);
-  }
-  bs7.ResetRead();
-  for (std::size_t i = 0; i < values.size(); ++i) {
-    const float read_val = bs7.ReadQuantizedFloat(0.0f, 10.0f, 16);
-    EXPECT_NEAR(values.at(i), read_val, 0.01f)
-      << "Sequential quantized float mismatch at index " << i;
   }
 }
 

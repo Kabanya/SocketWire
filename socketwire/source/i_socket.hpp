@@ -136,24 +136,6 @@ struct WebSocketConfig {
   std::size_t maxMessageSize = static_cast<std::size_t>(64 * 1024);
 };
 
-/// Event handler interface for socket-level notifications.
-class ISocketEventHandler {
- public:
-  virtual ~ISocketEventHandler() = default;
-
-  /// Called when data is successfully read.
-  virtual void OnDataReceived([[maybe_unused]] const SocketAddress& from,
-                              [[maybe_unused]] std::uint16_t from_port,
-                              [[maybe_unused]] const void* data,
-                              [[maybe_unused]] std::size_t bytes_read) {}
-
-  /// Called on socket errors.
-  virtual void OnSocketError([[maybe_unused]] SocketError error_code) {}
-
-  /// Called when the socket is closed.
-  virtual void OnSocketClosed() {}
-};
-
 /// Base socket interface.
 class ISocket {
  public:
@@ -213,9 +195,6 @@ class ISocket {
     return Receive(buffer.data(), buffer.size(), from_addr, from_port);
   }
 
-  /// Polls the socket and emits events to the handler.
-  virtual void Poll(ISocketEventHandler* handler) = 0;
-
   /// Updates blocking mode.
   virtual SocketError SetBlocking(bool enable) = 0;
   [[nodiscard]] virtual bool IsBlocking() const = 0;
@@ -236,11 +215,6 @@ class ISocketFactory {
   virtual ~ISocketFactory() = default;
 
   virtual std::unique_ptr<ISocket> CreateUdpSocket(const SocketConfig& cfg) = 0;
-
-  virtual std::unique_ptr<ISocket> CreateWebSocketClient(
-    [[maybe_unused]] const WebSocketConfig& cfg) {
-    return nullptr;
-  }
 };
 
 /// Global access to the registered socket factory.
@@ -262,6 +236,9 @@ void RegisterWindowsSocketFactory();
 
 /// Registers the Emscripten WebSocket socket factory implementation.
 void RegisterEmscriptenSocketFactory();
+
+std::unique_ptr<ISocket> CreateEmscriptenWebSocketClient(
+  const WebSocketConfig& cfg);
 
 }  // namespace socketwire
 

@@ -59,7 +59,6 @@ class PosixUDPSocket final : public ISocket {
                        SocketAddress& from_addr,
                        std::uint16_t& from_port) override;
   std::size_t ReceiveMany(std::span<IncomingDatagram> datagrams) override;
-  void Poll(ISocketEventHandler* handler) override;
   SocketError SetBlocking(bool enable) override;
   [[nodiscard]] bool IsBlocking() const override;
   [[nodiscard]] std::uint16_t LocalPort() const override;
@@ -454,28 +453,6 @@ std::size_t PosixUDPSocket::ReceiveManyPortable(
     ++received_count;
   }
   return received_count;
-}
-
-void PosixUDPSocket::Poll(ISocketEventHandler* handler) {
-  if (handler == nullptr || fd_ == -1) return;
-
-  // Single read loop until WouldBlock.
-  for (;;) {
-    SocketAddress from;
-    std::uint16_t port = 0;
-    char temp[2048];
-    const SocketResult r = Receive(temp, sizeof(temp), from, port);
-    if (!r.Succeeded()) {
-      if (r.error != SocketError::kWouldBlock) handler->OnSocketError(r.error);
-      break;
-    }
-    if (r.bytes <= 0) break;
-    handler->OnDataReceived(from, port, temp,
-                            static_cast<std::size_t>(r.bytes));
-
-    // A short read means the socket buffer is likely drained.
-    if (std::cmp_less(r.bytes, sizeof(temp))) break;
-  }
 }
 
 SocketError PosixUDPSocket::SetBlocking(bool enable) {

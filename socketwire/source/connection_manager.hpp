@@ -15,6 +15,12 @@
 
 namespace socketwire {
 
+struct ConnectionManagerConfig {
+  ReliableConnectionConfig connection{};
+  std::uint32_t maxClients = 1024;
+  std::uint32_t maxHandshakesPerSecond = 20;
+};
+
 /// Manages multiple server-side reliable connections.
 ///
 /// Threading contract: ConnectionManager has the same single-network-loop
@@ -25,11 +31,10 @@ class ConnectionManager {
     SocketAddress address;
     std::uint16_t port = 0;
     std::unique_ptr<ReliableConnection> connection;
-    void* userData = nullptr;  // For game-specific data (e.g., entity ID)
   };
 
   explicit ConnectionManager(ISocket* socket,
-                             const ReliableConnectionConfig& cfg = {},
+                             const ConnectionManagerConfig& cfg = {},
                              IClock* clock = nullptr);
   ~ConnectionManager();
 
@@ -57,7 +62,7 @@ class ConnectionManager {
 
  private:
   ISocket* socket_ = nullptr;
-  ReliableConnectionConfig config_;
+  ConnectionManagerConfig config_;
   IClock* clock_ = nullptr;
   IReliableConnectionHandler* event_handler_ = nullptr;
 

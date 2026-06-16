@@ -116,8 +116,6 @@ class PerfNullSocket final : public ISocket {
     return {.bytes = -1, .error = SocketError::kWouldBlock};
   }
 
-  void Poll(ISocketEventHandler* handler) override { (void)handler; }
-
   SocketError SetBlocking(bool enable) override {
     blocking_ = enable;
     return SocketError::kNone;
@@ -230,6 +228,21 @@ void UpdateAtomicMax(std::atomic<std::int64_t>& target, std::int64_t value) {
 
 double NanosecondsToMilliseconds(std::int64_t ns) {
   return static_cast<double>(ns) / 1000000.0;
+}
+
+void TickConnection(ISocket& socket, ReliableConnection& connection,
+                    std::size_t max_packet_size = 1400) {
+  std::vector<std::uint8_t> buffer(max_packet_size);
+  while (true) {
+    SocketAddress from;
+    std::uint16_t port = 0;
+    const SocketResult result =
+      socket.Receive(buffer.data(), buffer.size(), from, port);
+    if (result.Failed() || result.bytes <= 0) break;
+    connection.ProcessPacket(buffer.data(), static_cast<std::size_t>(result.bytes),
+                             from, port);
+  }
+  connection.Update();
 }
 
 class ApplicationWorkloadClientHandler final
@@ -366,6 +379,8 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
   conn_cfg.pingIntervalMs = 1000;
   conn_cfg.disconnectTimeoutMs = 5000;
   conn_cfg.maxPendingReliablePackets = 4096;
+  ConnectionManagerConfig manager_cfg;
+  manager_cfg.connection = conn_cfg;
   TaskQueue network_queue;
   std::unique_ptr<ThreadPool> workers;
   if (mode == ApplicationWorkloadMode::kThreadPool) {
@@ -381,7 +396,7 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
   server_handler.workers = workers.get();
   server_handler.network_queue = &network_queue;
   auto server_manager =
-    std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
+    std::make_unique<ConnectionManager>(server_socket.get(), manager_cfg);
   server_handler.manager = server_manager.get();
   server_manager->SetHandler(&server_handler);
 
@@ -399,7 +414,7 @@ ApplicationWorkloadResult RunApplicationWorkloadScenario(
       const auto tick_start = steady_clock::now();
       network_queue.Drain();
       server_manager->Tick();
-      client_conn->Tick();
+      TickConnection(*client_socket, *client_conn);
       network_queue.Drain();
       const auto tick_ns =
         duration_cast<nanoseconds>(steady_clock::now() - tick_start).count();
@@ -534,7 +549,7 @@ TEST_F(ReliableConnectionPerformanceTest, SmallPacketThroughput) {
     while (running) {
       network_queue.Drain();
       server_manager->Tick();
-      client_conn->Tick();
+      TickConnection(*client_socket, *client_conn);
       network_queue.Drain();
       std::this_thread::yield();
     }
@@ -628,7 +643,7 @@ TEST_F(ReliableConnectionPerformanceTest, MediumPacketThroughput) {
     while (running) {
       network_queue.Drain();
       server_manager->Tick();
-      client_conn->Tick();
+      TickConnection(*client_socket, *client_conn);
       network_queue.Drain();
       std::this_thread::yield();
     }
@@ -717,7 +732,7 @@ TEST_F(ReliableConnectionPerformanceTest, LargePacketThroughput) {
     while (running) {
       network_queue.Drain();
       server_manager->Tick();
-      client_conn->Tick();
+      TickConnection(*client_socket, *client_conn);
       network_queue.Drain();
       std::this_thread::yield();
     }
@@ -832,8 +847,8 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionScalability) {
     while (running) {
       network_queue.Drain();
       server_manager->Tick();
-      for (const auto& client_conn : client_conns) {
-        client_conn->Tick();
+      for (std::size_t i = 0; i < client_conns.size(); ++i) {
+        TickConnection(*client_sockets.at(i), *client_conns.at(i));
       }
       network_queue.Drain();
       std::this_thread::yield();
@@ -968,12 +983,12 @@ TEST_F(ReliableConnectionPerformanceTest, ConnectionManagerUpdateScalability) {
 
   for (const int client_count : k_client_counts) {
     PerfNullSocket socket;
-    ReliableConnectionConfig cfg;
+    ConnectionManagerConfig cfg;
     cfg.maxClients = static_cast<std::uint32_t>(client_count);
     cfg.maxHandshakesPerSecond = 0;
-    cfg.maxPacketSize = 256;
-    cfg.pingIntervalMs = 60000;
-    cfg.disconnectTimeoutMs = 60000;
+    cfg.connection.maxPacketSize = 256;
+    cfg.connection.pingIntervalMs = 60000;
+    cfg.connection.disconnectTimeoutMs = 60000;
 
     ManualClock clock(now);
     ConnectionManager manager(&socket, cfg, &clock);

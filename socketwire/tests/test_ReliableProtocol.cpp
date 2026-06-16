@@ -19,10 +19,10 @@ using namespace std::chrono_literals;
 namespace {
 
 using socketwire::ConnectionManager;
+using socketwire::ConnectionManagerConfig;
 using socketwire::ConnectionState;
 using socketwire::IReliableConnectionHandler;
 using socketwire::ISocket;
-using socketwire::ISocketEventHandler;
 using socketwire::ManualClock;
 using socketwire::ReliableConnection;
 using socketwire::ReliableConnectionConfig;
@@ -93,7 +93,6 @@ class RecordingSocket : public ISocket {
     return {.bytes = 0, .error = SocketError::kWouldBlock};
   }
 
-  void Poll(ISocketEventHandler* handler) override { (void)handler; }
   SocketError SetBlocking(bool enable) override {
     blocking_ = enable;
     return SocketError::kNone;
@@ -383,10 +382,10 @@ TEST(BackpressureTest, PendingReliableAndMessageSizeLimitsRejectSends) {
 TEST(ConnectionManagerArchitectureTest, ConnectionCallbacksAndLimits) {
   ManualClock clock;
   RecordingSocket socket;
-  ReliableConnectionConfig config;
+  ConnectionManagerConfig config;
   config.maxClients = 1;
   config.maxHandshakesPerSecond = 1;
-  config.pingIntervalMs = 1000;
+  config.connection.pingIntervalMs = 1000;
 
   ConnectionManager manager(&socket, config, &clock);
   int connected = 0;
@@ -419,7 +418,7 @@ TEST(ConnectionManagerArchitectureTest, ConnectionCallbacksAndLimits) {
   EXPECT_TRUE(manager.GetConnections().empty());
 
   RecordingSocket rate_socket;
-  ReliableConnectionConfig rate_config = config;
+  ConnectionManagerConfig rate_config = config;
   rate_config.maxClients = 8;
   ConnectionManager rate_limited(&rate_socket, rate_config, &clock);
   rate_limited.ProcessPacket(connect.data(), connect.size(), addr1, 1000);

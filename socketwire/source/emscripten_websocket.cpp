@@ -137,28 +137,6 @@ class EmscriptenWebSocketSocket final : public ISocket {
             .error = SocketError::kNone};
   }
 
-  void Poll(ISocketEventHandler* handler) override {
-    if (handler == nullptr) return;
-
-    std::vector<std::uint8_t> temp(config_.maxMessageSize);
-    while (true) {
-      SocketAddress from;
-      std::uint16_t port = 0;
-      const SocketResult result = Receive(temp.data(), temp.size(), from, port);
-      if (result.Succeeded() && result.bytes > 0) {
-        handler->OnDataReceived(from, port, temp.data(),
-                                static_cast<std::size_t>(result.bytes));
-        continue;
-      }
-      if (result.error == SocketError::kClosed) {
-        handler->OnSocketClosed();
-      } else if (result.error != SocketError::kWouldBlock) {
-        handler->OnSocketError(result.error);
-      }
-      break;
-    }
-  }
-
   SocketError SetBlocking(bool enable) override {
     return enable ? SocketError::kUnsupported : SocketError::kNone;
   }
@@ -288,13 +266,6 @@ class EmscriptenSocketFactory final : public ISocketFactory {
     [[maybe_unused]] const SocketConfig& cfg) override {
     return nullptr;
   }
-
-  std::unique_ptr<ISocket> CreateWebSocketClient(
-    const WebSocketConfig& cfg) override {
-    auto socket = std::make_unique<EmscriptenWebSocketSocket>(cfg);
-    if (!socket->Open()) return nullptr;
-    return socket;
-  }
 };
 
 }  // namespace
@@ -303,8 +274,20 @@ void RegisterEmscriptenSocketFactory() {
   static EmscriptenSocketFactory factory;
   SocketFactoryRegistry::SetFactory(&factory);
 }
+
+std::unique_ptr<ISocket> CreateEmscriptenWebSocketClient(
+  const WebSocketConfig& cfg) {
+  auto socket = std::make_unique<EmscriptenWebSocketSocket>(cfg);
+  if (!socket->Open()) return nullptr;
+  return socket;
+}
 #else
 void RegisterEmscriptenSocketFactory() {}
+
+std::unique_ptr<ISocket> CreateEmscriptenWebSocketClient(
+  [[maybe_unused]] const WebSocketConfig& cfg) {
+  return nullptr;
+}
 #endif
 
 }  // namespace socketwire

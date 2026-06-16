@@ -11,8 +11,6 @@
 namespace socketwire {
 namespace {
 
-constexpr std::size_t kReceiveBatchSize = 32;
-
 std::span<const std::uint8_t> AsBytes(const void* data, std::size_t size) {
   if (data == nullptr || size == 0) return {};
   return {static_cast<const std::uint8_t*>(data), size};
@@ -61,7 +59,6 @@ ReliableConnection::ReliableConnection(ISocket* socket,
     config_.numChannels, config_.maxFragmentGroupsPerChannel,
     config_.maxFragmentsPerMessage, config_.maxMessageSize,
     config_.fragmentTimeoutMs);
-  EnsureReceiveBatchBuffers();
 
   const auto now = clock_->Now();
   last_send_time_ = now;
@@ -1021,24 +1018,6 @@ void ReliableConnection::RetryPendingPackets(
   }
 }
 
-void ReliableConnection::EnsureReceiveBatchBuffers() {
-  const std::size_t packet_size =
-    std::max<std::size_t>(1, config_.maxPacketSize);
-  const std::size_t storage_size = kReceiveBatchSize * packet_size;
-  if (receive_batch_storage_.size() != storage_size) {
-    receive_batch_storage_.resize(storage_size);
-  }
-  if (receive_batch_.size() != kReceiveBatchSize) {
-    receive_batch_.resize(kReceiveBatchSize);
-  }
-
-  for (std::size_t i = 0; i < kReceiveBatchSize; ++i) {
-    receive_batch_.at(i).data = receive_batch_storage_.data() + i * packet_size;
-    receive_batch_.at(i).capacity = packet_size;
-    receive_batch_.at(i).result = {};
-  }
-}
-
 void ReliableConnection::CheckTimeout(
   std::chrono::steady_clock::time_point now) {
   if (state_ != ConnectionState::kConnected) return;
@@ -1116,25 +1095,6 @@ void ReliableConnection::CopyDeadlineToPending(
   pending.deadline_ms = deadline.deadline_ms;
   pending.createdTime = deadline.createdTime;
   pending.expireTime = deadline.expireTime;
-}
-
-void ReliableConnection::Tick() {
-  while (true) {
-    EnsureReceiveBatchBuffers();
-    const std::size_t received = socket_->ReceiveMany(receive_batch_);
-    if (received == 0) break;
-
-    for (std::size_t i = 0; i < received; ++i) {
-      const IncomingDatagram& datagram = receive_batch_.at(i);
-      if (datagram.result.bytes > 0) {
-        ProcessPacket(datagram.data,
-                      static_cast<std::size_t>(datagram.result.bytes),
-                      datagram.fromAddr, datagram.fromPort);
-      }
-    }
-    if (received < receive_batch_.size()) break;
-  }
-  Update(clock_->Now());
 }
 
 }  // namespace socketwire

@@ -88,7 +88,6 @@ class WindowsUDPSocket final : public ISocket {
   SocketResult Receive(void* buffer, std::size_t capacity,
                        SocketAddress& from_addr,
                        std::uint16_t& from_port) override;
-  void Poll(ISocketEventHandler* handler) override;
   SocketError SetBlocking(bool enable) override;
   bool IsBlocking() const override;
   std::uint16_t LocalPort() const override;
@@ -269,28 +268,6 @@ SocketResult WindowsUDPSocket::Receive(void* buffer, std::size_t capacity,
   else
     from_port = 0;
   return {got, SocketError::kNone};
-}
-
-void WindowsUDPSocket::Poll(ISocketEventHandler* handler) {
-  if (handler == nullptr || sock_ == INVALID_SOCKET) return;
-
-  // Single read loop until WouldBlock
-  for (;;) {
-    SocketAddress from;
-    std::uint16_t port = 0;
-    char temp[2048];
-    SocketResult r = Receive(temp, sizeof(temp), from, port);
-    if (!r.Succeeded()) {
-      if (r.error != SocketError::kWouldBlock) handler->OnSocketError(r.error);
-      break;
-    }
-    if (r.bytes <= 0) break;
-    handler->OnDataReceived(from, port, temp,
-                            static_cast<std::size_t>(r.bytes));
-
-    // A short read means the socket buffer is likely drained.
-    if (r.bytes < static_cast<std::ptrdiff_t>(sizeof(temp))) break;
-  }
 }
 
 SocketError WindowsUDPSocket::SetBlocking(bool enable) {

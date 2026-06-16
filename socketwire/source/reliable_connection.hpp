@@ -76,10 +76,6 @@ struct ReliableConnectionConfig {
   std::uint32_t disconnectTimeoutMs = 5000;
   std::uint32_t maxPacketSize = 1400;
   std::uint8_t numChannels = 2;
-  /// Maximum accepted server-side clients.
-  std::uint32_t maxClients = 1024;
-  /// Maximum new-connection handshakes accepted per second (0 = unlimited).
-  std::uint32_t maxHandshakesPerSecond = 20;
   /// How long (ms) to wait for all fragments before discarding an incomplete
   /// group.
   std::uint32_t fragmentTimeoutMs = 5000;
@@ -204,11 +200,6 @@ class ReliableConnection {
   /// a caller-supplied tick timestamp.
   void Update(std::chrono::steady_clock::time_point now);
 
-  /// Drains pending socket packets, then calls Update().
-  ///
-  /// Requires the socket to be in non-blocking mode.
-  void Tick();
-
   void ProcessPacket(const void* data, std::size_t size,
                      const SocketAddress& from, std::uint16_t from_port);
 
@@ -268,8 +259,6 @@ class ReliableConnection {
   std::vector<std::uint8_t> batch_command_buffer_;
   std::vector<std::uint8_t> batch_payload_buffer_;
   std::vector<std::span<const std::uint8_t>> batch_command_spans_;
-  std::vector<std::uint8_t> receive_batch_storage_;
-  std::vector<IncomingDatagram> receive_batch_;
 
   // Sequence numbers per channel.
   std::vector<std::uint32_t> send_sequence_;
@@ -376,7 +365,6 @@ class ReliableConnection {
   /// Discard fragment groups that have been waiting longer than
   /// fragmentTimeoutMs.
   void CleanupFragments(std::chrono::steady_clock::time_point now);
-  void EnsureReceiveBatchBuffers();
   void ClearPendingPackets();
   [[nodiscard]] bool SecureMode() const { return config_.crypto.enabled; }
   [[nodiscard]] bool CanUseCrypto() const;

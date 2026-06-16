@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstring>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -14,10 +15,10 @@
 
 using socketwire::BitStream;
 using socketwire::ConnectionManager;
+using socketwire::ConnectionManagerConfig;
 using socketwire::ConnectionState;
 using socketwire::IReliableConnectionHandler;
 using socketwire::ISocket;
-using socketwire::ISocketEventHandler;
 using socketwire::ReliableConnection;
 using socketwire::ReliableConnectionConfig;
 using socketwire::SocketAddress;
@@ -134,6 +135,21 @@ socketwire::detail::DecodedPacket DecodePacket(
   return decoded.value_or(socketwire::detail::DecodedPacket{});
 }
 
+void DrainConnection(ISocket& socket, ReliableConnection& connection,
+                     std::size_t max_packet_size = 1400) {
+  std::vector<std::uint8_t> buffer(max_packet_size);
+  while (true) {
+    SocketAddress from;
+    std::uint16_t port = 0;
+    const SocketResult result =
+      socket.Receive(buffer.data(), buffer.size(), from, port);
+    if (result.Failed() || result.bytes <= 0) break;
+    connection.ProcessPacket(buffer.data(), static_cast<std::size_t>(result.bytes),
+                             from, port);
+  }
+  connection.Update();
+}
+
 // Mock socket for testing
 class MockSocket : public ISocket {
  public:
@@ -186,8 +202,6 @@ class MockSocket : public ISocket {
     return {.bytes = static_cast<std::ptrdiff_t>(copy_size),
             .error = SocketError::kNone};
   }
-
-  void Poll(ISocketEventHandler* handler) override { (void)handler; }
 
   SocketError SetBlocking(bool enable) override {
     (void)enable;
@@ -248,8 +262,6 @@ class WebSocketLikeMockSocket : public ISocket {
     return {.bytes = static_cast<std::ptrdiff_t>(copy_size),
             .error = SocketError::kNone};
   }
-
-  void Poll(ISocketEventHandler* handler) override { (void)handler; }
 
   SocketError SetBlocking(bool enable) override {
     return enable ? SocketError::kUnsupported : SocketError::kNone;
@@ -359,7 +371,7 @@ TEST_F(ReliableConnectionTest, WebSocketLikeSocketSupportsClientHandshake) {
             PacketType::kConnect);
 
   web_socket.QueueReceive(MakeBasePacket(PacketType::kAccept, 0, 0));
-  conn.Tick();
+  DrainConnection(web_socket, conn);
 
   EXPECT_TRUE(handler.connected);
   EXPECT_TRUE(conn.IsConnected());
@@ -1114,14 +1126,14 @@ TEST_F(ReliableConnectionTest, FragmentGroupExpiresByDeadline) {
 class ConnectionManagerTest : public ::testing::Test {
  protected:
   MockSocket socket;
-  ReliableConnectionConfig config;
+  ConnectionManagerConfig config;
   MockEventHandler handler;
 
   void SetUp() override {
-    config.maxRetries = 3;
-    config.retryTimeoutMs = 50;
-    config.pingIntervalMs = 100;
-    config.disconnectTimeoutMs = 500;
+    config.connection.maxRetries = 3;
+    config.connection.retryTimeoutMs = 50;
+    config.connection.pingIntervalMs = 100;
+    config.connection.disconnectTimeoutMs = 500;
   }
 };
 
@@ -1221,7 +1233,7 @@ TEST_F(ConnectionManagerTest, UpdateAllConnections) {
   }
 }
 
-TEST_F(ConnectionManagerTest, UserData) {
+TEST_F(ConnectionManagerTest, CallerOwnsUserData) {
   ConnectionManager manager(&socket, config);
 
   SocketAddress addr = SocketAddress::FromIPv4(0x7F000001);
@@ -1232,11 +1244,10 @@ TEST_F(ConnectionManagerTest, UserData) {
   auto* client = manager.GetConnection(addr, 12345);
   ASSERT_NE(client, nullptr);
 
-  // Set user data
-  int user_data = 42;
-  client->userData = &user_data;
+  std::unordered_map<ConnectionManager::RemoteClient*, int> user_data;
+  user_data.emplace(client, 42);
 
-  EXPECT_EQ(*static_cast<const int*>(client->userData), 42);
+  EXPECT_EQ(user_data.at(client), 42);
 }
 
 // Safety and correctness tests.

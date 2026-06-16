@@ -35,6 +35,21 @@ bool WaitUntil(Predicate predicate, std::chrono::milliseconds timeout,
   return predicate();
 }
 
+void TickConnection(ISocket& socket, ReliableConnection& connection,
+                    std::size_t max_packet_size = 1400) {
+  std::vector<std::uint8_t> buffer(max_packet_size);
+  while (true) {
+    SocketAddress from;
+    std::uint16_t port = 0;
+    const SocketResult result =
+      socket.Receive(buffer.data(), buffer.size(), from, port);
+    if (result.Failed() || result.bytes <= 0) break;
+    connection.ProcessPacket(buffer.data(), static_cast<std::size_t>(result.bytes),
+                             from, port);
+  }
+  connection.Update();
+}
+
 class AsyncEchoServerHandler final : public IReliableConnectionHandler {
  public:
   AsyncEchoServerHandler(ThreadPool& workers, TaskQueue& network_queue)
@@ -138,7 +153,6 @@ class DiscardSocket final : public ISocket {
     return {.bytes = -1, .error = SocketError::kWouldBlock};
   }
 
-  void Poll(ISocketEventHandler* handler) override { (void)handler; }
   SocketError SetBlocking(bool enable) override {
     blocking_ = enable;
     return SocketError::kNone;
@@ -464,9 +478,9 @@ TEST(ThreadPoolIntegrationTest, ClientWorkerPostsNetworkSend) {
   auto client_socket = factory->CreateUdpSocket(cfg);
   ASSERT_NE(client_socket, nullptr);
 
-  ReliableConnectionConfig server_cfg;
-  server_cfg.retryTimeoutMs = 50;
-  server_cfg.disconnectTimeoutMs = 1000;
+  ConnectionManagerConfig server_cfg;
+  server_cfg.connection.retryTimeoutMs = 50;
+  server_cfg.connection.disconnectTimeoutMs = 1000;
 
   ReliableConnectionConfig client_cfg;
   client_cfg.retryTimeoutMs = 50;
@@ -496,7 +510,7 @@ TEST(ThreadPoolIntegrationTest, ClientWorkerPostsNetworkSend) {
     while (running.load()) {
       network_queue.Drain();
       server_manager->Tick();
-      client_conn->Tick();
+      TickConnection(*client_socket, *client_conn);
       network_queue.Drain();
       std::this_thread::sleep_for(1ms);
     }
@@ -562,6 +576,8 @@ TEST(ThreadPoolIntegrationTest, WorkerPostsResultBackToNetworkThread) {
   conn_cfg.retryTimeoutMs = 50;
   conn_cfg.pingIntervalMs = 100;
   conn_cfg.disconnectTimeoutMs = 1000;
+  ConnectionManagerConfig manager_cfg;
+  manager_cfg.connection = conn_cfg;
 
   ThreadPool workers(2);
   workers.Start();
@@ -569,7 +585,7 @@ TEST(ThreadPoolIntegrationTest, WorkerPostsResultBackToNetworkThread) {
 
   AsyncEchoServerHandler server_handler(workers, network_queue);
   auto server_manager =
-    std::make_unique<ConnectionManager>(server_socket.get(), conn_cfg);
+    std::make_unique<ConnectionManager>(server_socket.get(), manager_cfg);
   server_handler.manager = server_manager.get();
   server_manager->SetHandler(&server_handler);
 
@@ -584,7 +600,7 @@ TEST(ThreadPoolIntegrationTest, WorkerPostsResultBackToNetworkThread) {
     while (running.load()) {
       network_queue.Drain();
       server_manager->Tick();
-      client_conn->Tick();
+      TickConnection(*client_socket, *client_conn);
       network_queue.Drain();
       std::this_thread::sleep_for(1ms);
     }

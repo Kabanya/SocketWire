@@ -1,6 +1,7 @@
 add_library(SocketWire STATIC
   bit_stream.hpp
   bit_stream.cpp
+  quantization.hpp
   i_socket.hpp
   i_socket.cpp
   socket_poller.hpp

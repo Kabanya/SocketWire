@@ -15,6 +15,7 @@
 
 #include "bit_stream.hpp"
 #include "i_socket.hpp"
+#include "quantization.hpp"
 #include "socket_init.hpp"
 #include "socket_poller.hpp"
 
@@ -184,22 +185,22 @@ TEST_F(PerformanceTest, BitStreamQuantizedFloat) {
   MeasureTime("Write " + std::to_string(iterations) + " quantized floats",
               iterations, []() {
                 socketwire::BitStream bs;
-                bs.WriteQuantizedFloat(3.14f, 0.0f, 10.0f, 16);
-                bs.WriteQuantizedFloat(7.5f, 0.0f, 10.0f, 16);
+                WriteQuantizedFloat(bs, 3.14f, 0.0f, 10.0f, 16);
+                WriteQuantizedFloat(bs, 7.5f, 0.0f, 10.0f, 16);
               });
 
   // Read performance
   socketwire::BitStream bs_read;
   for (int i = 0; i < iterations; ++i) {
     const float val = static_cast<float>(i % 100) / 10.0f;
-    bs_read.WriteQuantizedFloat(val, 0.0f, 10.0f, 16);
+    WriteQuantizedFloat(bs_read, val, 0.0f, 10.0f, 16);
   }
 
   MeasureTime("Read " + std::to_string(iterations) + " quantized floats",
               iterations, [&bs_read]() {
                 bs_read.ResetRead();
                 for (int i = 0; i < 10; ++i) {
-                  bs_read.ReadQuantizedFloat(0.0f, 10.0f, 16);
+                  ReadQuantizedFloat(bs_read, 0.0f, 10.0f, 16);
                 }
               });
 
@@ -252,9 +253,9 @@ TEST_F(PerformanceTest, BitStreamMixedOperations) {
       // Simulate a game packet
       bs.WriteBit(true);                                // connected flag
       bs.Write(42);                                     // player ID
-      bs.WriteQuantizedFloat(10.5f, 0.0f, 100.0f, 16);  // position X
-      bs.WriteQuantizedFloat(20.3f, 0.0f, 100.0f, 16);  // position Y
-      bs.WriteQuantizedFloat(5.1f, 0.0f, 100.0f, 16);   // position Z
+      WriteQuantizedFloat(bs, 10.5f, 0.0f, 100.0f, 16);  // position X
+      WriteQuantizedFloat(bs, 20.3f, 0.0f, 100.0f, 16);  // position Y
+      WriteQuantizedFloat(bs, 5.1f, 0.0f, 100.0f, 16);   // position Z
       bs.Write(std::string("Player"));                  // name
       bs.WriteBits(0xFF, 8);                            // flags
     });
@@ -264,9 +265,9 @@ TEST_F(PerformanceTest, BitStreamMixedOperations) {
   for (int i = 0; i < 1000; ++i) {
     bs_read.WriteBit(true);
     bs_read.Write(i);
-    bs_read.WriteQuantizedFloat(10.5f, 0.0f, 100.0f, 16);
-    bs_read.WriteQuantizedFloat(20.3f, 0.0f, 100.0f, 16);
-    bs_read.WriteQuantizedFloat(5.1f, 0.0f, 100.0f, 16);
+    WriteQuantizedFloat(bs_read, 10.5f, 0.0f, 100.0f, 16);
+    WriteQuantizedFloat(bs_read, 20.3f, 0.0f, 100.0f, 16);
+    WriteQuantizedFloat(bs_read, 5.1f, 0.0f, 100.0f, 16);
     bs_read.Write(std::string("Player"));
     bs_read.WriteBits(0xFF, 8);
   }
@@ -278,9 +279,9 @@ TEST_F(PerformanceTest, BitStreamMixedOperations) {
       const bool flag = bs_read.ReadBit();
       int id = 0;
       bs_read.Read(id);
-      const float x = bs_read.ReadQuantizedFloat(0.0f, 100.0f, 16);
-      const float y = bs_read.ReadQuantizedFloat(0.0f, 100.0f, 16);
-      const float z = bs_read.ReadQuantizedFloat(0.0f, 100.0f, 16);
+      const float x = ReadQuantizedFloat(bs_read, 0.0f, 100.0f, 16);
+      const float y = ReadQuantizedFloat(bs_read, 0.0f, 100.0f, 16);
+      const float z = ReadQuantizedFloat(bs_read, 0.0f, 100.0f, 16);
       std::string name;
       bs_read.Read(name);
       const uint32_t flags = bs_read.ReadBits(8);
