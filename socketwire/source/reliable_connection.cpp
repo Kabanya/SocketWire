@@ -137,23 +137,20 @@ void ReliableConnection::SetHandler(IReliableConnectionHandler* handler) {
 }
 
 bool ReliableConnection::SendReliable(const std::uint8_t channel,
+                                      const BitStream& stream) {
+  return SendReliable(channel, stream.GetData(), stream.GetSizeBytes());
+}
+
+bool ReliableConnection::SendReliable(const std::uint8_t channel,
                                       const void* data, std::size_t size) {
   return SendReliableInternal(channel, data, size, 0);
 }
 
-bool ReliableConnection::SendUnreliable(const std::uint8_t channel,
-                                        const void* data, std::size_t size) {
-  return SendUnreliableInternal(channel, data, size, 0);
-}
-
-bool ReliableConnection::SendSequenced(const std::uint8_t channel,
-                                       const void* data, std::size_t size) {
-  return SendSequencedInternal(channel, data, size, 0);
-}
-
-bool ReliableConnection::SendUnsequenced(const std::uint8_t channel,
-                                         const void* data, std::size_t size) {
-  return SendUnsequencedInternal(channel, data, size, 0);
+bool ReliableConnection::SendReliableWithDeadline(const std::uint8_t channel,
+                                                  const BitStream& stream,
+                                                  std::uint32_t deadline_ms) {
+  return SendReliableWithDeadline(channel, stream.GetData(),
+                                  stream.GetSizeBytes(), deadline_ms);
 }
 
 bool ReliableConnection::SendReliableWithDeadline(const std::uint8_t channel,
@@ -163,6 +160,23 @@ bool ReliableConnection::SendReliableWithDeadline(const std::uint8_t channel,
   return SendReliableInternal(channel, data, size, deadline_ms);
 }
 
+bool ReliableConnection::SendUnreliable(const std::uint8_t channel,
+                                        const BitStream& stream) {
+  return SendUnreliable(channel, stream.GetData(), stream.GetSizeBytes());
+}
+
+bool ReliableConnection::SendUnreliable(const std::uint8_t channel,
+                                        const void* data, std::size_t size) {
+  return SendUnreliableInternal(channel, data, size, 0);
+}
+
+bool ReliableConnection::SendUnreliableWithDeadline(const std::uint8_t channel,
+                                                    const BitStream& stream,
+                                                    std::uint32_t deadline_ms) {
+  return SendUnreliableWithDeadline(channel, stream.GetData(),
+                                    stream.GetSizeBytes(), deadline_ms);
+}
+
 bool ReliableConnection::SendUnreliableWithDeadline(const std::uint8_t channel,
                                                     const void* data,
                                                     std::size_t size,
@@ -170,11 +184,45 @@ bool ReliableConnection::SendUnreliableWithDeadline(const std::uint8_t channel,
   return SendUnreliableInternal(channel, data, size, deadline_ms);
 }
 
+bool ReliableConnection::SendSequenced(const std::uint8_t channel,
+                                       const BitStream& stream) {
+  return SendSequenced(channel, stream.GetData(), stream.GetSizeBytes());
+}
+
+bool ReliableConnection::SendSequenced(const std::uint8_t channel,
+                                       const void* data, std::size_t size) {
+  return SendSequencedInternal(channel, data, size, 0);
+}
+
+bool ReliableConnection::SendSequencedWithDeadline(const std::uint8_t channel,
+                                                   const BitStream& stream,
+                                                   std::uint32_t deadline_ms) {
+  return SendSequencedWithDeadline(channel, stream.GetData(),
+                                   stream.GetSizeBytes(), deadline_ms);
+}
+
 bool ReliableConnection::SendSequencedWithDeadline(const std::uint8_t channel,
                                                    const void* data,
                                                    std::size_t size,
                                                    std::uint32_t deadline_ms) {
   return SendSequencedInternal(channel, data, size, deadline_ms);
+}
+
+bool ReliableConnection::SendUnsequenced(const std::uint8_t channel,
+                                         const BitStream& stream) {
+  return SendUnsequenced(channel, stream.GetData(), stream.GetSizeBytes());
+}
+
+bool ReliableConnection::SendUnsequenced(const std::uint8_t channel,
+                                         const void* data, std::size_t size) {
+  return SendUnsequencedInternal(channel, data, size, 0);
+}
+
+bool ReliableConnection::SendUnsequencedWithDeadline(
+  const std::uint8_t channel, const BitStream& stream,
+  std::uint32_t deadline_ms) {
+  return SendUnsequencedWithDeadline(channel, stream.GetData(),
+                                     stream.GetSizeBytes(), deadline_ms);
 }
 
 bool ReliableConnection::SendUnsequencedWithDeadline(
@@ -259,7 +307,10 @@ bool ReliableConnection::SendSequencedInternal(const std::uint8_t channel,
 
   const std::size_t max_payload = MaxPayloadForPacket(deadline.hasDeadline);
   if (max_payload == 0 || size > max_payload) return false;
-  return SendPacket(detail::PacketType::kSequenced, channel, data, size,
+  return SendPacket(detail::PacketType::kSequenced,
+                    channel,
+                    data,
+                    size,
                     GetNextSequence(channel), deadline, now);
 }
 
@@ -301,54 +352,6 @@ bool ReliableConnection::SendUnsequencedInternal(const std::uint8_t channel,
   }
   send_queue_.ScheduleRetry(*handle_result, now, config_.retryTimeoutMs);
   return true;
-}
-
-bool ReliableConnection::SendReliable(const std::uint8_t channel,
-                                      const BitStream& stream) {
-  return SendReliable(channel, stream.GetData(), stream.GetSizeBytes());
-}
-
-bool ReliableConnection::SendUnreliable(const std::uint8_t channel,
-                                        const BitStream& stream) {
-  return SendUnreliable(channel, stream.GetData(), stream.GetSizeBytes());
-}
-
-bool ReliableConnection::SendSequenced(const std::uint8_t channel,
-                                       const BitStream& stream) {
-  return SendSequenced(channel, stream.GetData(), stream.GetSizeBytes());
-}
-
-bool ReliableConnection::SendUnsequenced(const std::uint8_t channel,
-                                         const BitStream& stream) {
-  return SendUnsequenced(channel, stream.GetData(), stream.GetSizeBytes());
-}
-
-bool ReliableConnection::SendReliableWithDeadline(const std::uint8_t channel,
-                                                  const BitStream& stream,
-                                                  std::uint32_t deadline_ms) {
-  return SendReliableWithDeadline(channel, stream.GetData(),
-                                  stream.GetSizeBytes(), deadline_ms);
-}
-
-bool ReliableConnection::SendUnreliableWithDeadline(const std::uint8_t channel,
-                                                    const BitStream& stream,
-                                                    std::uint32_t deadline_ms) {
-  return SendUnreliableWithDeadline(channel, stream.GetData(),
-                                    stream.GetSizeBytes(), deadline_ms);
-}
-
-bool ReliableConnection::SendSequencedWithDeadline(const std::uint8_t channel,
-                                                   const BitStream& stream,
-                                                   std::uint32_t deadline_ms) {
-  return SendSequencedWithDeadline(channel, stream.GetData(),
-                                   stream.GetSizeBytes(), deadline_ms);
-}
-
-bool ReliableConnection::SendUnsequencedWithDeadline(
-  const std::uint8_t channel, const BitStream& stream,
-  std::uint32_t deadline_ms) {
-  return SendUnsequencedWithDeadline(channel, stream.GetData(),
-                                     stream.GetSizeBytes(), deadline_ms);
 }
 
 void ReliableConnection::Update() {
@@ -705,7 +708,8 @@ bool ReliableConnection::SendPacket(detail::PacketType type,
     return true;
   }
   if (!FlushQueuedAcks(now)) return false;
-  return SendSinglePacket(type, channel, data, size, sequence, deadline,
+  return SendSinglePacket(type, channel, data,
+                          size, sequence, deadline,
                           fragment, now);
 }
 

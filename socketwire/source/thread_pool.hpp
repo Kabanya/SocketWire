@@ -22,7 +22,7 @@ class ThreadPool {
   using Task = std::function<void()>;
 
   explicit ThreadPool(std::size_t thread_count);
-  ~ThreadPool();
+  ~ThreadPool() noexcept;
 
   ThreadPool(const ThreadPool&) = delete;
   ThreadPool& operator=(const ThreadPool&) = delete;

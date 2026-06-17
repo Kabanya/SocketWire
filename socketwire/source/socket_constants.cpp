@@ -17,7 +17,7 @@
 #include <cstring>
 #endif
 
-namespace socketwire::SocketConstants {
+namespace socketwire::socket_constants {
 
 SocketAddress Any() {
   return SocketAddress::FromIPv4(kIpV4Any);
@@ -162,4 +162,4 @@ std::string FormatIPv6String(const std::array<std::uint8_t, 16>& address,
   return {buf};
 }
 
-}  // namespace socketwire::SocketConstants
+}  // namespace socketwire::socket_constants

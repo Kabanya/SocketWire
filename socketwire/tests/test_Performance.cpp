@@ -534,11 +534,11 @@ TEST_F(PerformanceTest, SocketPollerIntegrationSendReceive) {
 }
 
 TEST_F(PerformanceTest, SocketPollerFrameStyleThroughput) {
-  constexpr int kFrames = 40;
-  constexpr int kMessagesPerFrame = 256;
-  constexpr int kTotalMessages = kFrames * kMessagesPerFrame;
-  constexpr std::size_t kScratchDatagrams = 64;
-  constexpr std::size_t kPacketCapacity = 256;
+  constexpr int k_frames = 40;
+  constexpr int k_messages_per_frame = 256;
+  constexpr int k_total_messages = k_frames * k_messages_per_frame;
+  constexpr std::size_t k_scratch_datagrams = 64;
+  constexpr std::size_t k_packet_capacity = 256;
 
   std::cout << "SocketPoller Frame-Style Throughput Performance:\n";
 
@@ -561,21 +561,21 @@ TEST_F(PerformanceTest, SocketPollerFrameStyleThroughput) {
 
   int received_count = 0;
   std::vector<SocketEvent> events;
-  std::vector<std::uint8_t> scratch_storage(kScratchDatagrams *
-                                            kPacketCapacity);
-  std::vector<IncomingDatagram> datagrams(kScratchDatagrams);
+  std::vector<std::uint8_t> scratch_storage(k_scratch_datagrams *
+                                            k_packet_capacity);
+  std::vector<IncomingDatagram> datagrams(k_scratch_datagrams);
   for (std::size_t i = 0; i < datagrams.size(); ++i) {
-    datagrams[i].data = scratch_storage.data() + (i * kPacketCapacity);
-    datagrams[i].capacity = kPacketCapacity;
+    datagrams.at(i).data = scratch_storage.data() + (i * k_packet_capacity);
+    datagrams.at(i).capacity = k_packet_capacity;
   }
 
   std::array<char, 64> message{};
   std::memcpy(message.data(), "frame-style throughput packet", 29);
 
   const auto start = std::chrono::high_resolution_clock::now();
-  for (int frame = 0; frame < kFrames; ++frame) {
-    const int frame_target = received_count + kMessagesPerFrame;
-    for (int i = 0; i < kMessagesPerFrame; ++i) {
+  for (int frame = 0; frame < k_frames; ++frame) {
+    const int frame_target = received_count + k_messages_per_frame;
+    for (int i = 0; i < k_messages_per_frame; ++i) {
       std::memcpy(message.data() + 32, &frame, sizeof(frame));
       std::memcpy(message.data() + 40, &i, sizeof(i));
       const SocketResult result =
@@ -603,16 +603,16 @@ TEST_F(PerformanceTest, SocketPollerFrameStyleThroughput) {
     (static_cast<double>(received_count) * 1000000.0) /
     static_cast<double>(duration_us);
 
-  std::cout << "  Frames: " << kFrames << "\n"
-            << "  Messages per frame: " << kMessagesPerFrame << "\n"
+  std::cout << "  Frames: " << k_frames << "\n"
+            << "  Messages per frame: " << k_messages_per_frame << "\n"
             << "  Total messages received: " << received_count << "\n"
             << "  Total time: " << duration_ms << " ms\n"
             << "  Throughput: " << static_cast<int>(messages_per_sec)
             << " messages/sec\n";
 
   AppendPerfMetric("Frame-style poller send/poll/drain " +
-                     std::to_string(kTotalMessages) + " messages",
+                     std::to_string(k_total_messages) + " messages",
                    duration_ms, messages_per_sec, "messages/sec");
 
-  EXPECT_EQ(received_count, kTotalMessages);
+  EXPECT_EQ(received_count, k_total_messages);
 }

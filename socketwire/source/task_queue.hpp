@@ -30,8 +30,7 @@ class TaskQueue {
   ///
   /// Tasks posted by a running task are intentionally deferred to a later
   /// Drain call, which keeps re-entrant network work explicit.
-  std::size_t Drain(
-    std::size_t max_tasks = std::numeric_limits<std::size_t>::max());
+  std::size_t Drain(std::size_t max_tasks = std::numeric_limits<std::size_t>::max());
 
   [[nodiscard]] std::size_t PendingCount() const;
   void Clear();

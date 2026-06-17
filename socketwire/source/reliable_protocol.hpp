@@ -249,8 +249,7 @@ class SendQueue {
   std::vector<std::size_t> free_slots_;
   std::unordered_map<PacketKey, PendingHandle, PacketKeyHash> by_packet_;
   std::unordered_map<PacketKey, std::uint32_t, PacketKeyHash> packet_counts_;
-  std::priority_queue<RetryEntry, std::vector<RetryEntry>, std::greater<>>
-    retry_heap_;
+  std::priority_queue<RetryEntry, std::vector<RetryEntry>, std::greater<>> retry_heap_;
   std::uint32_t active_count_ = 0;
 };
 

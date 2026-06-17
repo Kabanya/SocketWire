@@ -8,16 +8,14 @@
 
 #include "i_socket.hpp"
 
-namespace socketwire {
-
 /// Common socket address constants and formatting helpers.
-namespace SocketConstants {
+
+namespace socketwire::socket_constants {
 
   /// IPv4 address constants in host byte order.
   constexpr std::uint32_t kIpV4Any = 0x00000000;       ///< 0.0.0.0
   constexpr std::uint32_t kIpV4Loopback = 0x7F000001;  ///< 127.0.0.1
-  constexpr std::uint32_t kIpV4Broadcast =
-    0xFFFFFFFF;  ///< 255.255.255.255
+  constexpr std::uint32_t kIpV4Broadcast = 0xFFFFFFFF; ///< 255.255.255.255
 
   /// IPv6 address constants in network byte order.
   inline constexpr std::array<std::uint8_t, 16> kIpV6Any = {
@@ -67,6 +65,4 @@ namespace SocketConstants {
   SocketAddress FromOctets(std::uint8_t a, std::uint8_t b, std::uint8_t c,
                            std::uint8_t d);
 
-}  // namespace SocketConstants
-
-}  // namespace socketwire
+}  // namespace socketwire::socket_constants

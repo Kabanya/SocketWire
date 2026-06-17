@@ -404,16 +404,23 @@ TEST_F(IntegrationTest, ClientServerMultipleMessages) {
   // Send multiple messages
   const int message_count = 10;
   std::atomic<int> sent{0};
+  std::atomic<int> send_errors{0};
   for (int i = 0; i < message_count; i++) {
-    const std::string msg = "Message #" + std::to_string(i);
+    const auto msg =
+      std::make_shared<const std::string>("Message #" + std::to_string(i));
     ASSERT_TRUE(network_queue.Post([&, msg] {
-      if (client_conn->SendReliable(0, msg.c_str(), msg.length())) ++sent;
+      try {
+        if (client_conn->SendReliable(0, msg->c_str(), msg->length())) ++sent;
+      } catch (...) {
+        ++send_errors;
+      }
     }));
     std::this_thread::sleep_for(20ms);
   }
   for (int i = 0; i < 100 && sent < message_count; i++) {
     std::this_thread::sleep_for(10ms);
   }
+  ASSERT_EQ(send_errors, 0);
   ASSERT_EQ(sent, message_count);
 
   // Wait for all echoes
@@ -631,17 +638,24 @@ TEST_F(IntegrationTest, MultipleClients) {
 
   // Each client sends a message
   std::atomic<int> sent{0};
+  std::atomic<int> send_errors{0};
   for (size_t i = 0; i < client_conns.size(); i++) {
-    const std::string msg = "Client " + std::to_string(i);
+    const auto msg =
+      std::make_shared<const std::string>("Client " + std::to_string(i));
     ASSERT_TRUE(network_queue.Post([&, i, msg] {
-      if (client_conns.at(i)->SendReliable(0, msg.c_str(), msg.length())) {
-        ++sent;
+      try {
+        if (client_conns.at(i)->SendReliable(0, msg->c_str(), msg->length())) {
+          ++sent;
+        }
+      } catch (...) {
+        ++send_errors;
       }
     }));
   }
   for (int i = 0; i < 100 && sent < num_clients; i++) {
     std::this_thread::sleep_for(10ms);
   }
+  ASSERT_EQ(send_errors, 0);
   ASSERT_EQ(sent, num_clients);
 
   // Wait for broadcasts
@@ -749,7 +763,7 @@ TEST_F(IntegrationTest, ClientDisconnect) {
 }
 
 TEST_F(IntegrationTest, ShardedConnectionManagerEchoesManyClients) {
-  constexpr int kClientCount = 100;
+  constexpr int k_client_count = 100;
 
   auto factory = SocketFactoryRegistry::GetFactory();
   ASSERT_NE(factory, nullptr);
@@ -795,8 +809,8 @@ TEST_F(IntegrationTest, ShardedConnectionManagerEchoesManyClients) {
   socket_cfg.nonBlocking = true;
 
   std::vector<Client> clients;
-  clients.reserve(kClientCount);
-  for (int i = 0; i < kClientCount; ++i) {
+  clients.reserve(k_client_count);
+  for (int i = 0; i < k_client_count; ++i) {
     Client client;
     client.socket = factory->CreateUdpSocket(socket_cfg);
     ASSERT_NE(client.socket, nullptr);
@@ -833,11 +847,11 @@ TEST_F(IntegrationTest, ShardedConnectionManagerEchoesManyClients) {
     return connected;
   };
 
-  for (int i = 0; i < 500 && connected_count() < kClientCount; ++i) {
+  for (int i = 0; i < 500 && connected_count() < k_client_count; ++i) {
     pump_clients();
     std::this_thread::sleep_for(10ms);
   }
-  ASSERT_EQ(connected_count(), kClientCount);
+  ASSERT_EQ(connected_count(), k_client_count);
 
   const char payload[] = "sharded echo";
   for (auto& client : clients) {
@@ -852,12 +866,12 @@ TEST_F(IntegrationTest, ShardedConnectionManagerEchoesManyClients) {
     return echoed;
   };
 
-  for (int i = 0; i < 500 && echoed_count() < kClientCount; ++i) {
+  for (int i = 0; i < 500 && echoed_count() < k_client_count; ++i) {
     pump_clients();
     std::this_thread::sleep_for(10ms);
   }
 
-  EXPECT_GE(echoed_count(), kClientCount);
+  EXPECT_GE(echoed_count(), k_client_count);
 
   std::vector<ShardedClientHandle> handles;
   for (const auto& event : server.DrainEvents()) {
@@ -880,6 +894,6 @@ TEST_F(IntegrationTest, ShardedConnectionManagerEchoesManyClients) {
   std::this_thread::sleep_for(150ms);
   const auto stats = server.SnapshotStats();
   EXPECT_EQ(stats.workerCount, 2U);
-  EXPECT_EQ(stats.connectedClients, static_cast<std::uint32_t>(kClientCount));
+  EXPECT_EQ(stats.connectedClients, static_cast<std::uint32_t>(k_client_count));
   EXPECT_GE(stats.workerConnectedMax, 1U);
 }

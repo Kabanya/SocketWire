@@ -310,7 +310,7 @@ TEST_F(NetSocketTest, SendAndReceiveIPv6Loopback) {
   ASSERT_NE(sender, nullptr);
   ASSERT_NE(receiver, nullptr);
 
-  const SocketAddress v6_loop = SocketConstants::LoopbackIPv6();
+  const SocketAddress v6_loop = socket_constants::LoopbackIPv6();
 
   ASSERT_EQ(receiver->Bind(v6_loop, 0), SocketError::kNone);
   std::uint16_t receiver_port = receiver->LocalPort();
@@ -348,21 +348,21 @@ TEST_F(NetSocketTest, DualStackIPv4ToIPv6Mapped) {
   auto receiver = factory->CreateUdpSocket(recv_cfg);
   ASSERT_NE(receiver, nullptr);
 
-  const SocketAddress any6 = SocketConstants::AnyIPv6();
+  const SocketAddress any6 = socket_constants::AnyIPv6();
   ASSERT_EQ(receiver->Bind(any6, 0), SocketError::kNone);
   std::uint16_t receiver_port = receiver->LocalPort();
 
   const SocketConfig send_cfg;  // IPv4-only is fine
   auto sender = factory->CreateUdpSocket(send_cfg);
   ASSERT_NE(sender, nullptr);
-  ASSERT_EQ(sender->Bind(SocketConstants::Loopback(), 0), SocketError::kNone);
+  ASSERT_EQ(sender->Bind(socket_constants::Loopback(), 0), SocketError::kNone);
   std::uint16_t sender_port = sender->LocalPort();
 
   const char* payload = "dual";
   const std::size_t payload_len = std::strlen(payload);
 
   const SocketResult sent = sender->SendTo(
-    payload, payload_len, SocketConstants::Loopback(), receiver_port);
+    payload, payload_len, socket_constants::Loopback(), receiver_port);
   EXPECT_TRUE(sent.Succeeded());
 
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -375,21 +375,21 @@ TEST_F(NetSocketTest, DualStackIPv4ToIPv6Mapped) {
   EXPECT_TRUE(recv.Succeeded());
   EXPECT_EQ(recv.bytes, static_cast<std::ptrdiff_t>(payload_len));
   EXPECT_FALSE(from_addr.isIPv6);  // mapped IPv4 returned as IPv4
-  EXPECT_EQ(from_addr.ipv4.hostOrderAddress, SocketConstants::kIpV4Loopback);
+  EXPECT_EQ(from_addr.ipv4.hostOrderAddress, socket_constants::kIpV4Loopback);
   EXPECT_EQ(from_port, sender_port);
 }
 
 TEST(NetSocketStandalone, ParseAndFormatIPv6) {
   std::array<std::uint8_t, 16> bytes{};
   std::uint32_t scope_id = 0;
-  ASSERT_TRUE(SocketConstants::ParseIPv6("::1", bytes, scope_id));
+  ASSERT_TRUE(socket_constants::ParseIPv6("::1", bytes, scope_id));
   EXPECT_EQ(scope_id, 0u);
 
   char buf[64];
-  ASSERT_TRUE(SocketConstants::FormatIPv6(bytes, scope_id, buf, sizeof(buf)));
+  ASSERT_TRUE(socket_constants::FormatIPv6(bytes, scope_id, buf, sizeof(buf)));
   EXPECT_STREQ(buf, "::1");
 
-  SocketAddress addr = SocketConstants::FromString("::1");
+  SocketAddress addr = socket_constants::FromString("::1");
   EXPECT_TRUE(addr.isIPv6);
   EXPECT_EQ(addr.ipv6.bytes.at(15), 1);
 }

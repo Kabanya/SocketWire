@@ -22,8 +22,9 @@ class ConnectionManager::ClientEventHandler final
       : manager_(manager), client_(client) {}
 
   void OnConnected() override {
-    if (manager_.event_handler_ != nullptr)
+    if (manager_.event_handler_ != nullptr) {
       manager_.event_handler_->OnConnected();
+    }
   }
 
   void OnDisconnected() override {
@@ -53,13 +54,16 @@ class ConnectionManager::ClientEventHandler final
   }
 
   void OnTimeout() override {
-    if (manager_.event_handler_ != nullptr)
+    if (manager_.event_handler_ != nullptr) {
       manager_.event_handler_->OnTimeout();
+    }
   }
 
  private:
+  // NOLINTBEGIN(cppcoreguidelines-avoid-const-or-ref-data-members)
   ConnectionManager& manager_;
   RemoteClient& client_;
+  // NOLINTEND(cppcoreguidelines-avoid-const-or-ref-data-members)
 };
 
 ConnectionManager::ConnectionManager(ISocket* socket,

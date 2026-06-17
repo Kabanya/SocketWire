@@ -18,13 +18,8 @@
 #include "bit_stream.hpp"
 
 #if !defined(SOCKETWIRE_HAVE_LIBSODIUM)
-#if !defined(SOCKETWIRE_CRYPTO_FORCE_NO_SODIUM)
-#if __has_include(<sodium.h>)
-#include <sodium.h>
+#if !defined(SOCKETWIRE_CRYPTO_FORCE_NO_SODIUM) && __has_include(<sodium.h>)
 #define SOCKETWIRE_HAVE_LIBSODIUM 1
-#else
-#define SOCKETWIRE_HAVE_LIBSODIUM 0
-#endif
 #else
 #define SOCKETWIRE_HAVE_LIBSODIUM 0
 #endif
@@ -181,7 +176,8 @@ struct NonceGenerator {
     out = base;
     std::uint64_t c = counter;
     for (std::size_t i = 0; i < 8; ++i) {
-      out.at(kNonceSize - 8 + i) = static_cast<unsigned char>(c & 0xFFu);
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+      out[kNonceSize - 8 + i] = static_cast<unsigned char>(c & 0xFFu);
       c >>= 8;
     }
     return Result::Success();

@@ -1,7 +1,6 @@
 #include "sharded_connection_manager.hpp"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <limits>
 #include <utility>
@@ -63,7 +62,7 @@ class SharedSendSocket final : public ISocket {
 
 ShardedConnectionManager::ShardedConnectionManager(
   ShardedConnectionManagerConfig config)
-    : config_(std::move(config)) {
+    : config_(config) {
   if (config_.workerCount == 0) config_.workerCount = 1;
 }
 
@@ -127,7 +126,7 @@ bool ShardedConnectionManager::StartReusePort(std::uint32_t worker_count,
     }
 
     const SocketError bind_error =
-      worker->socket->Bind(SocketConstants::Any(), bind_port);
+      worker->socket->Bind(socket_constants::Any(), bind_port);
     if (bind_error != SocketError::kNone) {
       Stop();
       return false;
@@ -159,7 +158,7 @@ bool ShardedConnectionManager::StartDispatcher(std::uint32_t worker_count,
   if (dispatcherSocket_ == nullptr) return false;
 
   const SocketError bind_error =
-    dispatcherSocket_->Bind(SocketConstants::Any(), config_.port);
+    dispatcherSocket_->Bind(socket_constants::Any(), config_.port);
   if (bind_error != SocketError::kNone) {
     dispatcherSocket_.reset();
     return false;
@@ -401,14 +400,14 @@ void ShardedConnectionManager::DrainOutgoing(Worker& worker) {
 }
 
 void ShardedConnectionManager::DispatcherLoop() {
-  constexpr std::size_t kBatchSize = 64;
+  constexpr std::size_t k_batch_size = 64;
   const std::size_t packet_size =
     std::max<std::size_t>(1, config_.connection.connection.maxPacketSize);
-  std::vector<std::uint8_t> storage(kBatchSize * packet_size);
-  std::vector<IncomingDatagram> datagrams(kBatchSize);
+  std::vector<std::uint8_t> storage(k_batch_size * packet_size);
+  std::vector<IncomingDatagram> datagrams(k_batch_size);
 
   while (running_.load()) {
-    for (std::size_t i = 0; i < kBatchSize; ++i) {
+    for (std::size_t i = 0; i < k_batch_size; ++i) {
       datagrams.at(i).data = storage.data() + i * packet_size;
       datagrams.at(i).capacity = packet_size;
       datagrams.at(i).result = {};

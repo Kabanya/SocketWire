@@ -1,9 +1,15 @@
 #include "socket_poller.hpp"
 
-#include <algorithm>
 #include <utility>
 
+#if SOCKETWIRE_POLLER_USE_EPOLL
+#include <sys/epoll.h>
+#elif SOCKETWIRE_POLLER_USE_KQUEUE
+#include <sys/event.h>
+#endif
+
 #if !SOCKETWIRE_PLATFORM_WINDOWS
+#include <sys/time.h>
 #include <unistd.h>
 #endif
 
@@ -19,7 +25,7 @@ SocketPoller::~SocketPoller() { ShutdownBackend(); }
 void SocketPoller::InitBackend() {
 #if SOCKETWIRE_PLATFORM_WINDOWS
   backend_ = PollBackend::kWsaPoll;
-#elif SOCKETWIRE_PLATFORM_LINUX
+#elif SOCKETWIRE_POLLER_USE_EPOLL
   epoll_fd_ = ::epoll_create1(0);
   if (epoll_fd_ != -1) {
     backend_ = PollBackend::kEpoll;
@@ -30,7 +36,7 @@ void SocketPoller::InitBackend() {
     select_max_fd_ = -1;
     backend_ = PollBackend::kSelect;
   }
-#elif SOCKETWIRE_PLATFORM_APPLE
+#elif SOCKETWIRE_POLLER_USE_KQUEUE
   kqueue_fd_ = ::kqueue();
   if (kqueue_fd_ != -1) {
     backend_ = PollBackend::kKqueue;
@@ -53,12 +59,12 @@ void SocketPoller::InitBackend() {
 void SocketPoller::ShutdownBackend() {
 #if SOCKETWIRE_PLATFORM_WINDOWS
   poll_fds_.clear();
-#elif SOCKETWIRE_PLATFORM_LINUX
+#elif SOCKETWIRE_POLLER_USE_EPOLL
   if (backend_ == PollBackend::kEpoll && epoll_fd_ != -1) {
     ::close(epoll_fd_);
     epoll_fd_ = -1;
   }
-#elif SOCKETWIRE_PLATFORM_APPLE
+#elif SOCKETWIRE_POLLER_USE_KQUEUE
   if (backend_ == PollBackend::kKqueue && kqueue_fd_ != -1) {
     ::close(kqueue_fd_);
     kqueue_fd_ = -1;
@@ -104,7 +110,7 @@ bool SocketPoller::BackendAdd(ISocket* socket, bool watch_writable) {
   return false;
 #else
 
-#if SOCKETWIRE_PLATFORM_LINUX
+#if SOCKETWIRE_POLLER_USE_EPOLL
   if (backend_ == PollBackend::kEpoll) {
     epoll_event ev{};
     ev.data.fd = fd;
@@ -115,7 +121,7 @@ bool SocketPoller::BackendAdd(ISocket* socket, bool watch_writable) {
   }
 #endif
 
-#if SOCKETWIRE_PLATFORM_APPLE
+#if SOCKETWIRE_POLLER_USE_KQUEUE
   if (backend_ == PollBackend::kKqueue) {
     struct kevent kev[2];
     int k = 0;
@@ -156,13 +162,13 @@ void SocketPoller::BackendRemove(ISocket* socket) {
   }
 #else
 
-#if SOCKETWIRE_PLATFORM_LINUX
+#if SOCKETWIRE_POLLER_USE_EPOLL
   if (backend_ == PollBackend::kEpoll) {
     ::epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
   }
 #endif
 
-#if SOCKETWIRE_PLATFORM_APPLE
+#if SOCKETWIRE_POLLER_USE_KQUEUE
   if (backend_ == PollBackend::kKqueue) {
     struct kevent kev[2];
     int k = 0;
@@ -232,7 +238,7 @@ void SocketPoller::BackendPoll(std::vector<SocketEvent>& events,
   return;
 #else
 
-#if SOCKETWIRE_PLATFORM_LINUX
+#if SOCKETWIRE_POLLER_USE_EPOLL
   if (backend_ == PollBackend::kEpoll) {
     constexpr int kMaxEvents = 64;
     epoll_event evs[kMaxEvents];
@@ -252,7 +258,7 @@ void SocketPoller::BackendPoll(std::vector<SocketEvent>& events,
   }
 #endif
 
-#if SOCKETWIRE_PLATFORM_APPLE
+#if SOCKETWIRE_POLLER_USE_KQUEUE
   if (backend_ == PollBackend::kKqueue) {
     constexpr int max_events = 64;
     struct kevent kev[max_events];

@@ -265,9 +265,9 @@ TEST(FragmentReassemblerTest, ReassemblesOutOfOrderAndSuppressesDuplicates) {
   result = reassembler.AddFragment(0, meta, Bytes("C"), now, false, {});
   ASSERT_EQ(result.status, FragmentReassembler::AddStatus::kCompleted);
   ASSERT_TRUE(result.message.has_value());
-  EXPECT_EQ(
-    std::string(result.message->payload.begin(), result.message->payload.end()),
-    "ABC");
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  const auto& message = result.message.value();
+  EXPECT_EQ(std::string(message.payload.begin(), message.payload.end()), "ABC");
 }
 
 TEST(FragmentReassemblerTest, EnforcesExpiryAndMemoryLimits) {

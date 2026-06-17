@@ -1,19 +1,23 @@
-#include <algorithm>
-#include <array>
 #include <cerrno>
 #include <utility>
 
 #include "i_socket.hpp"
 
-#if defined(_WIN32) || defined(_WIN64)
+#if SOCKETWIRE_PLATFORM_WINDOWS
 #error "posix_udp_socket.cpp is for POSIX platforms only (Linux/macOS/BSD)."
+#endif
+
+#if defined(__APPLE__) && SOCKETWIRE_ENABLE_DARWIN_MSG_X
+#define SOCKETWIRE_USE_DARWIN_MSG_X 1
+#else
+#define SOCKETWIRE_USE_DARWIN_MSG_X 0
 #endif
 
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#if defined(__APPLE__) && SOCKETWIRE_ENABLE_DARWIN_MSG_X
+#if SOCKETWIRE_USE_DARWIN_MSG_X
 #include <sys/syscall.h>
 #endif
 #include <unistd.h>
@@ -71,7 +75,7 @@ class PosixUDPSocket final : public ISocket {
 #if defined(__linux__)
   std::size_t SendManyWithSendmmsg(std::span<const OutgoingDatagram> datagrams);
 #endif
-#if defined(__APPLE__) && SOCKETWIRE_ENABLE_DARWIN_MSG_X
+#if SOCKETWIRE_USE_DARWIN_MSG_X
   std::size_t SendManyWithSendmsgX(std::span<const OutgoingDatagram> datagrams);
 #endif
 
@@ -86,8 +90,7 @@ PosixUDPSocket::PosixUDPSocket(const SocketConfig& cfg) : config_(cfg) {}
 
 PosixUDPSocket::~PosixUDPSocket() { Close(); }
 
-SocketError PosixUDPSocket::Bind(const SocketAddress& address,
-                                 std::uint16_t port) {
+SocketError PosixUDPSocket::Bind(const SocketAddress& address, std::uint16_t port) {
   if (fd_ != -1) return SocketError::kInvalidParam;  // already open
 
   if (address.isIPv6 && !config_.enableIPv6) return SocketError::kUnsupported;
@@ -174,7 +177,8 @@ SocketError PosixUDPSocket::Bind(const SocketAddress& address,
   return SocketError::kNone;
 }
 
-SocketResult PosixUDPSocket::SendTo(const void* data, std::size_t length,
+SocketResult PosixUDPSocket::SendTo(const void* data,
+                                    std::size_t length,
                                     const SocketAddress& to_addr,
                                     std::uint16_t to_port) {
   if (data == nullptr || length == 0) {
@@ -230,7 +234,7 @@ std::size_t PosixUDPSocket::SendMany(
   std::span<const OutgoingDatagram> datagrams) {
 #if defined(__linux__)
   return SendManyWithSendmmsg(datagrams);
-#elif defined(__APPLE__) && SOCKETWIRE_ENABLE_DARWIN_MSG_X
+#elif SOCKETWIRE_USE_DARWIN_MSG_X
   return SendManyWithSendmsgX(datagrams);
 #else
   return SendManyPortable(datagrams);
@@ -310,7 +314,7 @@ std::size_t PosixUDPSocket::SendManyWithSendmmsg(
 }
 #endif
 
-#if defined(__APPLE__) && SOCKETWIRE_ENABLE_DARWIN_MSG_X
+#if SOCKETWIRE_USE_DARWIN_MSG_X
 std::size_t PosixUDPSocket::SendManyWithSendmsgX(
   std::span<const OutgoingDatagram> datagrams) {
   if (datagrams.empty()) return 0;

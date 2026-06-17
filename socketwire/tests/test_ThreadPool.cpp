@@ -403,12 +403,12 @@ TEST(ThreadPoolTest, DestructorStopsWorkers) {
 }
 
 TEST(ThreadPoolPerformanceTest, ShowsParallelWorkEfficiency) {
-  constexpr std::size_t kTaskCount = 24;
+  constexpr std::size_t k_task_count = 24;
   const unsigned hardware_threads = std::thread::hardware_concurrency();
   const auto worker_count = static_cast<std::size_t>(
     std::clamp(hardware_threads == 0 ? 2U : hardware_threads, 2U, 4U));
 
-  std::array<std::uint64_t, kTaskCount> serial_results{};
+  std::array<std::uint64_t, k_task_count> serial_results{};
   const auto serial_start = std::chrono::steady_clock::now();
   for (std::size_t i = 0; i < serial_results.size(); ++i) {
     serial_results.at(i) = CpuWork(i);
@@ -416,8 +416,8 @@ TEST(ThreadPoolPerformanceTest, ShowsParallelWorkEfficiency) {
   const auto serial_end = std::chrono::steady_clock::now();
 
   ThreadPool pool(worker_count);
-  std::array<std::uint64_t, kTaskCount> parallel_results{};
-  std::latch done(kTaskCount);
+  std::array<std::uint64_t, k_task_count> parallel_results{};
+  std::latch done(k_task_count);
 
   pool.Start();
   const auto parallel_start = std::chrono::steady_clock::now();
@@ -445,7 +445,7 @@ TEST(ThreadPoolPerformanceTest, ShowsParallelWorkEfficiency) {
     static_cast<double>(std::max<std::int64_t>(parallel_us, 1));
 
   std::cout << "\n=== ThreadPool CPU Work Efficiency ===\n"
-            << "tasks: " << kTaskCount << "\n"
+            << "tasks: " << k_task_count << "\n"
             << "workers: " << worker_count << "\n"
             << "serial: " << serial_us << " us\n"
             << "thread_pool: " << parallel_us << " us\n"

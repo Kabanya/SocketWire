@@ -1,7 +1,9 @@
 #pragma once
 /// Shared address-conversion helpers for platform socket implementations.
 
-#if defined(_WIN32) || defined(_WIN64)
+#include "i_socket.hpp"
+
+#if SOCKETWIRE_PLATFORM_WINDOWS
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -15,8 +17,6 @@
 
 #include <array>
 #include <cstring>
-
-#include "i_socket.hpp"
 
 namespace socketwire::detail {
 

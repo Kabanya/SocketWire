@@ -160,8 +160,8 @@ TEST_F(SocketPollerTest, CallerReceivesManyPacketsAfterReadiness) {
   std::array<std::array<std::uint8_t, 64>, 4> storage{};
   std::array<IncomingDatagram, 4> datagrams{};
   for (std::size_t i = 0; i < datagrams.size(); ++i) {
-    datagrams[i].data = storage[i].data();
-    datagrams[i].capacity = storage[i].size();
+    datagrams.at(i).data = storage.at(i).data();
+    datagrams.at(i).capacity = storage.at(i).size();
   }
 
   std::size_t received = 0;
@@ -177,8 +177,8 @@ TEST_F(SocketPollerTest, CallerReceivesManyPacketsAfterReadiness) {
       EXPECT_TRUE(event.readable);
       const std::size_t batch_received = event.socket->ReceiveMany(datagrams);
       for (std::size_t i = 0; i < batch_received; ++i) {
-        EXPECT_EQ(datagrams[i].fromPort, sender_port);
-        EXPECT_GT(datagrams[i].result.bytes, 0);
+        EXPECT_EQ(datagrams.at(i).fromPort, sender_port);
+        EXPECT_GT(datagrams.at(i).result.bytes, 0);
       }
       received += batch_received;
     }

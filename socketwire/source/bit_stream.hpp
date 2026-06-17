@@ -169,7 +169,7 @@ class BitStream {
       value = static_cast<Value>(underlying);
     } else if constexpr (std::is_integral_v<Value>) {
       using Unsigned = std::make_unsigned_t<Value>;
-      const Unsigned bits = ReadUnsignedBigEndian<Unsigned>();
+      const auto bits = ReadUnsignedBigEndian<Unsigned>();
       if constexpr (std::is_signed_v<Value>) {
         value = DecodeSignedTwosComplement<Value>(bits);
       } else {

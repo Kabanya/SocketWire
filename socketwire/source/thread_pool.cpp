@@ -1,6 +1,7 @@
 #include "thread_pool.hpp"
 
 #include <cassert>
+#include <exception>
 #include <utility>
 
 namespace socketwire {
@@ -17,7 +18,13 @@ ThreadPool::ThreadPool(std::size_t thread_count) : thread_count_(thread_count) {
   assert(thread_count_ > 0);
 }
 
-ThreadPool::~ThreadPool() { Stop(); }
+ThreadPool::~ThreadPool() noexcept {
+  try {
+    Stop();
+  } catch (...) {
+    std::terminate();
+  }
+}
 
 void ThreadPool::Start() {
   assert(thread_count_ > 0);

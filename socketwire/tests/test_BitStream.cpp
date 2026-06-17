@@ -200,7 +200,7 @@ TEST_F(BitStreamTest, TypedValuesUseBigEndianWireFormat) {
   std::int16_t i16 = 0;
   std::int32_t i32 = 0;
   std::int64_t i64 = 0;
-  TestEnum enum_value = {};
+  TestEnum enum_value = TestEnum::kValue;
   bool false_value = true;
   bool true_value = false;
   float float_value = 0.0f;

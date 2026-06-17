@@ -168,50 +168,66 @@ class ReliableConnection {
   void SetConnectedForTest() { state_ = ConnectionState::kConnected; }
 #endif
 
-// Without deadline APIs
+  // Without deadline APIs
+  /// Sends data reliably and in order on the selected channel.
   bool SendReliable(const std::uint8_t channel, const BitStream& stream);
-  bool SendReliable(const std::uint8_t channel, const void* data, std::size_t size);
-  
+  bool SendReliable(const std::uint8_t channel, const void* data,
+                    std::size_t size);
+
+  /// Sends data once without ACK/retry guarantees.
   bool SendUnreliable(const std::uint8_t channel, const BitStream& stream);
-  bool SendUnreliable(const std::uint8_t channel, const void* data,std::size_t size);
-  
+  bool SendUnreliable(const std::uint8_t channel, const void* data,
+                      std::size_t size);
+
+  /// Sends data unreliably, dropping older packets that arrive late.
   bool SendSequenced(const std::uint8_t channel, const BitStream& stream);
-  bool SendSequenced(const std::uint8_t channel, const void* data, std::size_t size);
-  
+  bool SendSequenced(const std::uint8_t channel, const void* data,
+                     std::size_t size);
+
+  /// Sends data reliably, but delivery order is not enforced.
   bool SendUnsequenced(const std::uint8_t channel, const BitStream& stream);
-  bool SendUnsequenced(const std::uint8_t channel, const void* data, std::size_t size);
- 
+  bool SendUnsequenced(const std::uint8_t channel, const void* data,
+                       std::size_t size);
+
   // With deadline APIs
-  bool SendReliableWithDeadline(const std::uint8_t channel, 
-                                const void* data, 
-                                std::size_t size, 
+  /// Sends a reliable buffer with deadline_ms used as packet TTL.
+  bool SendReliableWithDeadline(const std::uint8_t channel,
+                                const void* data,
+                                std::size_t size,
                                 std::uint32_t deadline_ms);
+  /// Sends a reliable BitStream with deadline_ms used as packet TTL.
   bool SendReliableWithDeadline(const std::uint8_t channel,
                                 const BitStream& stream,
                                 std::uint32_t deadline_ms);
-  
+
+  /// Sends an unreliable BitStream with deadline_ms used as packet TTL.
   bool SendUnreliableWithDeadline(const std::uint8_t channel,
                                   const BitStream& stream,
                                   std::uint32_t deadline_ms);
+  /// Sends an unreliable buffer with deadline_ms used as packet TTL.
   bool SendUnreliableWithDeadline(const std::uint8_t channel,
                                   const void* data,
-                                  std::size_t size, 
+                                  std::size_t size,
                                   std::uint32_t deadline_ms);
 
+  /// Sends a sequenced BitStream with deadline_ms used as packet TTL.
   bool SendSequencedWithDeadline(const std::uint8_t channel,
                                  const BitStream& stream,
                                  std::uint32_t deadline_ms);
-  bool SendSequencedWithDeadline(const std::uint8_t channel, 
+  /// Sends a sequenced buffer with deadline_ms used as packet TTL.
+  bool SendSequencedWithDeadline(const std::uint8_t channel,
                                  const void* data,
                                  std::size_t size,
                                  std::uint32_t deadline_ms);
 
+  /// Sends an unsequenced BitStream with deadline_ms used as packet TTL.
   bool SendUnsequencedWithDeadline(const std::uint8_t channel,
                                    const BitStream& stream,
                                    std::uint32_t deadline_ms);
-  bool SendUnsequencedWithDeadline(const std::uint8_t channel, 
+  /// Sends an unsequenced buffer with deadline_ms used as packet TTL.
+  bool SendUnsequencedWithDeadline(const std::uint8_t channel,
                                    const void* data,
-                                   std::size_t size, 
+                                   std::size_t size,
                                    std::uint32_t deadline_ms);
 
   /// Processes retransmits, pings, timeouts, and pending ordered packets.
@@ -220,8 +236,10 @@ class ReliableConnection {
   /// a caller-supplied tick timestamp.
   void Update(std::chrono::steady_clock::time_point now);
 
-  void ProcessPacket(const void* data, std::size_t size,
-                     const SocketAddress& from, std::uint16_t from_port);
+  void ProcessPacket(const void* data,
+                     std::size_t size,
+                     const SocketAddress& from,
+                     std::uint16_t from_port);
 
   /// Returns true when the buffer contains a valid SocketWire connect packet.
   ///

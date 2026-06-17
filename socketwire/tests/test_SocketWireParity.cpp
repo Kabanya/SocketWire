@@ -113,6 +113,7 @@ class ParityHarness final {
     SOCKETWIRE_PARITY_CHECK(
       server_socket_->Bind(socketwire::SocketAddress::FromIPv4(0), 0) ==
       socketwire::SocketError::kNone);
+    // NOLINTNEXTLINE(cppcoreguidelines-prefer-member-initializer)
     server_port_ = server_socket_->LocalPort();
     SOCKETWIRE_PARITY_CHECK(server_port_ != 0);
 
@@ -276,8 +277,9 @@ void DuplicateFragmentedReliablePacket() {
   harness.WaitForConnections(1);
 
   std::string payload(4096, '\0');
-  for (std::size_t i = 0; i < payload.size(); ++i)
-    payload[i] = static_cast<char>('A' + (i % 26));
+  for (std::size_t i = 0; i < payload.size(); ++i) {
+    payload.at(i) = static_cast<char>('A' + (i % 26));
+  }
 
   SOCKETWIRE_PARITY_CHECK(
     client.connection->SendReliable(0, payload.data(), payload.size()));
@@ -350,9 +352,9 @@ void PerformanceReliableBurstCompletesWithinBudget() {
   Client& client = harness.AddClient();
   harness.WaitForConnections(1);
 
-  constexpr int kBurstSize = 64;
+  constexpr int k_burst_size = 64;
   const auto start = Clock::now();
-  for (int i = 0; i < kBurstSize; ++i) {
+  for (int i = 0; i < k_burst_size; ++i) {
     const std::string payload = "burst-" + std::to_string(i);
     SOCKETWIRE_PARITY_CHECK(
       client.connection->SendReliable(0, payload.data(), payload.size()));
@@ -360,12 +362,12 @@ void PerformanceReliableBurstCompletesWithinBudget() {
 
   SOCKETWIRE_PARITY_CHECK(harness.WaitFor(2s, [&] {
     return harness.ServerHandler().Reliable().size() ==
-           static_cast<std::size_t>(kBurstSize);
+           static_cast<std::size_t>(k_burst_size);
   }));
   SOCKETWIRE_PARITY_CHECK(Clock::now() - start <= 2s);
 
   const auto received = harness.ServerHandler().Reliable();
-  for (int i = 0; i < kBurstSize; ++i) {
+  for (int i = 0; i < k_burst_size; ++i) {
     SOCKETWIRE_PARITY_CHECK(received.at(static_cast<std::size_t>(i)).payload ==
                             "burst-" + std::to_string(i));
   }
@@ -374,7 +376,7 @@ void PerformanceReliableBurstCompletesWithinBudget() {
 using TestFn = void (*)();
 
 const std::map<std::string, TestFn>& Tests() {
-  static const std::map<std::string, TestFn> tests{
+  static const std::map<std::string, TestFn> kTests{
     {"Duplicate.ConnectDisconnect", &DuplicateConnectDisconnect},
     {"Duplicate.ReliableDelivery", &DuplicateReliableDelivery},
     {"Duplicate.UnreliableDelivery", &DuplicateUnreliableDelivery},
@@ -388,7 +390,7 @@ const std::map<std::string, TestFn>& Tests() {
     {"Performance.ReliableBurstCompletesWithinBudget",
      &PerformanceReliableBurstCompletesWithinBudget},
   };
-  return tests;
+  return kTests;
 }
 
 void PrintUsage(const char* executable) {
@@ -400,30 +402,33 @@ void PrintUsage(const char* executable) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string selected_case;
-  if (argc == 3 && std::string(argv[1]) == "--case") {
-    selected_case = argv[2];
-  } else if (argc == 2 && std::string(argv[1]) == "--list") {
-    for (const auto& [name, _] : Tests()) std::cout << name << '\n';
-    return 0;
-  } else {
-    PrintUsage(argv[0]);
-    return 2;
-  }
-
-  const auto iter = Tests().find(selected_case);
-  if (iter == Tests().end()) {
-    PrintUsage(argv[0]);
-    return 2;
-  }
-
+  const char* selected_case = "<none>";
   try {
+    if (argc == 3 && std::string(argv[1]) == "--case") {
+      selected_case = argv[2];
+    } else if (argc == 2 && std::string(argv[1]) == "--list") {
+      for (const auto& [name, _] : Tests()) std::cout << name << '\n';
+      return 0;
+    } else {
+      PrintUsage(argv[0]);
+      return 2;
+    }
+
+    const auto iter = Tests().find(selected_case);
+    if (iter == Tests().end()) {
+      PrintUsage(argv[0]);
+      return 2;
+    }
+
     iter->second();
     std::cout << "[  PASSED  ] " << selected_case << '\n';
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "[  FAILED  ] " << selected_case << ": " << error.what()
               << '\n';
+    return 1;
+  } catch (...) {
+    std::cerr << "[  FAILED  ] unknown exception\n";
     return 1;
   }
 }

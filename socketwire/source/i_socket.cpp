@@ -3,16 +3,21 @@
 #include <atomic>
 
 namespace socketwire {
+namespace {
 
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-static std::atomic<ISocketFactory*> g_factory_instance{nullptr};
+std::atomic<ISocketFactory*>& FactoryInstance() {
+  static std::atomic<ISocketFactory*> instance{nullptr};
+  return instance;
+}
+
+}  // namespace
 
 void SocketFactoryRegistry::SetFactory(ISocketFactory* factory) {
-  g_factory_instance.store(factory);
+  FactoryInstance().store(factory);
 }
 
 ISocketFactory* SocketFactoryRegistry::GetFactory() {
-  return g_factory_instance.load();
+  return FactoryInstance().load();
 }
 
 const char* ToString(SocketError error) noexcept {

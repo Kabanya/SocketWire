@@ -30,8 +30,8 @@ std::uint16_t ReadU16(const std::uint8_t* src) {
 std::uint32_t ReadU32(const std::uint8_t* src) {
   return (static_cast<std::uint32_t>(src[0]) << 24) |
          (static_cast<std::uint32_t>(src[1]) << 16) |
-         (static_cast<std::uint32_t>(src[2]) << 8) |
-         static_cast<std::uint32_t>(src[3]);
+         (static_cast<std::uint32_t>(src[2]) << 8)  |
+          static_cast<std::uint32_t>(src[3]);
 }
 
 std::uint32_t DeadlineAgeMs(std::chrono::steady_clock::time_point created_time,

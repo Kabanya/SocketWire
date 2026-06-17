@@ -11,22 +11,16 @@
 
 #include "i_socket.hpp"
 
-#if defined(_WIN32) || defined(_WIN64)
-#define SOCKETWIRE_PLATFORM_WINDOWS 1
-#else
-#define SOCKETWIRE_PLATFORM_WINDOWS 0
-#endif
-
 #if !SOCKETWIRE_PLATFORM_WINDOWS && defined(__linux__)
-#define SOCKETWIRE_PLATFORM_LINUX 1
+#define SOCKETWIRE_POLLER_USE_EPOLL 1
 #else
-#define SOCKETWIRE_PLATFORM_LINUX 0
+#define SOCKETWIRE_POLLER_USE_EPOLL 0
 #endif
 
 #if !SOCKETWIRE_PLATFORM_WINDOWS && defined(__APPLE__)
-#define SOCKETWIRE_PLATFORM_APPLE 1
+#define SOCKETWIRE_POLLER_USE_KQUEUE 1
 #else
-#define SOCKETWIRE_PLATFORM_APPLE 0
+#define SOCKETWIRE_POLLER_USE_KQUEUE 0
 #endif
 
 #if SOCKETWIRE_PLATFORM_WINDOWS
@@ -35,16 +29,10 @@
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#elif SOCKETWIRE_PLATFORM_LINUX
-#include <sys/epoll.h>
-#elif SOCKETWIRE_PLATFORM_APPLE
-#include <sys/event.h>
 #endif
 
 #if !SOCKETWIRE_PLATFORM_WINDOWS
 #include <sys/select.h>
-#include <sys/time.h>
-#include <unistd.h>
 #endif
 
 namespace socketwire {
@@ -122,9 +110,9 @@ class SocketPoller {
   fd_set error_set_{};
   int select_max_fd_ = -1;
 
-#if SOCKETWIRE_PLATFORM_LINUX
+#if SOCKETWIRE_POLLER_USE_EPOLL
   int epoll_fd_ = -1;  // Linux
-#elif SOCKETWIRE_PLATFORM_APPLE
+#elif SOCKETWIRE_POLLER_USE_KQUEUE
   int kqueue_fd_ = -1;  // macOS/BSD
 #endif
 #endif

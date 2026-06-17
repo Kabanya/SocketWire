@@ -1,6 +1,7 @@
 #include "bit_stream.hpp"
 
 #include <cstring>
+#include <expected>
 #include <stdexcept>
 
 namespace socketwire {
