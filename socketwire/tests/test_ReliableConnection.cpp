@@ -152,7 +152,7 @@ void DrainConnection(ISocket& socket, ReliableConnection& connection,
 
 // Mock socket for testing
 class MockSocket : public ISocket {
- public:
+public:
   struct SentPacket {
     std::vector<std::uint8_t> data;
     SocketAddress address;
@@ -226,7 +226,7 @@ class MockSocket : public ISocket {
 };
 
 class WebSocketLikeMockSocket : public ISocket {
- public:
+public:
   std::vector<std::vector<std::uint8_t>> sentFrames;
   std::vector<std::vector<std::uint8_t>> receiveQueue;
 
@@ -279,7 +279,7 @@ class WebSocketLikeMockSocket : public ISocket {
 
 // Mock event handler
 class MockEventHandler : public IReliableConnectionHandler {
- public:
+public:
   bool connected = false;
   bool disconnected = false;
   bool timedOut = false;

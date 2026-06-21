@@ -43,7 +43,7 @@ namespace socketwire::socket_constants {
   bool FormatIPv4(std::uint32_t address, char* buffer,
                   std::size_t buffer_size);
 
-  /// Formats an IPv6 address into a buffer of at least INET6_ADDRSTRLEN bytes.
+  /// Formats an IPv6 address, appending %scope when scope_id is non-zero.
   bool FormatIPv6(const std::array<std::uint8_t, 16>& address,
                   std::uint32_t scope_id, char* buffer,
                   std::size_t buffer_size);

@@ -55,7 +55,7 @@ std::vector<std::uint8_t> MakeConnectPacket() {
 }
 
 class RecordingSocket : public ISocket {
- public:
+public:
   struct SentPacket {
     std::vector<std::uint8_t> data;
     SocketAddress address;
@@ -102,12 +102,12 @@ class RecordingSocket : public ISocket {
   [[nodiscard]] int NativeHandle() const override { return -1; }
   void Close() override {}
 
- private:
+private:
   bool blocking_ = false;
 };
 
 class RecordingHandler : public IReliableConnectionHandler {
- public:
+public:
   void OnConnected() override { ++connected; }
   void OnDisconnected() override { ++disconnected; }
   void OnTimeout() override { ++timed_out; }

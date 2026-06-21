@@ -13,8 +13,13 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+SocketAddress BindAddressFor(const SocketConfig& config) {
+  return config.enableIPv6 ? socket_constants::AnyIPv6()
+                           : socket_constants::Any();
+}
+
 class SharedSendSocket final : public ISocket {
- public:
+public:
   SharedSendSocket(ISocket& socket, std::mutex& mutex)
       : socket_(&socket), mutex_(&mutex) {}
 
@@ -53,7 +58,7 @@ class SharedSendSocket final : public ISocket {
   }
   void Close() override {}
 
- private:
+private:
   ISocket* socket_ = nullptr;
   std::mutex* mutex_ = nullptr;
 };
@@ -126,7 +131,7 @@ bool ShardedConnectionManager::StartReusePort(std::uint32_t worker_count,
     }
 
     const SocketError bind_error =
-      worker->socket->Bind(socket_constants::Any(), bind_port);
+      worker->socket->Bind(BindAddressFor(socket_config), bind_port);
     if (bind_error != SocketError::kNone) {
       Stop();
       return false;
@@ -158,7 +163,7 @@ bool ShardedConnectionManager::StartDispatcher(std::uint32_t worker_count,
   if (dispatcherSocket_ == nullptr) return false;
 
   const SocketError bind_error =
-    dispatcherSocket_->Bind(socket_constants::Any(), config_.port);
+    dispatcherSocket_->Bind(BindAddressFor(socket_config), config_.port);
   if (bind_error != SocketError::kNone) {
     dispatcherSocket_.reset();
     return false;

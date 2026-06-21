@@ -31,7 +31,7 @@ enum class BitStreamError : std::uint8_t {
 [[nodiscard]] const char* ToString(BitStreamError error) noexcept;
 
 class BitStream {
- private:
+private:
   std::vector<std::uint8_t> buffer_;
   std::size_t write_pos_ = 0;
   std::size_t read_pos_ = 0;
@@ -94,7 +94,7 @@ class BitStream {
     return static_cast<T>(-static_cast<T>(magnitude));
   }
 
- public:
+public:
   BitStream();
   BitStream(const std::uint8_t* data, std::size_t size);
 

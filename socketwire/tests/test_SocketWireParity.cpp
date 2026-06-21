@@ -24,7 +24,7 @@ using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
 
 class TestFailure final : public std::runtime_error {
- public:
+public:
   using std::runtime_error::runtime_error;
 };
 
@@ -44,7 +44,7 @@ struct ReceivedPacket {
 };
 
 class CountingHandler final : public socketwire::IReliableConnectionHandler {
- public:
+public:
   void OnConnected() override { connected = true; }
   void OnDisconnected() override { disconnected = true; }
 
@@ -79,7 +79,7 @@ class CountingHandler final : public socketwire::IReliableConnectionHandler {
   bool connected = false;
   bool disconnected = false;
 
- private:
+private:
   void Record(std::vector<ReceivedPacket>& target, std::uint8_t channel,
               const void* data, std::size_t size) {
     const auto* bytes = static_cast<const char*>(data);
@@ -99,7 +99,7 @@ struct Client {
 };
 
 class ParityHarness final {
- public:
+public:
   ParityHarness() {
     socketwire::InitializeSockets();
     auto* factory = socketwire::SocketFactoryRegistry::GetFactory();
@@ -177,7 +177,7 @@ class ParityHarness final {
   CountingHandler& ServerHandler() { return server_handler_; }
   socketwire::ConnectionManager& Manager() { return *manager_; }
 
- private:
+private:
   void PumpOnce() {
     std::vector<std::uint8_t> buffer(8192);
     socketwire::SocketAddress from;

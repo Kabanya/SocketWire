@@ -66,7 +66,7 @@ struct SocketPollerConfig {
 /// remove, and poll calls must be serialized by the caller. Cross-thread socket
 /// changes should be posted into that owner loop, for example via TaskQueue.
 class SocketPoller {
- public:
+public:
   explicit SocketPoller(const SocketPollerConfig& cfg = {});
   ~SocketPoller();
 
@@ -92,7 +92,7 @@ class SocketPoller {
 
   [[nodiscard]] PollBackend BackendType() const;
 
- private:
+private:
   PollBackend backend_ = PollBackend::kStub;
 
   struct Watched {

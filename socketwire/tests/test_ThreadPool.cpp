@@ -64,7 +64,7 @@ void TickConnection(ISocket& socket, ReliableConnection& connection,
 }
 
 class AsyncEchoServerHandler final : public IReliableConnectionHandler {
- public:
+public:
   AsyncEchoServerHandler(ThreadPool& workers, TaskQueue& network_queue)
       : workers_(workers), network_queue_(network_queue) {}
 
@@ -106,13 +106,13 @@ class AsyncEchoServerHandler final : public IReliableConnectionHandler {
   std::atomic<bool> worker_post_failed{false};
   std::atomic<bool> network_post_failed{false};
 
- private:
+private:
   ThreadPool& workers_;
   TaskQueue& network_queue_;
 };
 
 class CollectingClientHandler final : public IReliableConnectionHandler {
- public:
+public:
   void OnConnected() override { connected.store(true); }
 
   void OnReliableReceived(std::uint8_t channel, const void* data,
@@ -133,13 +133,13 @@ class CollectingClientHandler final : public IReliableConnectionHandler {
   std::atomic<bool> connected{false};
   std::atomic<int> reliable_received{0};
 
- private:
+private:
   mutable std::mutex mutex_;
   std::vector<std::vector<std::uint8_t>> messages_;
 };
 
 class DiscardSocket final : public ISocket {
- public:
+public:
   SocketError Bind(const SocketAddress& address, std::uint16_t port) override {
     (void)address;
     bound_port_ = port;
@@ -175,7 +175,7 @@ class DiscardSocket final : public ISocket {
   [[nodiscard]] int NativeHandle() const override { return 1; }
   void Close() override {}
 
- private:
+private:
   bool blocking_ = false;
   std::uint16_t bound_port_ = 0;
 };
@@ -199,7 +199,7 @@ std::vector<std::uint8_t> MakeReliablePacket(std::uint32_t sequence,
 }
 
 class ThreadRecordingHandler final : public IReliableConnectionHandler {
- public:
+public:
   explicit ThreadRecordingHandler(std::thread::id expected_thread)
       : expected_thread_(expected_thread) {}
 
@@ -217,12 +217,12 @@ class ThreadRecordingHandler final : public IReliableConnectionHandler {
   std::atomic<int> callback_count{0};
   std::atomic<int> expected_thread_callbacks{0};
 
- private:
+private:
   std::thread::id expected_thread_;
 };
 
 class ClientSideAsyncHandler final : public IReliableConnectionHandler {
- public:
+public:
   ClientSideAsyncHandler(ThreadPool& workers, TaskQueue& network_queue,
                          std::thread::id& network_thread)
       : workers_(workers),
@@ -266,14 +266,14 @@ class ClientSideAsyncHandler final : public IReliableConnectionHandler {
   std::atomic<bool> post_ran_on_network{false};
   std::atomic<bool> post_failed{false};
 
- private:
+private:
   ThreadPool& workers_;
   TaskQueue& network_queue_;
   std::thread::id& network_thread_;
 };
 
 class EchoAndCountServerHandler final : public IReliableConnectionHandler {
- public:
+public:
   void OnReliableReceived(std::uint8_t channel, const void* data,
                           std::size_t size) override {
     reliable_received.fetch_add(1);

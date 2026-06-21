@@ -12,6 +12,7 @@
 #include "i_socket.hpp"
 #include "reliable_connection.hpp"
 #include "sharded_connection_manager.hpp"
+#include "socket_constants.hpp"
 #include "socket_init.hpp"
 #include "task_queue.hpp"
 
@@ -32,7 +33,7 @@ class IntegrationTest : public ::testing::Test {
 
 // Simple echo server handler
 class EchoServerHandler : public IReliableConnectionHandler {
- public:
+public:
   ConnectionManager* manager = nullptr;
   std::atomic<int> messagesReceived{0};
 
@@ -59,7 +60,7 @@ class EchoServerHandler : public IReliableConnectionHandler {
 
 // Client handler
 class ClientHandler : public IReliableConnectionHandler {
- public:
+public:
   std::atomic<bool> connected{false};
   std::atomic<bool> disconnected{false};
   std::atomic<int> reliableReceived{0};
@@ -105,6 +106,154 @@ class ClientHandler : public IReliableConnectionHandler {
     receivedMessages.clear();
   }
 };
+
+void PumpPair(ISocket& server_socket, ConnectionManager& server_manager,
+              ISocket& client_socket, ReliableConnection& client_conn) {
+  char buffer[2048];
+
+  while (true) {
+    SocketAddress from;
+    std::uint16_t from_port = 0;
+    auto result = server_socket.Receive(buffer, sizeof(buffer), from, from_port);
+    if (!result.Succeeded()) break;
+    if (result.bytes > 0) {
+      server_manager.ProcessPacket(buffer,
+                                   static_cast<std::size_t>(result.bytes),
+                                   from, from_port);
+    }
+  }
+
+  while (true) {
+    SocketAddress from;
+    std::uint16_t from_port = 0;
+    auto result = client_socket.Receive(buffer, sizeof(buffer), from, from_port);
+    if (!result.Succeeded()) break;
+    if (result.bytes > 0) {
+      client_conn.ProcessPacket(buffer, static_cast<std::size_t>(result.bytes),
+                                from, from_port);
+    }
+  }
+
+  server_manager.Update();
+  client_conn.Update();
+}
+
+template <typename Done>
+bool PumpUntil(ISocket& server_socket, ConnectionManager& server_manager,
+               ISocket& client_socket, ReliableConnection& client_conn,
+               Done done, std::chrono::milliseconds timeout = 2s) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    PumpPair(server_socket, server_manager, client_socket, client_conn);
+    if (done()) return true;
+    std::this_thread::sleep_for(5ms);
+  }
+  PumpPair(server_socket, server_manager, client_socket, client_conn);
+  return done();
+}
+
+TEST_F(IntegrationTest, ClientServerReliableMessageIPv6Loopback) {
+  auto factory = SocketFactoryRegistry::GetFactory();
+
+  SocketConfig cfg;
+  cfg.nonBlocking = true;
+  cfg.enableIPv6 = true;
+
+  auto server_socket = factory->CreateUdpSocket(cfg);
+  ASSERT_NE(server_socket, nullptr);
+  const SocketError server_bind =
+    server_socket->Bind(socket_constants::AnyIPv6(), 0);
+  if (server_bind != SocketError::kNone) {
+    GTEST_SKIP() << "IPv6 loopback is unavailable";
+  }
+  const std::uint16_t server_port = server_socket->LocalPort();
+
+  auto client_socket = factory->CreateUdpSocket(cfg);
+  ASSERT_NE(client_socket, nullptr);
+  const SocketError client_bind =
+    client_socket->Bind(socket_constants::LoopbackIPv6(), 0);
+  if (client_bind != SocketError::kNone) {
+    GTEST_SKIP() << "IPv6 loopback client bind is unavailable";
+  }
+
+  ReliableConnectionConfig conn_cfg;
+  conn_cfg.retryTimeoutMs = 50;
+  ConnectionManagerConfig manager_cfg;
+  manager_cfg.connection = conn_cfg;
+
+  EchoServerHandler server_handler;
+  ConnectionManager server_manager(server_socket.get(), manager_cfg);
+  server_handler.manager = &server_manager;
+  server_manager.SetHandler(&server_handler);
+
+  ClientHandler client_handler;
+  ReliableConnection client_conn(client_socket.get(), conn_cfg);
+  client_conn.SetHandler(&client_handler);
+  ASSERT_TRUE(client_conn.Connect(socket_constants::LoopbackIPv6(),
+                                  server_port));
+
+  ASSERT_TRUE(PumpUntil(*server_socket, server_manager, *client_socket,
+                        client_conn,
+                        [&] { return client_handler.connected.load(); }))
+    << "IPv6 client should connect to server";
+
+  const std::array<std::uint8_t, 3> payload{'v', '6', '!'};
+  ASSERT_TRUE(client_conn.SendReliable(0, payload.data(), payload.size()));
+  ASSERT_TRUE(PumpUntil(*server_socket, server_manager, *client_socket,
+                        client_conn,
+                        [&] { return client_handler.reliableReceived > 0; }))
+    << "IPv6 reliable echo should arrive";
+}
+
+TEST_F(IntegrationTest, DualStackServerAcceptsIPv4Client) {
+  auto factory = SocketFactoryRegistry::GetFactory();
+
+  SocketConfig server_cfg;
+  server_cfg.nonBlocking = true;
+  server_cfg.enableIPv6 = true;
+  auto server_socket = factory->CreateUdpSocket(server_cfg);
+  ASSERT_NE(server_socket, nullptr);
+  const SocketError server_bind =
+    server_socket->Bind(socket_constants::AnyIPv6(), 0);
+  if (server_bind != SocketError::kNone) {
+    GTEST_SKIP() << "dual-stack bind is unavailable";
+  }
+  const std::uint16_t server_port = server_socket->LocalPort();
+
+  SocketConfig client_cfg;
+  client_cfg.nonBlocking = true;
+  auto client_socket = factory->CreateUdpSocket(client_cfg);
+  ASSERT_NE(client_socket, nullptr);
+  ASSERT_EQ(client_socket->Bind(socket_constants::Any(), 0),
+            SocketError::kNone);
+
+  ReliableConnectionConfig conn_cfg;
+  conn_cfg.retryTimeoutMs = 50;
+  ConnectionManagerConfig manager_cfg;
+  manager_cfg.connection = conn_cfg;
+
+  EchoServerHandler server_handler;
+  ConnectionManager server_manager(server_socket.get(), manager_cfg);
+  server_handler.manager = &server_manager;
+  server_manager.SetHandler(&server_handler);
+
+  ClientHandler client_handler;
+  ReliableConnection client_conn(client_socket.get(), conn_cfg);
+  client_conn.SetHandler(&client_handler);
+  ASSERT_TRUE(
+    client_conn.Connect(socket_constants::Loopback(), server_port));
+
+  ASSERT_TRUE(PumpUntil(*server_socket, server_manager, *client_socket,
+                        client_conn,
+                        [&] { return client_handler.connected.load(); }))
+    << "IPv4 client should connect to dual-stack server";
+
+  const auto clients = server_manager.GetConnections();
+  ASSERT_EQ(clients.size(), 1U);
+  EXPECT_FALSE(clients.front()->address.isIPv6);
+  EXPECT_EQ(clients.front()->address.ipv4.hostOrderAddress,
+            socket_constants::kIpV4Loopback);
+}
 
 TEST_F(IntegrationTest, ClientServerConnect) {
   const uint16_t server_port = 15001;

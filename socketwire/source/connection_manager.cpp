@@ -17,7 +17,7 @@ constexpr std::size_t kReceiveBatchSize = 32;
 
 class ConnectionManager::ClientEventHandler final
     : public IReliableConnectionHandler {
- public:
+public:
   ClientEventHandler(ConnectionManager& manager, RemoteClient& client)
       : manager_(manager), client_(client) {}
 
@@ -59,7 +59,7 @@ class ConnectionManager::ClientEventHandler final
     }
   }
 
- private:
+private:
   // NOLINTBEGIN(cppcoreguidelines-avoid-const-or-ref-data-members)
   ConnectionManager& manager_;
   RemoteClient& client_;

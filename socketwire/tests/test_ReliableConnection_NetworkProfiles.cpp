@@ -115,7 +115,7 @@ bool InBlackout(const NetworkProfile& profile, Clock::time_point start,
 }
 
 class SimulatedNetwork {
- public:
+public:
   SimulatedNetwork(NetworkProfile client_to_server,
                    NetworkProfile server_to_client, std::uint32_t seed)
       : client_to_server_(std::move(client_to_server)),
@@ -199,7 +199,7 @@ class SimulatedNetwork {
 
   [[nodiscard]] const NetworkTrafficStats& Stats() const { return stats_; }
 
- private:
+private:
   struct Endpoint {
     SocketAddress address;
     std::uint16_t port = 0;
@@ -281,7 +281,7 @@ class SimulatedNetwork {
 };
 
 class SimulatedSocket : public ISocket {
- public:
+public:
   SimulatedSocket(SimulatedNetwork* network, EndpointRole role)
       : network_(network), role_(role) {}
 
@@ -338,7 +338,7 @@ class SimulatedSocket : public ISocket {
   [[nodiscard]] int NativeHandle() const override { return -1; }
   void Close() override { closed_ = true; }
 
- private:
+private:
   SimulatedNetwork* network_ = nullptr;
   EndpointRole role_ = EndpointRole::kClient;
   SocketAddress address_ = SocketAddress::FromIPv4(0x7F000001);
@@ -433,7 +433,7 @@ double Percentile(std::vector<double> values, double percentile) {
 }
 
 class RecordingHandler : public IReliableConnectionHandler {
- public:
+public:
   RecordingHandler(NetworkMetrics* metrics,
                    std::unordered_map<std::uint32_t, SentMessage>* sent)
       : metrics_(metrics), sent_(sent) {}
@@ -456,7 +456,7 @@ class RecordingHandler : public IReliableConnectionHandler {
     HandleMessage(false, channel, data, size);
   }
 
- private:
+private:
   void HandleMessage(bool reliable_callback, std::uint8_t callback_channel,
                      const void* data, std::size_t size) {
     if (metrics_ == nullptr || sent_ == nullptr) return;
@@ -523,7 +523,7 @@ class RecordingHandler : public IReliableConnectionHandler {
 };
 
 class ScenarioRunner {
- public:
+public:
   ScenarioRunner(std::string scenario_name, NetworkProfile client_to_server,
                  NetworkProfile server_to_client, std::uint32_t seed)
       : profile_(client_to_server),
@@ -619,7 +619,7 @@ class ScenarioRunner {
       << " disconnect_count=" << metrics_.disconnect_count << "\n";
   }
 
- private:
+private:
   bool Send(ReliableConnection& connection, std::uint8_t channel, bool reliable,
             std::size_t body_size) {
     const std::uint32_t id = next_message_id_++;

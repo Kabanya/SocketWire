@@ -1,6 +1,7 @@
 #include "socket_constants.hpp"
 
 #include <optional>
+#include <string>
 
 #include "i_socket.hpp"
 
@@ -12,12 +13,52 @@
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#if !defined(__EMSCRIPTEN__)
+#include <net/if.h>
+#endif
 #include <sys/socket.h>
 
 #include <cstring>
 #endif
 
 namespace socketwire::socket_constants {
+namespace {
+
+bool ParseScopeId(const std::string& scope, std::uint32_t& scope_id) {
+  if (scope.empty()) return false;
+
+  std::uint64_t numeric_scope = 0;
+  bool numeric = true;
+  for (const char ch : scope) {
+    if (ch < '0' || ch > '9') {
+      numeric = false;
+      break;
+    }
+    numeric_scope = numeric_scope * 10 + static_cast<unsigned>(ch - '0');
+    if (numeric_scope > UINT32_MAX) return false;
+  }
+
+  if (numeric) {
+    scope_id = static_cast<std::uint32_t>(numeric_scope);
+    return true;
+  }
+
+#if defined(_WIN32)
+  const unsigned long index = if_nametoindex(scope.c_str());
+  if (index == 0) return false;
+  scope_id = static_cast<std::uint32_t>(index);
+  return true;
+#elif defined(__EMSCRIPTEN__)
+  return false;
+#else
+  const unsigned int index = if_nametoindex(scope.c_str());
+  if (index == 0) return false;
+  scope_id = static_cast<std::uint32_t>(index);
+  return true;
+#endif
+}
+
+}  // namespace
 
 SocketAddress Any() {
   return SocketAddress::FromIPv4(kIpV4Any);
@@ -61,16 +102,27 @@ bool ParseIPv6(const char* str, std::array<std::uint8_t, 16>& out_address,
                std::uint32_t& scope_id) {
   if (str == nullptr) return false;
 
+  const std::string input(str);
+  const auto scope_separator = input.find('%');
+  const std::string address =
+    scope_separator == std::string::npos ? input : input.substr(0, scope_separator);
+  if (address.empty()) return false;
+
 #if defined(_WIN32)
   struct in6_addr addr{};
 #else
   struct in6_addr addr{};
 #endif
 
-  if (inet_pton(AF_INET6, str, &addr) != 1) return false;
+  if (inet_pton(AF_INET6, address.c_str(), &addr) != 1) return false;
+
+  scope_id = 0;
+  if (scope_separator != std::string::npos) {
+    const std::string scope = input.substr(scope_separator + 1);
+    if (!ParseScopeId(scope, scope_id)) return false;
+  }
 
   std::memcpy(out_address.data(), &addr, out_address.size());
-  scope_id = 0;
   return true;
 }
 
@@ -98,15 +150,27 @@ bool FormatIPv4(std::uint32_t address, char* buffer,
 bool FormatIPv6(const std::array<std::uint8_t, 16>& address,
                 std::uint32_t scope_id, char* buffer,
                 std::size_t buffer_size) {
-  if (buffer == nullptr || buffer_size < 46) {
+  if (buffer == nullptr) {
     return false;
   }
 
   struct in6_addr addr{};
   std::memcpy(&addr, address.data(), address.size());
-  (void)scope_id;
-  return inet_ntop(AF_INET6, &addr, buffer,
-                   static_cast<socklen_t>(buffer_size)) != nullptr;
+  char address_buffer[46];
+  if (inet_ntop(AF_INET6, &addr, address_buffer, sizeof(address_buffer)) ==
+      nullptr) {
+    return false;
+  }
+
+  std::string formatted(address_buffer);
+  if (scope_id != 0) {
+    formatted += "%";
+    formatted += std::to_string(scope_id);
+  }
+
+  if (formatted.size() + 1 > buffer_size) return false;
+  std::memcpy(buffer, formatted.c_str(), formatted.size() + 1);
+  return true;
 }
 
 SocketAddress FromString(const char* ip_string) {
@@ -157,7 +221,7 @@ std::string FormatIPv4String(std::uint32_t address) {
 
 std::string FormatIPv6String(const std::array<std::uint8_t, 16>& address,
                              std::uint32_t scope_id) {
-  char buf[46];
+  char buf[64];
   if (!FormatIPv6(address, scope_id, buf, sizeof(buf))) return {};
   return {buf};
 }

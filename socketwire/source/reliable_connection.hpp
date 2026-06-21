@@ -26,7 +26,7 @@ enum class ConnectionState : std::uint8_t {
 };
 
 class IClock {
- public:
+public:
   using TimePoint = std::chrono::steady_clock::time_point;
 
   virtual ~IClock() = default;
@@ -34,7 +34,7 @@ class IClock {
 };
 
 class SystemClock final : public IClock {
- public:
+public:
   [[nodiscard]] TimePoint Now() const override {
     return std::chrono::steady_clock::now();
   }
@@ -46,7 +46,7 @@ class SystemClock final : public IClock {
 };
 
 class ManualClock final : public IClock {
- public:
+public:
   explicit ManualClock(TimePoint initial = TimePoint{}) : now_(initial) {}
 
   [[nodiscard]] TimePoint Now() const override { return now_; }
@@ -58,7 +58,7 @@ class ManualClock final : public IClock {
     now_ += std::chrono::duration_cast<TimePoint::duration>(delta);
   }
 
- private:
+private:
   TimePoint now_;
 };
 
@@ -110,7 +110,7 @@ struct ReliableConnectionConfig {
 
 /// Event callbacks for reliable connection state and payload delivery.
 class IReliableConnectionHandler {
- public:
+public:
   virtual ~IReliableConnectionHandler() = default;
 
   /// Called when the connection is established.
@@ -146,7 +146,7 @@ class IReliableConnectionHandler {
 /// that owner thread; cross-thread application sends should be marshalled into
 /// that loop by the caller.
 class ReliableConnection {
- public:
+public:
   explicit ReliableConnection(ISocket* socket,
                               const ReliableConnectionConfig& cfg = {},
                               IClock* clock = nullptr);
@@ -281,7 +281,7 @@ class ReliableConnection {
     return stats_deadline_expired_fragment_groups_;
   }
 
- private:
+private:
   ISocket* socket_ = nullptr;
   ReliableConnectionConfig config_;
   IClock* clock_ = nullptr;
@@ -317,8 +317,8 @@ class ReliableConnection {
 
   // Statistics
   std::uint32_t stats_sent_packets_ = 0;
-  std::uint32_t stats_received_packets_ = 0;
   std::uint32_t stats_lost_packets_ = 0;
+  std::uint32_t stats_received_packets_ = 0;
   std::uint32_t stats_deadline_send_drops_ = 0;
   std::uint32_t stats_deadline_receive_drops_ = 0;
   std::uint32_t stats_deadline_retries_prevented_ = 0;

@@ -34,11 +34,11 @@ namespace socketwire::crypto {
 constexpr std::uint8_t kProtocolVersionMajor = 1;
 constexpr std::uint8_t kProtocolVersionMinor = 0;
 
+constexpr std::size_t kMacSize = 16;
+constexpr std::size_t kNonceSize = 24;
 constexpr std::size_t kPublicKeySize = 32;
 constexpr std::size_t kSecretKeySize = 32;
 constexpr std::size_t kSessionKeySize = 32;
-constexpr std::size_t kNonceSize = 24;
-constexpr std::size_t kMacSize = 16;
 constexpr std::size_t kHandshakeNonceSize = 32;
 constexpr std::size_t kMaxHandshakeMessageSize = 512;
 constexpr std::size_t kReplayWindowSize = 1024;
@@ -310,7 +310,7 @@ inline Result ReadServerHello(const unsigned char* data, std::size_t len,
 }
 
 class HandshakeState {
- public:
+public:
   HandshakeState() = default;
 
   Result StartClient(const KeyPair& client_keys,
@@ -462,7 +462,7 @@ class HandshakeState {
   [[nodiscard]] class CryptoContext CreateClientCryptoContext() const;
   [[nodiscard]] class CryptoContext CreateServerCryptoContext() const;
 
- private:
+private:
   HandshakeRole role = HandshakeRole::kNone;
   HandshakePhase phase = HandshakePhase::kEmpty;
   KeyPair staticKeys{};
@@ -507,7 +507,7 @@ class HandshakeState {
 };
 
 class CryptoContext {
- public:
+public:
   CryptoContext() = default;
 
   [[nodiscard]] bool IsReady() const noexcept {
@@ -638,7 +638,7 @@ class CryptoContext {
     return ctx;
   }
 
- private:
+private:
   CipherSuite suite = CipherSuite::kNone;
   bool haveKeys = false;
   [[maybe_unused]] SessionKey keyRx{};

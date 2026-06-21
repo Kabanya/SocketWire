@@ -49,7 +49,7 @@ static SocketError MapErrno(int e) {
 
 // POSIX UDP implementation based on ISocket.
 class PosixUDPSocket final : public ISocket {
- public:
+public:
   explicit PosixUDPSocket(const SocketConfig& cfg);
   ~PosixUDPSocket() override;
 
@@ -68,7 +68,7 @@ class PosixUDPSocket final : public ISocket {
   [[nodiscard]] int NativeHandle() const override;
   void Close() override;
 
- private:
+private:
   std::size_t SendManyPortable(std::span<const OutgoingDatagram> datagrams);
   std::size_t ReceiveManyPortable(std::span<IncomingDatagram> datagrams);
 
@@ -508,7 +508,7 @@ void PosixUDPSocket::Close() {
 }
 
 class PosixSocketFactory : public ISocketFactory {
- public:
+public:
   std::unique_ptr<ISocket> CreateUdpSocket(const SocketConfig& cfg) override {
     return std::make_unique<PosixUDPSocket>(cfg);
   }

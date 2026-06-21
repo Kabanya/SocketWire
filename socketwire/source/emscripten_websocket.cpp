@@ -33,7 +33,7 @@ constexpr unsigned short kWebSocketClosing = 2;
 }
 
 class EmscriptenWebSocketSocket final : public ISocket {
- public:
+public:
   explicit EmscriptenWebSocketSocket(const WebSocketConfig& cfg)
       : config_(cfg) {}
 
@@ -163,7 +163,7 @@ class EmscriptenWebSocketSocket final : public ISocket {
     socket_ = 0;
   }
 
- private:
+private:
   [[nodiscard]] bool IsOpen() {
     if (socket_ <= 0) return false;
 
@@ -261,7 +261,7 @@ class EmscriptenWebSocketSocket final : public ISocket {
 };
 
 class EmscriptenSocketFactory final : public ISocketFactory {
- public:
+public:
   std::unique_ptr<ISocket> CreateUdpSocket(
     [[maybe_unused]] const SocketConfig& cfg) override {
     return nullptr;

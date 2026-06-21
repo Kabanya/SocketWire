@@ -12,7 +12,7 @@ namespace socketwire {
 
 /// Stores tasks from any thread and executes them on the thread calling Drain.
 class TaskQueue {
- public:
+public:
   using Task = std::function<void()>;
 
   TaskQueue() = default;
@@ -35,7 +35,7 @@ class TaskQueue {
   [[nodiscard]] std::size_t PendingCount() const;
   void Clear();
 
- private:
+private:
   mutable std::mutex mutex_;
   std::deque<Task> tasks_;
 };

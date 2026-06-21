@@ -139,7 +139,7 @@ struct WebSocketConfig {
 
 /// Base socket interface.
 class ISocket {
- public:
+public:
   virtual ~ISocket() = default;
 
   /// Binds an address and host-order port.
@@ -212,7 +212,7 @@ class ISocket {
 
 /// Platform-dependent socket factory.
 class ISocketFactory {
- public:
+public:
   virtual ~ISocketFactory() = default;
 
   virtual std::unique_ptr<ISocket> CreateUdpSocket(const SocketConfig& cfg) = 0;
@@ -224,7 +224,7 @@ class ISocketFactory {
 /// Registered factories must outlive all concurrent GetFactory users; built-in
 /// factories satisfy this by using function-local statics.
 class SocketFactoryRegistry {
- public:
+public:
   static void SetFactory(ISocketFactory* factory);
   static ISocketFactory* GetFactory();
 };

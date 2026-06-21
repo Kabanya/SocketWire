@@ -95,7 +95,7 @@ struct PacketKeyHash {
 };
 
 class PacketCodec {
- public:
+public:
   static constexpr std::array<std::uint8_t, 2> kMagic = {0x53, 0x57};
   static constexpr std::uint8_t kVersion = 2;
   static constexpr std::size_t kBaseHeaderSize = 12;
@@ -131,14 +131,14 @@ class PacketCodec {
   [[nodiscard]] static std::size_t HeaderSize(const PacketBuild& packet);
   [[nodiscard]] static const char* ToString(PacketDecodeError error) noexcept;
 
- private:
+private:
   static constexpr std::uint8_t kFlagDeadline = 0x01;
   static constexpr std::uint8_t kFlagFragment = 0x02;
   static constexpr std::uint8_t kKnownFlags = kFlagDeadline | kFlagFragment;
 };
 
 class PayloadBuffer {
- public:
+public:
   static constexpr std::size_t kInlineCapacity = 256;
 
   [[nodiscard]] bool Empty() const noexcept { return size_ == 0; }
@@ -179,7 +179,7 @@ class PayloadBuffer {
     Assign(data.data(), data.size());
   }
 
- private:
+private:
   std::array<std::uint8_t, kInlineCapacity> inline_{};
   std::vector<std::uint8_t> heap_;
   std::size_t size_ = 0;
@@ -201,7 +201,7 @@ struct PendingPacket {
 };
 
 class SendQueue {
- public:
+public:
   struct PendingHandle {
     std::size_t index = std::numeric_limits<std::size_t>::max();
     std::uint32_t generation = 0;
@@ -225,7 +225,7 @@ class SendQueue {
                                    std::uint32_t sequence) const;
   [[nodiscard]] bool IsValid(PendingHandle handle) const;
 
- private:
+private:
   struct PendingSlot {
     PendingPacket packet;
     std::uint32_t generation = 0;
@@ -254,7 +254,7 @@ class SendQueue {
 };
 
 class AckBatcher {
- public:
+public:
   void Configure(bool enabled, std::uint16_t max_commands);
   [[nodiscard]] bool Enabled() const { return enabled_; }
   [[nodiscard]] bool Empty() const { return queued_.empty(); }
@@ -268,28 +268,28 @@ class AckBatcher {
     return queued_.size() >= max_commands_;
   }
 
- private:
+private:
   bool enabled_ = true;
   std::uint16_t max_commands_ = 32;
   std::vector<PacketKey> queued_;
 };
 
 class CongestionController {
- public:
+public:
   void Configure(std::uint32_t max_window);
   [[nodiscard]] bool CanSend(std::uint32_t inflight) const;
   [[nodiscard]] std::uint32_t Window() const { return current_window_; }
   void OnAck();
   void OnLoss();
 
- private:
+private:
   std::uint32_t max_window_ = 0;
   std::uint32_t current_window_ = 0;
   std::uint32_t ssthresh_ = 32;
 };
 
 class ReceiveSequencer {
- public:
+public:
   struct Message {
     std::uint32_t sequence = 0;
     std::uint8_t channel = 0;
@@ -319,7 +319,7 @@ class ReceiveSequencer {
   [[nodiscard]] AcceptResult AcceptSequenced(std::uint8_t channel,
                                              std::uint32_t sequence);
 
- private:
+private:
   struct ReceivedSlot {
     Message packet;
     bool occupied = false;
@@ -342,7 +342,7 @@ class ReceiveSequencer {
 };
 
 class FragmentReassembler {
- public:
+public:
   struct CompleteMessage {
     std::uint8_t channel = 0;
     std::vector<std::uint8_t> payload;
@@ -375,7 +375,7 @@ class FragmentReassembler {
   [[nodiscard]] std::uint32_t Cleanup(
     std::chrono::steady_clock::time_point now);
 
- private:
+private:
   struct FragmentGroup {
     std::uint16_t total = 0;
     std::vector<std::optional<std::vector<std::uint8_t>>> pieces;

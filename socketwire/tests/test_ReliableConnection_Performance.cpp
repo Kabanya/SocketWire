@@ -63,7 +63,7 @@ class ReliableConnectionPerformanceTest : public ::testing::Test {
 
 // Simple packet counter handler
 class CounterHandler : public IReliableConnectionHandler {
- public:
+public:
   std::atomic<uint32_t> reliableCount{0};
   std::atomic<uint32_t> unreliableCount{0};
   std::atomic<bool> connected{false};
@@ -88,7 +88,7 @@ class CounterHandler : public IReliableConnectionHandler {
 };
 
 class PerfNullSocket final : public ISocket {
- public:
+public:
   SocketError Bind(const SocketAddress& address, std::uint16_t port) override {
     (void)address;
     bound_port_ = port;
@@ -128,7 +128,7 @@ class PerfNullSocket final : public ISocket {
 
   [[nodiscard]] std::uint32_t SendCount() const { return send_count_; }
 
- private:
+private:
   bool blocking_ = false;
   std::uint16_t bound_port_ = 0;
   std::uint32_t send_count_ = 0;
@@ -247,7 +247,7 @@ void TickConnection(ISocket& socket, ReliableConnection& connection,
 
 class ApplicationWorkloadClientHandler final
     : public IReliableConnectionHandler {
- public:
+public:
   explicit ApplicationWorkloadClientHandler(
     std::vector<steady_clock::time_point>& send_times)
       : send_times_(send_times) {}
@@ -281,7 +281,7 @@ class ApplicationWorkloadClientHandler final
   std::atomic<bool> connected{false};
   std::atomic<std::uint32_t> received{0};
 
- private:
+private:
   std::vector<steady_clock::time_point>& send_times_;
   std::atomic<std::int64_t> total_latency_ns_{0};
   std::atomic<std::int64_t> max_latency_ns_{0};
@@ -289,7 +289,7 @@ class ApplicationWorkloadClientHandler final
 
 class ApplicationWorkloadServerHandler final
     : public IReliableConnectionHandler {
- public:
+public:
   explicit ApplicationWorkloadServerHandler(ApplicationWorkloadMode mode)
       : mode_(mode) {}
 
@@ -338,7 +338,7 @@ class ApplicationWorkloadServerHandler final
   std::atomic<bool> worker_post_failed{false};
   std::atomic<bool> network_post_failed{false};
 
- private:
+private:
   ApplicationWorkloadMode mode_;
 };
 

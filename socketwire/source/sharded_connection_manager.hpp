@@ -55,7 +55,7 @@ struct ShardedConnectionStats {
 };
 
 class ShardedConnectionManager {
- public:
+public:
   using PacketCallback =
     std::function<void(ShardedClientHandle, ConnectionManager::RemoteClient&,
                        std::uint8_t, const void*, std::size_t, bool)>;
@@ -86,7 +86,7 @@ class ShardedConnectionManager {
 
   std::vector<ShardedConnectionEvent> DrainEvents();
 
- private:
+private:
   enum class SendMode : std::uint8_t {
     kReliable = 1,
     kUnreliable = 2,

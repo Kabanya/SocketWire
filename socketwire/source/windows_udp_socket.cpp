@@ -25,7 +25,7 @@ namespace socketwire {
 
 // Global WSA initialization helper
 class WSAInitializer {
- public:
+public:
   WSAInitializer() {
     WSADATA wsa_data;
     int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
@@ -40,7 +40,7 @@ class WSAInitializer {
 
   bool IsInitialized() const { return initialized; }
 
- private:
+private:
   bool initialized = false;
 };
 
@@ -77,7 +77,7 @@ static SocketError MapLastError() { return MapWsaError(WSAGetLastError()); }
 
 // Windows UDP implementation based on ISocket
 class WindowsUDPSocket final : public ISocket {
- public:
+public:
   explicit WindowsUDPSocket(const SocketConfig& cfg);
   ~WindowsUDPSocket() override;
 
@@ -94,7 +94,7 @@ class WindowsUDPSocket final : public ISocket {
   int NativeHandle() const override;
   void Close() override;
 
- private:
+private:
   SOCKET sock_ = INVALID_SOCKET;
   bool blocking_ = false;
   std::uint16_t bound_port_ = 0;
@@ -297,7 +297,7 @@ void WindowsUDPSocket::Close() {
 }
 
 class WindowsSocketFactory : public ISocketFactory {
- public:
+public:
   std::unique_ptr<ISocket> CreateUdpSocket(const SocketConfig& cfg) override {
     return std::make_unique<WindowsUDPSocket>(cfg);
   }

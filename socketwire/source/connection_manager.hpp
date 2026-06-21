@@ -26,7 +26,7 @@ struct ConnectionManagerConfig {
 /// Threading contract: ConnectionManager has the same single-network-loop
 /// ownership as ReliableConnection. It does not add internal locking.
 class ConnectionManager {
- public:
+public:
   struct RemoteClient {
     std::uint64_t id = 0;
     SocketAddress address;
@@ -66,7 +66,7 @@ class ConnectionManager {
                      bool)>
     onPacketReceived;
 
- private:
+private:
   class ClientEventHandler;
 
   ISocket* socket_ = nullptr;

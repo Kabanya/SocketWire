@@ -18,7 +18,7 @@ namespace socketwire {
 /// ConnectionManager. Worker tasks must not call socket or connection methods
 /// directly; marshal network work back to the network thread instead.
 class ThreadPool {
- public:
+public:
   using Task = std::function<void()>;
 
   explicit ThreadPool(std::size_t thread_count);
@@ -39,7 +39,7 @@ class ThreadPool {
   /// Stops accepting tasks, drains queued work, and joins all workers.
   void Stop();
 
- private:
+private:
   void WorkerLoop();
 
   const std::size_t thread_count_ = 0;

@@ -24,6 +24,8 @@ add_library(SocketWire STATIC
   socket_constants.hpp
   socket_constants.cpp
   socket_address_utils.hpp
+  socket_resolver.hpp
+  socket_resolver.cpp
 )
 
 option(SOCKETWIRE_ENABLE_DARWIN_MSG_X
@@ -68,6 +70,10 @@ endif()
 
 if (TARGET socketwire_crypto)
   target_link_libraries(SocketWire PUBLIC socketwire_crypto)
+endif()
+
+if(WIN32)
+  target_link_libraries(SocketWire PUBLIC ws2_32 iphlpapi)
 endif()
 
 if(EMSCRIPTEN)
