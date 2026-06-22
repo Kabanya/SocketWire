@@ -132,18 +132,30 @@ private:
     std::vector<IncomingPacket> incoming;
     std::mutex outgoingMutex;
     std::vector<OutgoingCommand> outgoing;
+    std::unique_ptr<ISocket> wakeSocket;
+    SocketAddress wakeAddress{};
+    std::uint16_t wakePort = 0;
+    std::mutex wakeSocketMutex;
     std::thread thread;
   };
 
   bool StartReusePort(std::uint32_t worker_count, ISocketFactory& factory);
   bool StartDispatcher(std::uint32_t worker_count, ISocketFactory& factory);
+  bool CreateWakeSocket(ISocketFactory& factory, std::unique_ptr<ISocket>& socket,
+                        SocketAddress& address, std::uint16_t& port);
   void AttachWorkerCallbacks(Worker& worker);
   bool UseReusePortBackend(std::uint32_t worker_count) const;
   bool QueueSend(SendMode mode, ShardedClientHandle client,
                  std::uint8_t channel, const void* data, std::size_t size);
   void QueueIncoming(IncomingPacket packet);
   std::size_t DrainIncoming(Worker& worker);
-  void DrainOutgoing(Worker& worker);
+  std::size_t DrainOutgoing(Worker& worker);
+  void NotifyWorker(Worker& worker);
+  void NotifyDispatcher();
+  static void NotifyWakeSocket(ISocket* socket, std::mutex& mutex,
+                               const SocketAddress& address,
+                               std::uint16_t port);
+  static void DrainWakeSocket(ISocket& socket);
   void DispatcherLoop();
   void WorkerLoop(Worker& worker);
   void PushEvent(ShardedConnectionEvent event);
@@ -154,7 +166,11 @@ private:
   std::vector<std::unique_ptr<Worker>> workers_;
   PacketCallback packetCallback_{};
   std::unique_ptr<ISocket> dispatcherSocket_;
+  std::unique_ptr<ISocket> dispatcherWakeSocket_;
   std::mutex dispatcherSocketMutex_;
+  std::mutex dispatcherWakeSocketMutex_;
+  SocketAddress dispatcherWakeAddress_{};
+  std::uint16_t dispatcherWakePort_ = 0;
   std::thread dispatcherThread_;
   mutable std::mutex eventsMutex_;
   std::vector<ShardedConnectionEvent> events_;

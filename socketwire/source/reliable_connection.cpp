@@ -42,6 +42,8 @@ ReliableConnection::ReliableConnection(ISocket* socket,
   send_sequence_.assign(n, 0);
   next_fragment_group_id_.assign(n, 0);
   send_buffer_.resize(config_.maxPacketSize);
+  receive_buffer_.resize(std::max<std::size_t>(
+    config_.maxPacketSize, detail::PacketCodec::kBaseHeaderSize));
   batch_buffer_.resize(config_.maxPacketSize);
   batch_scratch_buffer_.resize(config_.maxPacketSize);
   batch_command_buffer_.reserve(
@@ -367,7 +369,7 @@ void ReliableConnection::Update(std::chrono::steady_clock::time_point now) {
       std::chrono::duration_cast<std::chrono::milliseconds>(now -
                                                             last_ping_time_)
         .count();
-    if (std::cmp_greater(time_since_ping, config_.pingIntervalMs)) {
+    if (std::cmp_greater_equal(time_since_ping, config_.pingIntervalMs)) {
       SendPing(now);
       last_ping_time_ = now;
     }
@@ -376,6 +378,51 @@ void ReliableConnection::Update(std::chrono::steady_clock::time_point now) {
   CheckTimeout(now);
   stats_deadline_expired_fragment_groups_ += fragment_reassembler_.Cleanup(now);
   (void)FlushQueuedAcks(now);
+}
+
+std::chrono::steady_clock::time_point ReliableConnection::NextUpdateTime() {
+  using TimePoint = std::chrono::steady_clock::time_point;
+  auto next = TimePoint::max();
+
+  if (!ack_batcher_.Empty()) return TimePoint::min();
+
+  if (auto retry_time = send_queue_.NextDueTime(); retry_time.has_value()) {
+    next = std::min(next, *retry_time);
+  }
+  if (auto cleanup_time = fragment_reassembler_.NextCleanupTime();
+      cleanup_time.has_value()) {
+    next = std::min(next, *cleanup_time);
+  }
+
+  if (state_ == ConnectionState::kConnected) {
+    next = std::min(
+      next, last_ping_time_ + std::chrono::milliseconds(config_.pingIntervalMs));
+    next = std::min(
+      next,
+      last_receive_time_ + std::chrono::milliseconds(config_.disconnectTimeoutMs));
+  }
+
+  return next;
+}
+
+void ReliableConnection::Poll() {
+  if (socket_ == nullptr) return;
+
+  while (true) {
+    SocketAddress from{};
+    std::uint16_t from_port = 0;
+    const auto result = socket_->Receive(receive_buffer_.data(),
+                                         receive_buffer_.size(), from,
+                                         from_port);
+    if (result.Failed() || result.bytes <= 0) return;
+    if (state_ != ConnectionState::kDisconnected &&
+        !SameEndpoint(remote_addr_, remote_port_, from, from_port)) {
+      continue;
+    }
+
+    ProcessPacket(receive_buffer_.data(), static_cast<std::size_t>(result.bytes),
+                  from, from_port);
+  }
 }
 
 void ReliableConnection::ProcessPacket(const void* data, std::size_t size,
@@ -1088,7 +1135,7 @@ void ReliableConnection::CheckTimeout(
   const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                          now - last_receive_time_)
                          .count();
-  if (std::cmp_greater(elapsed, config_.disconnectTimeoutMs)) {
+  if (std::cmp_greater_equal(elapsed, config_.disconnectTimeoutMs)) {
     if (event_handler_ != nullptr) event_handler_->OnTimeout();
     Disconnect();
   }

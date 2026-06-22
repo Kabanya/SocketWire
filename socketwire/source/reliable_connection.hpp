@@ -235,6 +235,15 @@ public:
   /// Processes retransmits, pings, timeouts, and pending ordered packets using
   /// a caller-supplied tick timestamp.
   void Update(std::chrono::steady_clock::time_point now);
+  /// Returns the next protocol timer deadline that requires Update().
+  [[nodiscard]] std::chrono::steady_clock::time_point NextUpdateTime();
+
+  /// Drains this connection's socket and processes available datagrams.
+  ///
+  /// Intended for single-connection clients. Server demultiplexers that share
+  /// one socket across multiple clients should route datagrams themselves and
+  /// call ProcessPacket().
+  void Poll();
 
   void ProcessPacket(const void* data,
                      std::size_t size,
@@ -292,6 +301,7 @@ private:
   std::uint16_t remote_port_ = 0;
 
   std::vector<std::uint8_t> send_buffer_;
+  std::vector<std::uint8_t> receive_buffer_;
   std::vector<std::uint8_t> batch_buffer_;
   std::vector<std::uint8_t> batch_scratch_buffer_;
   std::vector<std::uint8_t> batch_command_buffer_;

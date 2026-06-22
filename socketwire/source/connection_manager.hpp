@@ -41,6 +41,8 @@ public:
 
   void Update();
   void Update(std::chrono::steady_clock::time_point now);
+  /// Returns the earliest client protocol timer deadline.
+  [[nodiscard]] std::chrono::steady_clock::time_point NextUpdateTime();
 
   /// Drains pending socket packets, then updates all connections.
   ///

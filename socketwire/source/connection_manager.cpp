@@ -105,6 +105,16 @@ void ConnectionManager::Update(std::chrono::steady_clock::time_point now) {
   });
 }
 
+std::chrono::steady_clock::time_point ConnectionManager::NextUpdateTime() {
+  auto next = std::chrono::steady_clock::time_point::max();
+  for (auto& client : clients_) {
+    if (client->connection != nullptr) {
+      next = std::min(next, client->connection->NextUpdateTime());
+    }
+  }
+  return next;
+}
+
 void ConnectionManager::ProcessPacket(const void* data, std::size_t size,
                                       const SocketAddress& from,
                                       std::uint16_t from_port) {

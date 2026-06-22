@@ -1,17 +1,31 @@
 #include "sharded_connection_manager.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <limits>
 #include <utility>
 
 #include "socket_constants.hpp"
 #include "socket_init.hpp"
+#include "socket_poller.hpp"
 
 namespace socketwire {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+
+int PollTimeoutMs(Clock::time_point deadline) {
+  if (deadline == Clock::time_point::max()) return -1;
+  const auto now = Clock::now();
+  if (deadline <= now) return 0;
+  const auto timeout =
+    std::chrono::ceil<std::chrono::milliseconds>(deadline - now);
+  if (timeout.count() > std::numeric_limits<int>::max()) {
+    return std::numeric_limits<int>::max();
+  }
+  return static_cast<int>(timeout.count());
+}
 
 SocketAddress BindAddressFor(const SocketConfig& config) {
   return config.enableIPv6 ? socket_constants::AnyIPv6()
@@ -90,6 +104,8 @@ bool ShardedConnectionManager::Start() {
   workers_.clear();
   workers_.reserve(worker_count);
   dispatcherSocket_.reset();
+  dispatcherWakeSocket_.reset();
+  dispatcherWakePort_ = 0;
   localPort_ = 0;
   reusePortEnabled_ = false;
 
@@ -142,6 +158,12 @@ bool ShardedConnectionManager::StartReusePort(std::uint32_t worker_count,
       bind_port = localPort_;
     }
 
+    if (!CreateWakeSocket(factory, worker->wakeSocket, worker->wakeAddress,
+                          worker->wakePort)) {
+      Stop();
+      return false;
+    }
+
     worker->manager = std::make_unique<ConnectionManager>(worker->socket.get(),
                                                           config_.connection);
     AttachWorkerCallbacks(*worker);
@@ -169,10 +191,20 @@ bool ShardedConnectionManager::StartDispatcher(std::uint32_t worker_count,
     return false;
   }
   localPort_ = dispatcherSocket_->LocalPort();
+  if (!CreateWakeSocket(factory, dispatcherWakeSocket_, dispatcherWakeAddress_,
+                        dispatcherWakePort_)) {
+    dispatcherSocket_.reset();
+    return false;
+  }
 
   for (std::uint32_t i = 0; i < worker_count; ++i) {
     auto worker = std::make_unique<Worker>();
     worker->index = i;
+    if (!CreateWakeSocket(factory, worker->wakeSocket, worker->wakeAddress,
+                          worker->wakePort)) {
+      Stop();
+      return false;
+    }
     worker->sendSocket = std::make_unique<SharedSendSocket>(
       *dispatcherSocket_, dispatcherSocketMutex_);
     worker->manager = std::make_unique<ConnectionManager>(
@@ -181,6 +213,33 @@ bool ShardedConnectionManager::StartDispatcher(std::uint32_t worker_count,
     workers_.push_back(std::move(worker));
   }
 
+  return true;
+}
+
+bool ShardedConnectionManager::CreateWakeSocket(
+  ISocketFactory& factory, std::unique_ptr<ISocket>& socket,
+  SocketAddress& address, std::uint16_t& port) {
+  SocketConfig wake_config;
+  wake_config.nonBlocking = true;
+  wake_config.reuseAddress = false;
+  wake_config.reusePort = false;
+  wake_config.enableIPv6 = false;
+
+  auto wake_socket = factory.CreateUdpSocket(wake_config);
+  if (wake_socket == nullptr) return false;
+
+  const SocketAddress wake_address = socket_constants::Loopback();
+  if (wake_socket->Bind(wake_address, socket_constants::kPortAny) !=
+      SocketError::kNone) {
+    return false;
+  }
+
+  const std::uint16_t wake_port = wake_socket->LocalPort();
+  if (wake_port == 0) return false;
+
+  socket = std::move(wake_socket);
+  address = wake_address;
+  port = wake_port;
   return true;
 }
 
@@ -222,12 +281,18 @@ bool ShardedConnectionManager::UseReusePortBackend(
 
 void ShardedConnectionManager::Stop() {
   running_.store(false);
+  NotifyDispatcher();
+  for (auto& worker : workers_) {
+    if (worker != nullptr) NotifyWorker(*worker);
+  }
   if (dispatcherThread_.joinable()) dispatcherThread_.join();
   for (auto& worker : workers_) {
     if (worker != nullptr && worker->thread.joinable()) worker->thread.join();
   }
   workers_.clear();
   dispatcherSocket_.reset();
+  dispatcherWakeSocket_.reset();
+  dispatcherWakePort_ = 0;
   localPort_ = 0;
   reusePortEnabled_ = false;
 }
@@ -340,16 +405,22 @@ bool ShardedConnectionManager::QueueSend(SendMode mode,
   command.channel = channel;
   command.payload.assign(bytes, bytes + size);
 
-  const std::scoped_lock lock(worker.outgoingMutex);
-  worker.outgoing.push_back(std::move(command));
+  {
+    const std::scoped_lock lock(worker.outgoingMutex);
+    worker.outgoing.push_back(std::move(command));
+  }
+  NotifyWorker(worker);
   return true;
 }
 
 void ShardedConnectionManager::QueueIncoming(IncomingPacket packet) {
   if (workers_.empty()) return;
   auto& worker = *workers_.at(WorkerIndexFor(packet.from, packet.port));
-  const std::scoped_lock lock(worker.incomingMutex);
-  worker.incoming.push_back(std::move(packet));
+  {
+    const std::scoped_lock lock(worker.incomingMutex);
+    worker.incoming.push_back(std::move(packet));
+  }
+  NotifyWorker(worker);
 }
 
 std::size_t ShardedConnectionManager::DrainIncoming(Worker& worker) {
@@ -369,7 +440,7 @@ std::size_t ShardedConnectionManager::DrainIncoming(Worker& worker) {
   return packets.size();
 }
 
-void ShardedConnectionManager::DrainOutgoing(Worker& worker) {
+std::size_t ShardedConnectionManager::DrainOutgoing(Worker& worker) {
   std::vector<OutgoingCommand> commands;
   {
     const std::scoped_lock lock(worker.outgoingMutex);
@@ -402,6 +473,38 @@ void ShardedConnectionManager::DrainOutgoing(Worker& worker) {
         break;
     }
   }
+  return commands.size();
+}
+
+void ShardedConnectionManager::NotifyWorker(Worker& worker) {
+  NotifyWakeSocket(worker.wakeSocket.get(), worker.wakeSocketMutex,
+                   worker.wakeAddress, worker.wakePort);
+}
+
+void ShardedConnectionManager::NotifyDispatcher() {
+  NotifyWakeSocket(dispatcherWakeSocket_.get(), dispatcherWakeSocketMutex_,
+                   dispatcherWakeAddress_, dispatcherWakePort_);
+}
+
+void ShardedConnectionManager::NotifyWakeSocket(ISocket* socket,
+                                                std::mutex& mutex,
+                                                const SocketAddress& address,
+                                                std::uint16_t port) {
+  if (socket == nullptr || port == 0) return;
+  constexpr std::array<std::uint8_t, 1> wake_byte{0};
+  const std::scoped_lock lock(mutex);
+  (void)socket->SendTo(wake_byte.data(), wake_byte.size(), address, port);
+}
+
+void ShardedConnectionManager::DrainWakeSocket(ISocket& socket) {
+  std::array<std::uint8_t, 64> buffer{};
+  while (true) {
+    SocketAddress from{};
+    std::uint16_t port = 0;
+    const SocketResult result =
+      socket.Receive(buffer.data(), buffer.size(), from, port);
+    if (result.Failed() || result.bytes <= 0) return;
+  }
 }
 
 void ShardedConnectionManager::DispatcherLoop() {
@@ -410,37 +513,62 @@ void ShardedConnectionManager::DispatcherLoop() {
     std::max<std::size_t>(1, config_.connection.connection.maxPacketSize);
   std::vector<std::uint8_t> storage(k_batch_size * packet_size);
   std::vector<IncomingDatagram> datagrams(k_batch_size);
+  SocketPoller poller({.reserveHint = 2});
+  std::vector<SocketEvent> events;
+  if (dispatcherSocket_ != nullptr) {
+    (void)poller.AddSocket(dispatcherSocket_.get());
+  }
+  if (dispatcherWakeSocket_ != nullptr) {
+    (void)poller.AddSocket(dispatcherWakeSocket_.get());
+  }
 
   while (running_.load()) {
-    for (std::size_t i = 0; i < k_batch_size; ++i) {
-      datagrams.at(i).data = storage.data() + i * packet_size;
-      datagrams.at(i).capacity = packet_size;
-      datagrams.at(i).result = {};
-    }
+    poller.PollInto(events, -1);
 
-    std::size_t received = 0;
-    {
-      const std::scoped_lock lock(dispatcherSocketMutex_);
-      if (dispatcherSocket_ != nullptr) {
-        received = dispatcherSocket_->ReceiveMany(datagrams);
+    bool socket_readable = false;
+    for (const SocketEvent& event : events) {
+      if (event.socket == dispatcherWakeSocket_.get() &&
+          dispatcherWakeSocket_ != nullptr) {
+        DrainWakeSocket(*dispatcherWakeSocket_);
+        continue;
       }
+      if (event.socket == dispatcherSocket_.get()) socket_readable = true;
     }
 
-    if (received == 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (!running_.load() || !socket_readable) {
       continue;
     }
 
-    for (std::size_t i = 0; i < received; ++i) {
-      const auto& datagram = datagrams.at(i);
-      if (datagram.result.bytes <= 0) continue;
-      auto* begin = static_cast<const std::uint8_t*>(datagram.data);
-      const auto size = static_cast<std::size_t>(datagram.result.bytes);
-      IncomingPacket packet;
-      packet.from = datagram.fromAddr;
-      packet.port = datagram.fromPort;
-      packet.payload.assign(begin, begin + size);
-      QueueIncoming(std::move(packet));
+    while (running_.load()) {
+      for (std::size_t i = 0; i < k_batch_size; ++i) {
+        datagrams.at(i).data = storage.data() + i * packet_size;
+        datagrams.at(i).capacity = packet_size;
+        datagrams.at(i).result = {};
+      }
+
+      std::size_t received = 0;
+      {
+        const std::scoped_lock lock(dispatcherSocketMutex_);
+        if (dispatcherSocket_ != nullptr) {
+          received = dispatcherSocket_->ReceiveMany(datagrams);
+        }
+      }
+
+      if (received == 0) break;
+
+      for (std::size_t i = 0; i < received; ++i) {
+        const auto& datagram = datagrams.at(i);
+        if (datagram.result.bytes <= 0) continue;
+        auto* begin = static_cast<const std::uint8_t*>(datagram.data);
+        const auto size = static_cast<std::size_t>(datagram.result.bytes);
+        IncomingPacket packet;
+        packet.from = datagram.fromAddr;
+        packet.port = datagram.fromPort;
+        packet.payload.assign(begin, begin + size);
+        QueueIncoming(std::move(packet));
+      }
+
+      if (received < datagrams.size()) break;
     }
   }
 }
@@ -450,10 +578,18 @@ void ShardedConnectionManager::WorkerLoop(Worker& worker) {
   std::uint64_t update_us_sum = 0;
   std::uint64_t update_us_max = 0;
   std::uint64_t update_samples = 0;
+  SocketPoller poller({.reserveHint = 2});
+  std::vector<SocketEvent> events;
+  if (worker.socket != nullptr) {
+    (void)poller.AddSocket(worker.socket.get());
+  }
+  if (worker.wakeSocket != nullptr) {
+    (void)poller.AddSocket(worker.wakeSocket.get());
+  }
 
   while (running_.load()) {
     const auto loop_start = Clock::now();
-    DrainOutgoing(worker);
+    const std::size_t outgoing = DrainOutgoing(worker);
     const std::size_t incoming = DrainIncoming(worker);
     if (worker.socket != nullptr) {
       worker.manager->Tick();
@@ -523,10 +659,18 @@ void ShardedConnectionManager::WorkerLoop(Worker& worker) {
       next_stats = loop_end + std::chrono::milliseconds(100);
     }
 
-    if (worker.stats.totalClients.load() == 0 && incoming == 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    } else {
+    if (outgoing > 0 || incoming > 0) {
       std::this_thread::yield();
+    } else {
+      const auto wait_deadline =
+        std::min(worker.manager->NextUpdateTime(), next_stats);
+      poller.PollInto(events, PollTimeoutMs(wait_deadline));
+      for (const SocketEvent& event : events) {
+        if (event.socket == worker.wakeSocket.get() &&
+            worker.wakeSocket != nullptr) {
+          DrainWakeSocket(*worker.wakeSocket);
+        }
+      }
     }
   }
 }

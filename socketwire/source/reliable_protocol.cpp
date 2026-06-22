@@ -358,6 +358,19 @@ void SendQueue::ScheduleRetry(PendingHandle handle,
                               handle, pending->retries});
 }
 
+std::optional<std::chrono::steady_clock::time_point> SendQueue::NextDueTime() {
+  while (!retry_heap_.empty()) {
+    const RetryEntry entry = retry_heap_.top();
+    const PendingPacket* pending = Get(entry.handle);
+    if (pending == nullptr || pending->retries != entry.retryGeneration) {
+      retry_heap_.pop();
+      continue;
+    }
+    return entry.dueTime;
+  }
+  return std::nullopt;
+}
+
 std::optional<SendQueue::PendingHandle> SendQueue::PopDue(
   std::chrono::steady_clock::time_point now) {
   while (!retry_heap_.empty()) {
@@ -758,7 +771,7 @@ std::uint32_t FragmentReassembler::Cleanup(
           .count();
       const bool deadline_expired =
         it->second.hasDeadline && now >= it->second.expireTime;
-      const bool timeout = std::cmp_greater(elapsed, fragment_timeout_ms_);
+      const bool timeout = std::cmp_greater_equal(elapsed, fragment_timeout_ms_);
       if (deadline_expired || timeout) {
         if (deadline_expired) ++expired_deadline_count;
         it = channel_groups.erase(it);
@@ -768,6 +781,20 @@ std::uint32_t FragmentReassembler::Cleanup(
     }
   }
   return expired_deadline_count;
+}
+
+std::optional<std::chrono::steady_clock::time_point>
+FragmentReassembler::NextCleanupTime() const {
+  std::optional<std::chrono::steady_clock::time_point> next;
+  const auto timeout = std::chrono::milliseconds(fragment_timeout_ms_);
+  for (const auto& channel_groups : groups_) {
+    for (const auto& [_, group] : channel_groups) {
+      auto candidate = group.firstReceived + timeout;
+      if (group.hasDeadline) candidate = std::min(candidate, group.expireTime);
+      if (!next.has_value() || candidate < *next) next = candidate;
+    }
+  }
+  return next;
 }
 
 }  // namespace socketwire::detail

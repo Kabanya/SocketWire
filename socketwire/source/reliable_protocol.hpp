@@ -215,6 +215,8 @@ public:
   void ScheduleRetry(PendingHandle handle,
                      std::chrono::steady_clock::time_point now,
                      std::uint32_t retry_timeout_ms);
+  [[nodiscard]] std::optional<std::chrono::steady_clock::time_point>
+  NextDueTime();
   [[nodiscard]] std::optional<PendingHandle> PopDue(
     std::chrono::steady_clock::time_point now);
   void Erase(PendingHandle handle);
@@ -374,6 +376,8 @@ public:
     std::chrono::steady_clock::time_point expire_time);
   [[nodiscard]] std::uint32_t Cleanup(
     std::chrono::steady_clock::time_point now);
+  [[nodiscard]] std::optional<std::chrono::steady_clock::time_point>
+  NextCleanupTime() const;
 
 private:
   struct FragmentGroup {
