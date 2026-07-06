@@ -1,12 +1,14 @@
-# Google Test for unit testing
-CPMAddPackage(
-  NAME googletest
-  GITHUB_REPOSITORY google/googletest
-  VERSION 1.17.0
-  OPTIONS
-    "INSTALL_GTEST OFF"
-    "gtest_force_shared_crt ON"
-)
+if(SOCKETWIRE_BUILD_TESTS)
+  # Google Test for unit testing
+  CPMAddPackage(
+    NAME googletest
+    GITHUB_REPOSITORY google/googletest
+    VERSION 1.17.0
+    OPTIONS
+      "INSTALL_GTEST OFF"
+      "gtest_force_shared_crt ON"
+  )
+endif()
 
 option(SOCKETWIRE_USE_LIBSODIUM "Enable libsodium crypto library" ON)
 set(SOCKETWIRE_FETCH_LIBSODIUM ON CACHE BOOL "Download and build libsodium when SOCKETWIRE_USE_LIBSODIUM is ON and no system libsodium is found")

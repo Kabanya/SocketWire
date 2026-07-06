@@ -1090,6 +1090,103 @@ TEST_F(ReliableConnectionTest, ExpiredUnreliableReceiveIsDroppedWithoutAck) {
   EXPECT_EQ(conn.GetDeadlineReceiveDrops(), 1u);
 }
 
+TEST_F(ReliableConnectionTest, DeadlineDropsStaleUnreliableStateUpdate) {
+  config.deadlinesEnabled = true;
+  ReliableConnection conn(&socket, config);
+  conn.SetHandler(&handler);
+  auto addr = SocketAddress::FromIPv4(0x7F000001);
+  conn.SetRemoteAddress(addr, 12345);
+  conn.SetConnectedForTest();
+
+  constexpr char fresh_state[] = "state:42";
+  const auto fresh =
+    MakeBasePacket(PacketType::kUnreliable, 0, 0, fresh_state,
+                   std::strlen(fresh_state));
+  conn.ProcessPacket(fresh.data(), fresh.size(), addr, 12345);
+
+  ASSERT_EQ(handler.unreliablePackets.size(), 1u);
+  EXPECT_EQ(std::string(handler.unreliablePackets.at(0).begin(),
+                        handler.unreliablePackets.at(0).end()),
+            fresh_state);
+
+  handler.Reset();
+  socket.ClearSent();
+
+  constexpr char stale_state[] = "state:13";
+  const auto stale =
+    MakeDeadlinePacket(PacketType::kUnreliable, 0, 1, 10, 10, stale_state,
+                       std::strlen(stale_state));
+  conn.ProcessPacket(stale.data(), stale.size(), addr, 12345);
+
+  EXPECT_TRUE(handler.unreliablePackets.empty());
+  EXPECT_EQ(socket.GetSentCount(), 0u);
+  EXPECT_EQ(conn.GetDeadlineReceiveDrops(), 1u);
+}
+
+TEST_F(ReliableConnectionTest, DeadlineMetricsShowStaleUpdateWorkAvoided) {
+  config.deadlinesEnabled = true;
+  constexpr std::uint32_t kUpdates = 1000;
+  constexpr std::uint32_t kDeadlineMs = 120;
+  constexpr char state_update[] = "player-state";
+  const auto addr = SocketAddress::FromIPv4(0x7F000001);
+  struct AgeBucket {
+    std::uint32_t ageMs;
+    std::uint32_t count;
+  };
+  constexpr AgeBucket kAgeBuckets[] = {{70, 82},  {80, 127}, {90, 165},
+                                       {100, 179}, {110, 165}, {120, 127},
+                                       {130, 82},  {140, 45},  {150, 20},
+                                       {160, 8}};
+
+  MockSocket baseline_socket;
+  MockEventHandler baseline_handler;
+  ReliableConnection baseline(&baseline_socket, config);
+  baseline.SetHandler(&baseline_handler);
+  baseline.SetRemoteAddress(addr, 12345);
+  baseline.SetConnectedForTest();
+
+  for (std::uint32_t sequence = 0; sequence < kUpdates; ++sequence) {
+    const auto packet =
+      MakeBasePacket(PacketType::kUnreliable, 0, sequence, state_update,
+                     std::strlen(state_update));
+    baseline.ProcessPacket(packet.data(), packet.size(), addr, 12345);
+  }
+
+  std::uint32_t timely_updates = 0;
+  std::uint32_t stale_updates = 0;
+  MockSocket deadline_socket;
+  MockEventHandler deadline_handler;
+  ReliableConnection deadline(&deadline_socket, config);
+  deadline.SetHandler(&deadline_handler);
+  deadline.SetRemoteAddress(addr, 12345);
+  deadline.SetConnectedForTest();
+
+  std::uint32_t sequence = 0;
+  for (const auto [age_ms, count] : kAgeBuckets) {
+    if (age_ms < kDeadlineMs) {
+      timely_updates += count;
+    } else {
+      stale_updates += count;
+    }
+
+    for (std::uint32_t i = 0; i < count; ++i) {
+      const auto packet =
+        MakeDeadlinePacket(PacketType::kUnreliable, 0, sequence, kDeadlineMs,
+                           age_ms, state_update, std::strlen(state_update));
+      deadline.ProcessPacket(packet.data(), packet.size(), addr, 12345);
+      ++sequence;
+    }
+  }
+
+  ASSERT_EQ(sequence, kUpdates);
+  ASSERT_EQ(timely_updates, 718u);
+  ASSERT_EQ(stale_updates, 282u);
+  ASSERT_EQ(baseline_handler.unreliablePackets.size(), kUpdates);
+  EXPECT_EQ(deadline_handler.unreliablePackets.size(), timely_updates);
+  EXPECT_EQ(deadline.GetDeadlineReceiveDrops(), stale_updates);
+  EXPECT_EQ(deadline_socket.GetSentCount(), 0u);
+}
+
 TEST_F(ReliableConnectionTest, FragmentGroupExpiresByDeadline) {
   config.deadlinesEnabled = true;
   config.fragmentTimeoutMs = 10000;

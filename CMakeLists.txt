@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.28)
 
 project(socketwire LANGUAGES CXX)
 
+option(SOCKETWIRE_BUILD_TESTS "Build SocketWire unit tests" ON)
+
 # Prevent the user from polluting the root directory with build files
 if(PROJECT_SOURCE_DIR STREQUAL PROJECT_BINARY_DIR)
   message(
@@ -42,6 +44,17 @@ SET(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_library(project_options INTERFACE)
 add_library(project_warnings INTERFACE)
 
-enable_testing()
+if(SOCKETWIRE_BUILD_TESTS)
+  enable_testing()
+endif()
 
 add_subdirectory(socketwire)
+
+set(SOCKETWIRE_LOAD_SOURCE "${PROJECT_SOURCE_DIR}/../tools/socketwire_load.cpp")
+if(EXISTS "${SOCKETWIRE_LOAD_SOURCE}")
+  add_executable(SocketWireLoad "${SOCKETWIRE_LOAD_SOURCE}")
+  target_link_libraries(SocketWireLoad PRIVATE SocketWire)
+  set_target_properties(SocketWireLoad PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/socketwire"
+  )
+endif()
