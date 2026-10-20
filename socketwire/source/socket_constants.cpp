@@ -164,7 +164,7 @@ bool FormatIPv6(const std::array<std::uint8_t, 16>& address,
 
   std::string formatted(address_buffer);
   if (scope_id != 0) {
-    formatted += "%";
+    formatted += '%';
     formatted += std::to_string(scope_id);
   }
 
@@ -190,9 +190,9 @@ SocketAddress FromString(const char* ip_string) {
 
 SocketAddress FromOctets(std::uint8_t a, std::uint8_t b, std::uint8_t c,
                           std::uint8_t d) {
-  std::uint32_t address = (static_cast<std::uint32_t>(a) << 24) |
-                          (static_cast<std::uint32_t>(b) << 16) |
-                          (static_cast<std::uint32_t>(c) << 8) |
+  std::uint32_t address = (static_cast<std::uint32_t>(a) << 24u) |
+                          (static_cast<std::uint32_t>(b) << 16u) |
+                          (static_cast<std::uint32_t>(c) << 8u) |
                           static_cast<std::uint32_t>(d);
 
   return SocketAddress::FromIPv4(address);

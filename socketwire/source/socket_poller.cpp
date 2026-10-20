@@ -88,7 +88,7 @@ void SocketPoller::RemoveSocket(ISocket* socket) {
   if (socket == nullptr) return;
   const int fd = socket->NativeHandle();
   if (fd < 0) return;
-  auto it = fd_map_.find(fd);
+  const auto it = fd_map_.find(fd);
   if (it == fd_map_.end()) return;
   BackendRemove(socket);
   fd_map_.erase(it);
@@ -184,7 +184,7 @@ void SocketPoller::BackendRemove(ISocket* socket) {
     FD_CLR(fd, &error_set_);
     if (fd == select_max_fd_) {
       select_max_fd_ = -1;
-      for (auto& kv : fd_map_) {
+      for (const auto& kv : fd_map_) {
         if (kv.first != fd && kv.first > select_max_fd_) {
           select_max_fd_ = kv.first;
         }
@@ -273,7 +273,7 @@ void SocketPoller::BackendPoll(std::vector<SocketEvent>& events,
 
     for (int i = 0; i < n; ++i) {
       const int fd = static_cast<int>(kev[i].ident);
-      auto it = fd_map_.find(fd);
+      const auto it = fd_map_.find(fd);
       if (it == fd_map_.end()) continue;
 
       SocketEvent* event = nullptr;
@@ -311,7 +311,7 @@ void SocketPoller::BackendPoll(std::vector<SocketEvent>& events,
     }
     const int n = ::select(select_max_fd_ + 1, &r_set, &w_set, &e_set, ptv);
     if (n > 0) {
-      for (auto& kv : fd_map_) {
+      for (const auto& kv : fd_map_) {
         const int fd = kv.first;
         const bool r = FD_ISSET(fd, &r_set) != 0;
         const bool w = FD_ISSET(fd, &w_set) != 0;

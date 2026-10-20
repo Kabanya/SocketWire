@@ -11,26 +11,27 @@ constexpr std::uint8_t kMaxPacketType =
   static_cast<std::uint8_t>(PacketType::kSequenced);
 
 void WriteU16(std::uint8_t* dst, std::uint16_t value) {
-  dst[0] = static_cast<std::uint8_t>((value >> 8) & 0xFFu);
+  dst[0] = static_cast<std::uint8_t>(
+    (static_cast<std::uint32_t>(value) >> 8u) & 0xFFu);
   dst[1] = static_cast<std::uint8_t>(value & 0xFFu);
 }
 
 void WriteU32(std::uint8_t* dst, std::uint32_t value) {
-  dst[0] = static_cast<std::uint8_t>((value >> 24) & 0xFFu);
-  dst[1] = static_cast<std::uint8_t>((value >> 16) & 0xFFu);
-  dst[2] = static_cast<std::uint8_t>((value >> 8) & 0xFFu);
+  dst[0] = static_cast<std::uint8_t>((value >> 24u) & 0xFFu);
+  dst[1] = static_cast<std::uint8_t>((value >> 16u) & 0xFFu);
+  dst[2] = static_cast<std::uint8_t>((value >> 8u) & 0xFFu);
   dst[3] = static_cast<std::uint8_t>(value & 0xFFu);
 }
 
 std::uint16_t ReadU16(const std::uint8_t* src) {
-  return static_cast<std::uint16_t>((static_cast<std::uint16_t>(src[0]) << 8) |
-                                    static_cast<std::uint16_t>(src[1]));
+  return static_cast<std::uint16_t>((static_cast<std::uint32_t>(src[0]) << 8u) |
+                                    static_cast<std::uint32_t>(src[1]));
 }
 
 std::uint32_t ReadU32(const std::uint8_t* src) {
-  return (static_cast<std::uint32_t>(src[0]) << 24) |
-         (static_cast<std::uint32_t>(src[1]) << 16) |
-         (static_cast<std::uint32_t>(src[2]) << 8)  |
+  return (static_cast<std::uint32_t>(src[0]) << 24u) |
+         (static_cast<std::uint32_t>(src[1]) << 16u) |
+         (static_cast<std::uint32_t>(src[2]) << 8u)  |
           static_cast<std::uint32_t>(src[3]);
 }
 
@@ -51,7 +52,7 @@ std::uint32_t DeadlineAgeMs(std::chrono::steady_clock::time_point created_time,
 std::size_t PacketKeyHash::operator()(const PacketKey& key) const noexcept {
   std::size_t h = std::hash<std::uint32_t>{}(key.sequence);
   h ^= std::hash<std::uint8_t>{}(key.channel) + 0x9e3779b97f4a7c15ULL +
-       (h << 6) + (h >> 2);
+       (h << 6u) + (h >> 2u);
   return h;
 }
 
@@ -158,7 +159,7 @@ std::expected<DecodedPacket, PacketDecodeError> PacketCodec::Decode(
     return std::unexpected(PacketDecodeError::kUnknownType);
   }
   const std::uint8_t flags = bytes.data()[5];
-  if ((flags & ~kKnownFlags) != 0) {
+  if ((flags & ~static_cast<std::uint32_t>(kKnownFlags)) != 0u) {
     return std::unexpected(PacketDecodeError::kUnknownFlags);
   }
 

@@ -534,7 +534,7 @@ void ReliableConnection::ProcessSinglePacket(
     case detail::PacketType::kAccept: {
       if (state_ == ConnectionState::kConnecting) {
         if (SecureMode()) {
-          auto result = crypto_handshake_.ProcessServerHello(payload.data(),
+          const auto result = crypto_handshake_.ProcessServerHello(payload.data(),
                                                              payload.size());
           if (!result.ok) {
             crypto_ready_ = false;
@@ -922,7 +922,7 @@ bool ReliableConnection::AppendAckBatchCommand(
                                    .channel = ack.channel,
                                    .sequence = ack.sequence,
                                    .payload = {}};
-  auto out = std::span<std::uint8_t>(batch_command_buffer_).subspan(offset);
+  const auto out = std::span<std::uint8_t>(batch_command_buffer_).subspan(offset);
   const auto encoded = detail::PacketCodec::Encode(packet, now, out);
   if (!encoded.has_value()) {
     batch_command_buffer_.resize(offset);

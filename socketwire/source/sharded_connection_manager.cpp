@@ -607,7 +607,7 @@ void ShardedConnectionManager::WorkerLoop(Worker& worker) {
     update_samples += 1;
 
     if (loop_end >= next_stats) {
-      auto clients = worker.manager->GetConnections();
+      const auto clients = worker.manager->GetConnections();
       std::uint32_t connected = 0;
       std::uint64_t rtt_us = 0;
       std::uint64_t lost = 0;
@@ -685,7 +685,7 @@ std::size_t ShardedConnectionManager::WorkerIndexFor(
   if (workers_.empty()) return 0;
   std::size_t hash = std::hash<SocketAddress>{}(address);
   hash ^= std::hash<std::uint16_t>{}(port) + 0x9e3779b97f4a7c15ULL +
-          (hash << 6) + (hash >> 2);
+          (hash << 6u) + (hash >> 2u);
   return hash % workers_.size();
 }
 

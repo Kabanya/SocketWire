@@ -95,18 +95,18 @@ private:
   struct ConnectionKeyHash {
     [[nodiscard]] std::size_t operator()(const ConnectionKey& key) const {
       std::size_t h = std::hash<std::uint16_t>{}(key.port);
-      h ^= std::hash<bool>{}(key.isIPv6) + 0x9e3779b97f4a7c15ULL + (h << 6) +
-           (h >> 2);
+      h ^= std::hash<bool>{}(key.isIPv6) + 0x9e3779b97f4a7c15ULL + (h << 6u) +
+           (h >> 2u);
       if (key.isIPv6) {
         for (const auto byte : key.ipv6) {
           h ^= std::hash<std::uint8_t>{}(byte) + 0x9e3779b97f4a7c15ULL +
-               (h << 6) + (h >> 2);
+               (h << 6u) + (h >> 2u);
         }
         h ^= std::hash<std::uint32_t>{}(key.scopeId) + 0x9e3779b97f4a7c15ULL +
-             (h << 6) + (h >> 2);
+             (h << 6u) + (h >> 2u);
       } else {
         h ^= std::hash<std::uint32_t>{}(key.ipv4) + 0x9e3779b97f4a7c15ULL +
-             (h << 6) + (h >> 2);
+             (h << 6u) + (h >> 2u);
       }
       return h;
     }

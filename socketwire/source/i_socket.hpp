@@ -250,19 +250,19 @@ struct hash<socketwire::SocketAddress> {
   std::size_t operator()(const socketwire::SocketAddress& a) const noexcept {
     if (a.isIPv6) {
       std::size_t seed = 0x9e3779b9u;
-      for (auto b : a.ipv6.bytes) {
+      for (const auto b : a.ipv6.bytes) {
         seed ^=
-          static_cast<std::size_t>(b) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+          static_cast<std::size_t>(b) + 0x9e3779b9u + (seed << 6u) + (seed >> 2u);
       }
       seed ^= static_cast<std::size_t>(a.ipv6.scopeId) + 0x9e3779b9u +
-              (seed << 6) + (seed >> 2);
+              (seed << 6u) + (seed >> 2u);
       return seed;
     }
     // IPv4: mix address bits
     auto v = static_cast<std::size_t>(a.ipv4.hostOrderAddress);
-    v ^= v >> 16;
+    v ^= v >> 16u;
     v *= 0x45d9f3bu;
-    v ^= v >> 16;
+    v ^= v >> 16u;
     return v;
   }
 };

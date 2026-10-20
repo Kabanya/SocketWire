@@ -26,7 +26,7 @@ std::size_t TaskQueue::Drain(std::size_t max_tasks) {
     }
   }
 
-  for (auto& task : ready) task();
+  for (const auto& task : ready) task();
   return ready.size();
 }
 

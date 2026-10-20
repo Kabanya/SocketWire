@@ -178,7 +178,7 @@ struct NonceGenerator {
     for (std::size_t i = 0; i < 8; ++i) {
       // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
       out[kNonceSize - 8 + i] = static_cast<unsigned char>(c & 0xFFu);
-      c >>= 8;
+      c >>= 8u;
     }
     return Result::Success();
   }
